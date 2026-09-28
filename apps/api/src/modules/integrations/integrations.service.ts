@@ -1,6 +1,6 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import * as schema from '../../db/schema.js';
 import { DRIZZLE } from '../../db/db.module.js';
 import { IntegrationRegistry } from './adapters/integration.registry.js';
@@ -12,29 +12,31 @@ export class IntegrationsService {
     private readonly integrationRegistry: IntegrationRegistry,
   ) {}
 
-  async findAll(workspaceId: number) {
+  findAll(workspaceId: number) {
     return this.db.query.integrations.findMany({
       where: eq(schema.integrations.workspaceId, workspaceId),
     });
   }
 
-  async findOne(id: number) {
+  async findOne(workspaceId: number, id: number) {
     const integration = await this.db.query.integrations.findFirst({
-      where: eq(schema.integrations.id, id),
+      where: and(
+        eq(schema.integrations.id, id),
+        eq(schema.integrations.workspaceId, workspaceId),
+      ),
     });
 
-    if (!integration) {
-      throw new NotFoundException(`Integration with id ${id} not found`);
-    }
-
+    if (!integration) throw new NotFoundException('Integration not found');
     return integration;
   }
 
-  async create(workspaceId: number, data: { type: string; config: any }) {
-    // Validate adapter exists
+  async create(
+    workspaceId: number,
+    data: { type: string; config: Record<string, unknown> },
+  ) {
     this.integrationRegistry.getAdapter(data.type);
 
-    const [newIntegration] = await this.db
+    const [created] = await this.db
       .insert(schema.integrations)
       .values({
         workspaceId,
@@ -44,42 +46,50 @@ export class IntegrationsService {
       })
       .returning();
 
-    return newIntegration;
+    return created;
   }
 
-  async update(id: number, data: { config?: any; status?: string }) {
-    await this.findOne(id); // ensure exists
+  async update(
+    workspaceId: number,
+    id: number,
+    data: { config?: Record<string, unknown>; status?: string },
+  ) {
+    await this.findOne(workspaceId, id);
 
-    const [updatedIntegration] = await this.db
+    const [updated] = await this.db
       .update(schema.integrations)
-      .set({
-        ...data,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.integrations.id, id))
+      .set({ ...data, updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.integrations.id, id),
+          eq(schema.integrations.workspaceId, workspaceId),
+        ),
+      )
       .returning();
 
-    return updatedIntegration;
+    return updated;
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
-
+  async remove(workspaceId: number, id: number) {
+    await this.findOne(workspaceId, id);
     await this.db
       .delete(schema.integrations)
-      .where(eq(schema.integrations.id, id));
+      .where(
+        and(
+          eq(schema.integrations.id, id),
+          eq(schema.integrations.workspaceId, workspaceId),
+        ),
+      );
 
     return { success: true };
   }
 
-  async syncIntegration(id: number) {
-    const integration = await this.findOne(id);
+  async syncIntegration(workspaceId: number, id: number) {
+    const integration = await this.findOne(workspaceId, id);
     const adapter = this.integrationRegistry.getAdapter(integration.type);
 
     await adapter.connect(integration.config);
-    if (adapter.fetchData) {
-      await adapter.fetchData({});
-    }
+    if (adapter.fetchData) await adapter.fetchData({});
 
     return { success: true, message: 'Sync complete' };
   }
