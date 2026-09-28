@@ -42,7 +42,7 @@ Architecture notes:
 - [Implementation plan](docs/architecture/SoStats_Architecture_Implementation_Plan.md)
 - [Stage 0 hardening](docs/architecture/STAGE_0_HARDENING.md)
 - [Stage 1 real-data vertical slice](docs/architecture/STAGE_1_VERTICAL_SLICE.md)
-- [Stage 2 reliable publishing](docs/architecture/STAGE_2_RELIABLE_PUBLISHING.md)
+- [Stage 2 reliable publishing](docs/architecture/STAGE_2_RELIABLE_PUBLISHING.md)\n- [Stage 3 automation runtime](docs/architecture/STAGE_3_AUTOMATION_RUNTIME.md)
 
 ## Repository layout
 
