@@ -1,35 +1,61 @@
-from fastapi import APIRouter
+import json
 
-from app.api.schemas import CampaignBrief, CampaignPlan, ContentIdea, ScheduleSuggestion
+from fastapi import APIRouter, HTTPException
+
+from app.api.schemas import CampaignBrief, CampaignPlan
+from app.providers.factory import get_provider
 
 router = APIRouter(prefix="/v1/campaigns", tags=["campaigns"])
 
+SYSTEM = """You are SoStats Campaign Planner.
+Create practical, platform-aware social campaigns for a real brand.
+Return only valid JSON matching the requested schema.
+Do not invent claims, statistics, testimonials, or customer results.
+Keep content ideas distinct enough to become separate posts.
+"""
+
+
 @router.post("/plan", response_model=CampaignPlan)
 async def generate_campaign_plan(brief: CampaignBrief):
-    # Dummy logic to simulate structured generation
-    return CampaignPlan(
-        title=f"Campaign for {brief.goal}",
-        objective=brief.goal,
-        audience=brief.audience,
-        channels=brief.channels if brief.channels else ["Instagram", "Twitter"],
-        contentPillars=["Product Features", "Customer Success", "Behind the Scenes"],
-        contentIdeas=[
-            ContentIdea(
-                idea="Product Teaser",
-                description="A short teaser showing the new feature in action.",
-                format="Video"
-            ),
-            ContentIdea(
-                idea="Customer Quote",
-                description="A carousel of 3 testimonials from happy customers.",
-                format="Carousel"
-            )
-        ],
-        scheduleSuggestions=[
-            ScheduleSuggestion(
-                channel="Instagram",
-                frequency="3 times a week",
-                bestTimes=["09:00 AM", "12:00 PM", "06:00 PM"]
-            )
-        ]
-    )
+    prompt = {
+        "goal": brief.goal,
+        "audience": brief.audience,
+        "channels": brief.channels,
+        "tone": brief.tone,
+        "brand_context": brief.brand_context,
+        "required_json_shape": {
+            "title": "string",
+            "objective": "string",
+            "audience": "string",
+            "channels": ["string"],
+            "contentPillars": ["string"],
+            "contentIdeas": [
+                {
+                    "idea": "string",
+                    "description": "string",
+                    "format": "string",
+                }
+            ],
+            "scheduleSuggestions": [
+                {
+                    "channel": "string",
+                    "frequency": "string",
+                    "bestTimes": ["string"],
+                }
+            ],
+        },
+    }
+
+    try:
+        provider = get_provider()
+        result = await provider.generate_json(
+            system=SYSTEM,
+            prompt=json.dumps(prompt, ensure_ascii=False),
+            schema_name="CampaignPlan",
+        )
+        return CampaignPlan.model_validate(result)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Campaign generation unavailable: {type(exc).__name__}",
+        ) from exc
