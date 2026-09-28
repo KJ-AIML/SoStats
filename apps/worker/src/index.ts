@@ -7,8 +7,16 @@ import {
 import {
   stopPublishingWorker,
 } from './publishing/publishing.processor';
+import {
+  startAutomationDispatcher,
+  stopAutomationDispatcher,
+} from './automations/automation.dispatcher';
+import {
+  stopAutomationWorker,
+} from './automations/automation.processor';
 
 startPublishingDispatcher();
+startAutomationDispatcher();
 
 let stopping = false;
 
@@ -16,10 +24,12 @@ async function shutdown(signal: string) {
   if (stopping) return;
   stopping = true;
 
-  console.log(`[Worker] Received ${signal}; draining publishing runtime`);
+  console.log(`[Worker] Received ${signal}; draining background runtimes`);
   await Promise.all([
     stopPublishingDispatcher(),
     stopPublishingWorker(),
+    stopAutomationDispatcher(),
+    stopAutomationWorker(),
   ]);
   process.exit(0);
 }
