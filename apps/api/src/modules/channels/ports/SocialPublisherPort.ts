@@ -7,6 +7,12 @@ export type PublishContext = {
   providerAccountId?: string;
 };
 
+export type RefreshedToken = {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: Date;
+};
+
 export class ProviderPublishError extends Error {
   readonly retryable: boolean;
   readonly outcomeUnknown: boolean;
@@ -49,4 +55,6 @@ export interface SocialPublisherPort {
     providerAccountId: string;
     accountName: string;
   }>;
+
+  refreshAccessToken(refreshToken: string): Promise<RefreshedToken>;
 }

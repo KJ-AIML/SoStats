@@ -8,6 +8,7 @@ import {
   SocialPublisherPort,
   type PublishContext,
   type PublishResult,
+  type RefreshedToken,
 } from '../ports/SocialPublisherPort.js';
 
 type LinkedInUserInfo = {
@@ -15,6 +16,12 @@ type LinkedInUserInfo = {
   name?: string;
   given_name?: string;
   family_name?: string;
+};
+
+type LinkedInTokenResponse = {
+  access_token?: string;
+  expires_in?: number;
+  refresh_token?: string;
 };
 
 @Injectable()
@@ -91,11 +98,15 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
 
     if (!response.ok) {
       const detail = await response.text();
+      const isRateLimit = response.status === 429;
+      const isServerError = response.status >= 500;
+
       throw new ProviderPublishError(
         `LinkedIn publish failed (HTTP ${response.status}): ${detail.slice(0, 300)}`,
         {
           statusCode: response.status,
-          retryable: response.status === 429 || response.status >= 500,
+          retryable: isRateLimit,
+          outcomeUnknown: isServerError,
         },
       );
     }
@@ -159,11 +170,10 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
       );
     }
 
-    const token = (await response.json()) as {
-      access_token: string;
-      expires_in?: number;
-      refresh_token?: string;
-    };
+    const token = (await response.json()) as LinkedInTokenResponse;
+    if (!token.access_token) {
+      throw new BadGatewayException('LinkedIn token exchange returned no access token');
+    }
 
     const profile = await this.getUserInfo(token.access_token);
 
@@ -178,6 +188,58 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
         profile.name ||
         [profile.given_name, profile.family_name].filter(Boolean).join(' ') ||
         'LinkedIn account',
+    };
+  }
+
+  async refreshAccessToken(refreshToken: string): Promise<RefreshedToken> {
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: this.clientId(),
+      client_secret: this.clientSecret(),
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(
+        'https://www.linkedin.com/oauth/v2/accessToken',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body,
+        },
+      );
+    } catch {
+      throw new ProviderPublishError(
+        'LinkedIn token refresh request failed before a provider response was received',
+        { retryable: true },
+      );
+    }
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new ProviderPublishError(
+        `LinkedIn token refresh failed (HTTP ${response.status}): ${detail.slice(0, 300)}`,
+        {
+          statusCode: response.status,
+          retryable: response.status === 429 || response.status >= 500,
+        },
+      );
+    }
+
+    const token = (await response.json()) as LinkedInTokenResponse;
+    if (!token.access_token) {
+      throw new ProviderPublishError(
+        'LinkedIn token refresh returned no access token',
+      );
+    }
+
+    return {
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      expiresAt: token.expires_in
+        ? new Date(Date.now() + token.expires_in * 1000)
+        : undefined,
     };
   }
 
