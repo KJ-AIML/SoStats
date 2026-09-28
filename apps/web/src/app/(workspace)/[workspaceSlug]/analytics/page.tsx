@@ -1,8 +1,10 @@
 import {
   BarChart3,
+  Clock3,
   Eye,
   Heart,
   MousePointerClick,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MetricCard } from "@/components/sostats/metric-card";
@@ -27,6 +29,14 @@ function formatCompact(value: number) {
   }).format(value);
 }
 
+function formatSyncTime(value?: string | null) {
+  if (!value) return "Waiting for first provider sync";
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
 export default async function AnalyticsPage({
   params,
 }: {
@@ -37,6 +47,10 @@ export default async function AnalyticsPage({
   let daily: Array<{ date: string; metrics: Record<string, number> }> = [];
   let hasData = false;
   let brandId: number | undefined;
+  let latestSnapshotAt: string | null = null;
+  let trackedPosts = 0;
+  let syncWindowDays = 30;
+  let publishedCount = 0;
   let published: Array<{
     id: number;
     title: string;
@@ -49,17 +63,22 @@ export default async function AnalyticsPage({
     totals = snapshot.analytics.totals;
     daily = snapshot.analytics.daily;
     hasData = snapshot.analytics.hasData;
+    latestSnapshotAt = snapshot.analytics.latestSnapshotAt || null;
+    trackedPosts = snapshot.analytics.trackedPosts || 0;
+    syncWindowDays = snapshot.analytics.syncWindowDays || 30;
     brandId = snapshot.brand?.id;
-    published = snapshot.content
-      .filter((item) => item.status === "published")
-      .slice(0, 5)
-      .map((item) => ({
-        id: item.id,
-        title: item.title,
-        channel:
-          item.variants?.map((variant) => variant.platform).filter(Boolean).join(" + ") ||
-          "Published",
-      }));
+
+    const publishedItems = snapshot.content.filter(
+      (item) => item.status === "published",
+    );
+    publishedCount = publishedItems.length;
+    published = publishedItems.slice(0, 5).map((item) => ({
+      id: item.id,
+      title: item.title,
+      channel:
+        item.variants?.map((variant) => variant.platform).filter(Boolean).join(" + ") ||
+        "Published",
+    }));
   } catch {
     connectionError = true;
   }
@@ -67,17 +86,17 @@ export default async function AnalyticsPage({
   const reach = firstMetric(totals, ["reach", "impressions", "views"]);
   const engagements =
     firstMetric(totals, ["engagements", "engagement"]) ||
-    firstMetric(totals, ["likes"]) +
+    firstMetric(totals, ["reactions", "likes"]) +
       firstMetric(totals, ["comments"]) +
-      firstMetric(totals, ["shares"]);
+      firstMetric(totals, ["shares"]) +
+      firstMetric(totals, ["clicks", "link_clicks"]);
   const clicks = firstMetric(totals, ["clicks", "link_clicks"]);
   const engagementRate = reach > 0 ? (engagements / reach) * 100 : 0;
 
   const chart = [...daily]
-    .reverse()
     .slice(-12)
     .map((row) =>
-      firstMetric(row.metrics, ["reach", "impressions", "views", "engagements"]),
+      firstMetric(row.metrics, ["reach", "impressions", "views", "reactions"]),
     );
   const maxChart = Math.max(...chart, 1);
 
@@ -86,7 +105,7 @@ export default async function AnalyticsPage({
       <PageHeading
         eyebrow="Analytics"
         title="Performance that leads to action"
-        description="Measure what happened, understand why it happened and feed the result directly into the next content cycle."
+        description="Provider metrics now flow back through the worker into snapshots, daily deltas and the AI insight loop."
         actions={
           <Button variant="outline" className="h-10 rounded-xl text-[10px]">
             Last 30 days
@@ -100,11 +119,65 @@ export default async function AnalyticsPage({
         </div>
       )}
 
+      <section className="sostats-card flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="sostats-icon h-9 w-9">
+            {latestSnapshotAt ? (
+              <RefreshCw className="h-4 w-4 text-emerald-600" />
+            ) : (
+              <Clock3 className="h-4 w-4 text-amber-600" />
+            )}
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold">
+              {latestSnapshotAt ? "Provider analytics connected" : "Waiting for provider metrics"}
+            </p>
+            <p className="mt-0.5 text-[8px] text-muted-foreground">
+              Latest snapshot · {formatSyncTime(latestSnapshotAt)}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-5 text-right">
+          <div>
+            <p className="text-[8px] text-muted-foreground">Tracked posts</p>
+            <p className="mt-0.5 text-[11px] font-semibold">{trackedPosts}</p>
+          </div>
+          <div>
+            <p className="text-[8px] text-muted-foreground">Active sync window</p>
+            <p className="mt-0.5 text-[11px] font-semibold">{syncWindowDays} days</p>
+          </div>
+        </div>
+      </section>
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Reach / Views" value={formatCompact(reach)} change={hasData ? "Persisted metrics" : "No data yet"} icon={Eye} bars={[34, 45, 52, 49, 68, 88]} />
-        <MetricCard label="Engagement Rate" value={`${engagementRate.toFixed(1)}%`} change={hasData ? "Calculated from totals" : "No data yet"} icon={Heart} bars={[45, 49, 51, 58, 66, 73]} />
-        <MetricCard label="Clicks" value={formatCompact(clicks)} change={hasData ? "Persisted metrics" : "No data yet"} icon={MousePointerClick} bars={[38, 33, 46, 57, 64, 79]} />
-        <MetricCard label="Published Content" value={String(published.length)} change="Loaded from content" icon={BarChart3} bars={[26, 39, 51, 48, 63, 84]} />
+        <MetricCard
+          label="Reach / Views"
+          value={formatCompact(reach)}
+          change={hasData ? "Provider-synced deltas" : "No data yet"}
+          icon={Eye}
+          bars={[34, 45, 52, 49, 68, 88]}
+        />
+        <MetricCard
+          label="Engagement Rate"
+          value={`${engagementRate.toFixed(1)}%`}
+          change={hasData ? "Reactions + comments + shares + clicks" : "No data yet"}
+          icon={Heart}
+          bars={[45, 49, 51, 58, 66, 73]}
+        />
+        <MetricCard
+          label="Clicks"
+          value={formatCompact(clicks)}
+          change={hasData ? "Provider-synced metrics" : "No data yet"}
+          icon={MousePointerClick}
+          bars={[38, 33, 46, 57, 64, 79]}
+        />
+        <MetricCard
+          label="Published Content"
+          value={String(publishedCount)}
+          change="Canonical content"
+          icon={BarChart3}
+          bars={[26, 39, 51, 48, 63, 84]}
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-12">
@@ -113,11 +186,11 @@ export default async function AnalyticsPage({
             <div>
               <p className="text-sm font-semibold">Performance trend</p>
               <p className="mt-0.5 text-[10px] text-muted-foreground">
-                Latest persisted daily metric
+                Daily metric deltas aggregated across connected channels
               </p>
             </div>
             <span className="text-[10px] font-semibold text-neutral-500">
-              {chart.length} points
+              {chart.length} days
             </span>
           </div>
           <div className="p-5">
@@ -141,7 +214,7 @@ export default async function AnalyticsPage({
             </div>
             {!hasData && (
               <p className="mt-3 text-[9px] text-muted-foreground">
-                The chart will populate when the analytics worker persists provider metrics.
+                The first provider snapshot is collected after the post has had time to receive metrics.
               </p>
             )}
           </div>
@@ -161,7 +234,7 @@ export default async function AnalyticsPage({
           <div>
             <p className="text-sm font-semibold">Recent published content</p>
             <p className="mt-0.5 text-[10px] text-muted-foreground">
-              Real content records currently marked published
+              Publication records that feed the analytics dispatcher
             </p>
           </div>
         </div>
