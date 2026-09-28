@@ -1,38 +1,47 @@
-from fastapi import APIRouter
+import json
 
-from app.api.schemas import ActionableInsight, AIInsightResponse, InsightRequest
+from fastapi import APIRouter, HTTPException
+
+from app.api.schemas import AIInsightResponse, InsightRequest
+from app.providers.factory import get_provider
 
 router = APIRouter(prefix="/v1/insights", tags=["Insights"])
 
+SYSTEM = """You are the SoStats analytics insight engine.
+Use only the supplied performance evidence.
+Separate observation from recommendation.
+Never invent metrics.
+Return concise, actionable JSON only.
+"""
+
 
 @router.post("/generate", response_model=AIInsightResponse)
-def generate_insights(request: InsightRequest):
-    # Dummy logic to mock insights based on input metrics
+async def generate_insights(request: InsightRequest):
+    payload = {
+        "metrics": [metric.model_dump() for metric in request.metrics],
+        "brand_context": request.brand_context,
+        "required_json_shape": {
+            "insights": [
+                {
+                    "finding": "string grounded in supplied metrics",
+                    "recommendation": "string",
+                    "impact_estimate": "string; use qualitative wording when impact cannot be measured",
+                }
+            ],
+            "summary": "string",
+        },
+    }
 
-    insights = []
-
-    # We can create generic mocked insights
-    if request.metrics:
-        # E.g. finding based on the first metric
-        first_metric = request.metrics[0]
-        insights.append(
-            ActionableInsight(
-                finding=f"{first_metric.platform} {first_metric.metric_type} is at {first_metric.value} for {first_metric.period}.",
-                recommendation=f"Increase short-form video content on {first_metric.platform} to capitalize on current trends.",
-                impact_estimate="Expected +15% engagement lift"
-            )
+    try:
+        provider = get_provider()
+        result = await provider.generate_json(
+            system=SYSTEM,
+            prompt=json.dumps(payload, ensure_ascii=False),
+            schema_name="AIInsightResponse",
         )
-
-    # Add a fixed mocked insight
-    insights.append(
-        ActionableInsight(
-            finding="Short-form video performs 2.3x better than static image posts across all platforms.",
-            recommendation="Reallocate 30% of static image production budget to Reels and TikToks.",
-            impact_estimate="Expected +45% reach and +20% conversion rate"
-        )
-    )
-
-    return AIInsightResponse(
-        insights=insights,
-        summary="Video content is outperforming static assets. Focus on short-form video across top platforms to maximize engagement and ROI."
-    )
+        return AIInsightResponse.model_validate(result)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Insight generation unavailable: {type(exc).__name__}",
+        ) from exc
