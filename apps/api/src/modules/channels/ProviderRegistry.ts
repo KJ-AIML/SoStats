@@ -4,11 +4,10 @@ import { LinkedInPublisherAdapter } from './adapters/LinkedInPublisherAdapter.js
 
 @Injectable()
 export class ProviderRegistry {
-  private providers = new Map<string, SocialPublisherPort>();
+  private readonly providers = new Map<string, SocialPublisherPort>();
 
-  constructor() {
-    // We could inject these, but manual instantiation is simpler for dummy adapters
-    this.registerProvider(new LinkedInPublisherAdapter());
+  constructor(linkedIn: LinkedInPublisherAdapter) {
+    this.registerProvider(linkedIn);
   }
 
   registerProvider(provider: SocialPublisherPort) {

@@ -9,7 +9,7 @@ router = APIRouter(prefix="/v1/campaigns", tags=["campaigns"])
 
 SYSTEM = """You are SoStats Campaign Planner.
 Create practical, platform-aware social campaigns for a real brand.
-Return only valid JSON matching the requested schema.
+Use only information supplied in the request and brand context.
 Do not invent claims, statistics, testimonials, or customer results.
 Keep content ideas distinct enough to become separate posts.
 """
@@ -23,27 +23,6 @@ async def generate_campaign_plan(brief: CampaignBrief):
         "channels": brief.channels,
         "tone": brief.tone,
         "brand_context": brief.brand_context,
-        "required_json_shape": {
-            "title": "string",
-            "objective": "string",
-            "audience": "string",
-            "channels": ["string"],
-            "contentPillars": ["string"],
-            "contentIdeas": [
-                {
-                    "idea": "string",
-                    "description": "string",
-                    "format": "string",
-                }
-            ],
-            "scheduleSuggestions": [
-                {
-                    "channel": "string",
-                    "frequency": "string",
-                    "bestTimes": ["string"],
-                }
-            ],
-        },
     }
 
     try:
@@ -52,6 +31,7 @@ async def generate_campaign_plan(brief: CampaignBrief):
             system=SYSTEM,
             prompt=json.dumps(prompt, ensure_ascii=False),
             schema_name="CampaignPlan",
+            schema=CampaignPlan.model_json_schema(),
         )
         return CampaignPlan.model_validate(result)
     except Exception as exc:

@@ -21,7 +21,8 @@ export interface ObjectStoragePort {
   deleteFile(key: string): Promise<void>;
 
   /**
-   * Get the public URL for a given key, if the bucket is public.
+   * Get the public URL when the deployment intentionally exposes a public
+   * object base URL. Private buckets return null and must use signed URLs.
    */
-  getPublicUrl(key: string): string;
+  getPublicUrl(key: string): string | null;
 }

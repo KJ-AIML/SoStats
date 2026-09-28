@@ -8,6 +8,7 @@ export interface AuthenticatedUser {
 export interface JwtClaims {
   sub: string;
   email?: string;
+  email_verified?: boolean;
   name?: string;
   exp?: number;
   nbf?: number;

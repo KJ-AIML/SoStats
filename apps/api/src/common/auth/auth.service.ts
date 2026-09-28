@@ -25,11 +25,20 @@ export class AuthService {
     }
   }
 
+  private subjectKey(claims: JwtClaims) {
+    return `${claims.iss || 'local'}|${claims.sub}`;
+  }
+
   verifyJwt(token: string): JwtClaims {
     const secret = process.env.AUTH_JWT_SECRET;
     if (!secret) {
       throw new ServiceUnavailableException(
         'Authentication is not configured. Set AUTH_JWT_SECRET.',
+      );
+    }
+    if (Buffer.byteLength(secret, 'utf8') < 32) {
+      throw new ServiceUnavailableException(
+        'AUTH_JWT_SECRET must be at least 32 bytes',
       );
     }
 
@@ -49,7 +58,10 @@ export class AuthService {
       .digest();
     const actual = Buffer.from(signaturePart, 'base64url');
 
-    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    if (
+      actual.length !== expected.length ||
+      !timingSafeEqual(actual, expected)
+    ) {
       throw new UnauthorizedException('Invalid bearer token signature');
     }
 
@@ -83,20 +95,28 @@ export class AuthService {
       }
     }
 
+    const requireVerifiedEmail =
+      process.env.AUTH_REQUIRE_VERIFIED_EMAIL !== 'false';
+    if (requireVerifiedEmail && claims.email_verified !== true) {
+      throw new UnauthorizedException('A verified email claim is required');
+    }
+
     return claims;
   }
 
   async resolveUser(claims: JwtClaims): Promise<AuthenticatedUser> {
-    const email = claims.email!;
+    const email = claims.email!.trim().toLowerCase();
+    const subject = this.subjectKey(claims);
+
     const existing = await this.db.query.users.findFirst({
       where: or(
-        eq(schema.users.authSubject, claims.sub),
+        eq(schema.users.authSubject, subject),
         eq(schema.users.email, email),
       ),
     });
 
     if (existing) {
-      if (existing.authSubject && existing.authSubject !== claims.sub) {
+      if (existing.authSubject && existing.authSubject !== subject) {
         throw new UnauthorizedException('Identity does not match existing user');
       }
 
@@ -106,7 +126,7 @@ export class AuthService {
             await this.db
               .update(schema.users)
               .set({
-                authSubject: claims.sub,
+                authSubject: subject,
                 name: claims.name ?? existing.name,
                 updatedAt: new Date(),
               })
@@ -116,7 +136,7 @@ export class AuthService {
 
       return {
         id: user.id,
-        subject: user.authSubject ?? claims.sub,
+        subject: user.authSubject ?? subject,
         email: user.email,
         name: user.name,
       };
@@ -125,7 +145,7 @@ export class AuthService {
     const [created] = await this.db
       .insert(schema.users)
       .values({
-        authSubject: claims.sub,
+        authSubject: subject,
         email,
         name: claims.name,
       })
@@ -133,7 +153,7 @@ export class AuthService {
 
     return {
       id: created.id,
-      subject: created.authSubject ?? claims.sub,
+      subject: created.authSubject ?? subject,
       email: created.email,
       name: created.name,
     };
@@ -143,6 +163,13 @@ export class AuthService {
     if (process.env.NODE_ENV === 'production') {
       throw new UnauthorizedException('Development authentication is disabled');
     }
-    return { sub: 'dev:' + email, email, name: name || 'Local Developer' };
+
+    return {
+      sub: 'dev:' + email.trim().toLowerCase(),
+      iss: 'sostats:dev',
+      email: email.trim().toLowerCase(),
+      email_verified: true,
+      name: name || 'Local Developer',
+    };
   }
 }

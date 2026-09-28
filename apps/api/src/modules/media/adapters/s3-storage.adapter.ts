@@ -2,10 +2,7 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import {
-  createHash,
-  createHmac,
-} from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import type { ObjectStoragePort } from '../ports/object-storage.port.js';
 
 function sha256(value: string) {
@@ -27,7 +24,7 @@ function encodeKey(key: string) {
 }
 
 function timestamp(date: Date) {
-  return date.toISOString().replace(/[:-]|.d{3}/g, '');
+  return date.toISOString().replace(/[:-]|\.\d{3}/g, '');
 }
 
 @Injectable()
@@ -61,6 +58,12 @@ export class S3ObjectStorageAdapter implements ObjectStoragePort {
     }
 
     this.endpoint = new URL(endpoint);
+    if (this.endpoint.pathname !== '/' && this.endpoint.pathname !== '') {
+      throw new ServiceUnavailableException(
+        'S3_ENDPOINT/MINIO_ENDPOINT must be an origin without a path prefix',
+      );
+    }
+
     this.bucket = bucket;
     this.accessKey = accessKey;
     this.secretKey = secretKey;
@@ -192,15 +195,16 @@ export class S3ObjectStorageAdapter implements ObjectStoragePort {
     });
 
     if (!response.ok && response.status !== 404) {
-      throw new Error(`Object storage delete failed with HTTP ${response.status}`);
+      throw new Error(
+        `Object storage delete failed with HTTP ${response.status}`,
+      );
     }
   }
 
-  getPublicUrl(key: string) {
+  getPublicUrl(key: string): string | null {
     const publicBase = process.env.S3_PUBLIC_BASE_URL;
-    if (publicBase) {
-      return publicBase.replace(/\/$/, '') + '/' + encodeKey(key);
-    }
-    return this.endpoint.origin + this.canonicalUri(key);
+    if (!publicBase) return null;
+
+    return publicBase.replace(/\/$/, '') + '/' + encodeKey(key);
   }
 }

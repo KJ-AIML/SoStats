@@ -11,7 +11,7 @@ SYSTEM = """You are the SoStats analytics insight engine.
 Use only the supplied performance evidence.
 Separate observation from recommendation.
 Never invent metrics.
-Return concise, actionable JSON only.
+When the evidence does not justify a numeric impact estimate, use qualitative wording.
 """
 
 
@@ -20,16 +20,6 @@ async def generate_insights(request: InsightRequest):
     payload = {
         "metrics": [metric.model_dump() for metric in request.metrics],
         "brand_context": request.brand_context,
-        "required_json_shape": {
-            "insights": [
-                {
-                    "finding": "string grounded in supplied metrics",
-                    "recommendation": "string",
-                    "impact_estimate": "string; use qualitative wording when impact cannot be measured",
-                }
-            ],
-            "summary": "string",
-        },
     }
 
     try:
@@ -38,6 +28,7 @@ async def generate_insights(request: InsightRequest):
             system=SYSTEM,
             prompt=json.dumps(payload, ensure_ascii=False),
             schema_name="AIInsightResponse",
+            schema=AIInsightResponse.model_json_schema(),
         )
         return AIInsightResponse.model_validate(result)
     except Exception as exc:

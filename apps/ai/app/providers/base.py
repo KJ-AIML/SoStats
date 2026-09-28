@@ -10,5 +10,6 @@ class StructuredGenerationProvider(ABC):
         system: str,
         prompt: str,
         schema_name: str,
+        schema: dict[str, Any],
     ) -> dict[str, Any]:
         raise NotImplementedError

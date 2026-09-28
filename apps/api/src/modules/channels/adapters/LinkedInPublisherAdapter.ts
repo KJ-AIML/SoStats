@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { SocialPublisherPort } from '../ports/SocialPublisherPort.js';
@@ -11,18 +12,37 @@ type LinkedInUserInfo = {
   family_name?: string;
 };
 
+@Injectable()
 export class LinkedInPublisherAdapter implements SocialPublisherPort {
   readonly providerName = 'linkedin';
 
   private clientId() {
     const value = process.env.LINKEDIN_CLIENT_ID;
-    if (!value) throw new ServiceUnavailableException('LINKEDIN_CLIENT_ID is not configured');
+    if (!value) {
+      throw new ServiceUnavailableException(
+        'LINKEDIN_CLIENT_ID is not configured',
+      );
+    }
     return value;
   }
 
   private clientSecret() {
     const value = process.env.LINKEDIN_CLIENT_SECRET;
-    if (!value) throw new ServiceUnavailableException('LINKEDIN_CLIENT_SECRET is not configured');
+    if (!value) {
+      throw new ServiceUnavailableException(
+        'LINKEDIN_CLIENT_SECRET is not configured',
+      );
+    }
+    return value;
+  }
+
+  private apiVersion() {
+    const value = process.env.LINKEDIN_API_VERSION;
+    if (!value) {
+      throw new ServiceUnavailableException(
+        'LINKEDIN_API_VERSION is not configured',
+      );
+    }
     return value;
   }
 
@@ -36,7 +56,7 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
       headers: {
         authorization: `Bearer ${accessToken}`,
         'content-type': 'application/json',
-        'linkedin-version': process.env.LINKEDIN_API_VERSION || '202601',
+        'linkedin-version': this.apiVersion(),
         'x-restli-protocol-version': '2.0.0',
       },
       body: JSON.stringify({
@@ -101,11 +121,14 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
       client_secret: this.clientSecret(),
     });
 
-    const response = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body,
-    });
+    const response = await fetch(
+      'https://www.linkedin.com/oauth/v2/accessToken',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+      },
+    );
 
     if (!response.ok) {
       throw new BadGatewayException(
