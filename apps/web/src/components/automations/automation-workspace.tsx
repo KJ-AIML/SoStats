@@ -77,19 +77,6 @@ export function AutomationWorkspace({
 
   const selectedVersion = useMemo(() => latestVersion(selected), [selected]);
 
-  useEffect(() => {
-    const automation = automations.find((item) => item.id === selectedId);
-    setName(automation?.name || "Weekly AI Content Plan");
-    const version = latestVersion(automation);
-    setDefinition(
-      (version?.workflowDefinition as WorkflowDefinitionState) ||
-        defaultWorkflowDefinition(channels),
-    );
-    setRuns(automation?.runs || []);
-    setMessage(null);
-    setError(null);
-  }, [selectedId, automations, channels]);
-
   const loadRuns = useCallback(async () => {
     if (!selectedId) return;
     try {
@@ -106,7 +93,6 @@ export function AutomationWorkspace({
 
   useEffect(() => {
     if (!selectedId) return;
-    void loadRuns();
     const timer = window.setInterval(() => {
       void loadRuns();
     }, 3000);
@@ -348,7 +334,18 @@ export function AutomationWorkspace({
             {automations.map((automation) => (
               <button
                 key={automation.id}
-                onClick={() => setSelectedId(automation.id)}
+                onClick={() => {
+                  setSelectedId(automation.id);
+                  setName(automation.name);
+                  const version = latestVersion(automation);
+                  setDefinition(
+                    (version?.workflowDefinition as WorkflowDefinitionState) ||
+                      defaultWorkflowDefinition(channels),
+                  );
+                  setRuns(automation.runs || []);
+                  setMessage(null);
+                  setError(null);
+                }}
                 className={
                   automation.id === selectedId
                     ? "w-full rounded-xl border border-[#ef2b2d]/15 bg-[#fff7f7] p-3 text-left"
@@ -443,6 +440,7 @@ export function AutomationWorkspace({
           )}
 
           <WorkflowCanvas
+            key={`${selectedId ?? "new"}-${selectedVersion?.id ?? "draft"}`}
             definition={definition}
             onDefinitionChange={setDefinition}
             channels={channels}

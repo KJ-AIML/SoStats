@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   addEdge,
   applyEdgeChanges,
@@ -151,35 +151,33 @@ export function WorkflowCanvas({
   onDefinitionChange?: (definition: WorkflowDefinitionState) => void;
   channels?: WorkflowChannel[];
 }) {
-  const initial = useMemo(
-    () => safeDefinition(definition, channels),
-    [definition, channels],
+  const [nodes, setNodes] = useState<Node[]>(
+    () => safeDefinition(definition, channels).nodes,
   );
-  const [nodes, setNodes] = useState<Node[]>(initial.nodes);
-  const [edges, setEdges] = useState<Edge[]>(initial.edges);
+  const [edges, setEdges] = useState<Edge[]>(
+    () => safeDefinition(definition, channels).edges,
+  );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setNodes(initial.nodes);
-    setEdges(initial.edges);
-    setSelectedNodeId(null);
-  }, [initial]);
-
-  useEffect(() => {
-    onDefinitionChange?.({ nodes, edges });
-  }, [nodes, edges, onDefinitionChange]);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) =>
-      setNodes((current) => applyNodeChanges(changes, current)),
-    [],
+      setNodes((current) => {
+        const next = applyNodeChanges(changes, current);
+        onDefinitionChange?.({ nodes: next, edges });
+        return next;
+      }),
+    [edges, onDefinitionChange],
   );
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) =>
-      setEdges((current) => applyEdgeChanges(changes, current)),
-    [],
+      setEdges((current) => {
+        const next = applyEdgeChanges(changes, current);
+        onDefinitionChange?.({ nodes, edges: next });
+        return next;
+      }),
+    [nodes, onDefinitionChange],
   );
   const onConnect = useCallback(
     (params: Connection) => {
@@ -188,10 +186,12 @@ export function WorkflowCanvas({
         const sourceUsed = current.some((edge) => edge.source === params.source);
         const targetUsed = current.some((edge) => edge.target === params.target);
         if (sourceUsed || targetUsed) return current;
-        return addEdge({ ...params, animated: true }, current);
+        const next = addEdge({ ...params, animated: true }, current);
+        onDefinitionChange?.({ nodes, edges: next });
+        return next;
       });
     },
-    [],
+    [nodes, onDefinitionChange],
   );
 
   const addNode = (type: string, label: string) => {
@@ -216,30 +216,35 @@ export function WorkflowCanvas({
       },
     };
 
-    setNodes((current) => [...current, nextNode]);
-    if (previous) {
-      setEdges((current) => [
-        ...current,
-        {
-          id: `${previous.id}-${id}`,
-          source: previous.id,
-          target: id,
-          animated: true,
-        },
-      ]);
-    }
+    const nextNodes = [...nodes, nextNode];
+    const nextEdges = previous
+      ? [
+          ...edges,
+          {
+            id: `${previous.id}-${id}`,
+            source: previous.id,
+            target: id,
+            animated: true,
+          },
+        ]
+      : edges;
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    onDefinitionChange?.({ nodes: nextNodes, edges: nextEdges });
     setSelectedNodeId(id);
   };
 
   const updateNodeData = (patch: Record<string, unknown>) => {
     if (!selectedNodeId) return;
-    setNodes((current) =>
-      current.map((node) =>
+    setNodes((current) => {
+      const next = current.map((node) =>
         node.id === selectedNodeId
           ? { ...node, data: { ...node.data, ...patch } }
           : node,
-      ),
-    );
+      );
+      onDefinitionChange?.({ nodes: next, edges });
+      return next;
+    });
   };
 
   const updateConfig = (key: string, value: unknown) => {
