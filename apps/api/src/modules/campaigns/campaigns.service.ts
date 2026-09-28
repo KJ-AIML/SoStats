@@ -151,6 +151,7 @@ export class CampaignsService {
     workspaceId: number,
     id: number,
     data: GenerateCampaignDto,
+    options: { replaceExistingContent?: boolean } = {},
   ) {
     const campaign = await this.findOne(workspaceId, id);
     const plan = await this.requestPlan(workspaceId, campaign, data);
@@ -162,6 +163,12 @@ export class CampaignsService {
       await tx
         .delete(schema.campaignPillars)
         .where(eq(schema.campaignPillars.campaignId, id));
+
+      if (options.replaceExistingContent) {
+        await tx
+          .delete(schema.contentItems)
+          .where(eq(schema.contentItems.campaignId, id));
+      }
 
       if (plan.channels.length) {
         await tx.insert(schema.campaignChannels).values(

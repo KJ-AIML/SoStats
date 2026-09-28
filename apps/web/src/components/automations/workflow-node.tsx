@@ -1,9 +1,9 @@
 import { Handle, Position } from "@xyflow/react";
 import type { ReactNode } from "react";
 import {
+  BarChart3,
   Calendar,
   CheckCircle2,
-  Image as ImageIcon,
   Play,
   Settings,
   Sparkles,
@@ -13,16 +13,16 @@ import { cn } from "@/lib/utils";
 export type WorkflowNodeType =
   | "trigger"
   | "generate"
-  | "image"
   | "review"
-  | "schedule";
+  | "schedule"
+  | "analyze";
 
 const icons: Record<WorkflowNodeType, ReactNode> = {
   trigger: <Play className="h-3.5 w-3.5 text-emerald-600" />,
   generate: <Sparkles className="h-3.5 w-3.5 text-[#ef2b2d]" />,
-  image: <ImageIcon className="h-3.5 w-3.5 text-violet-600" />,
   review: <CheckCircle2 className="h-3.5 w-3.5 text-amber-600" />,
   schedule: <Calendar className="h-3.5 w-3.5 text-blue-600" />,
+  analyze: <BarChart3 className="h-3.5 w-3.5 text-violet-600" />,
 };
 
 export function WorkflowNode({

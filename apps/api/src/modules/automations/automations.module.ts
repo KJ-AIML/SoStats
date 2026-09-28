@@ -1,18 +1,21 @@
 import { Module } from '@nestjs/common';
+import { CampaignsModule } from '../campaigns/campaigns.module.js';
+import { SchedulingModule } from '../scheduling/scheduling.module.js';
+import { AnalyticsModule } from '../analytics/analytics.module.js';
 import { AutomationsController } from './automations.controller.js';
+import { AutomationRuntimeController } from './automation-runtime.controller.js';
 import { AutomationsService } from './automations.service.js';
-import { WORKFLOW_ENGINE_PORT } from './ports/workflow-engine.port.js';
-import { BullMQWorkflowAdapter } from './adapters/bullmq-workflow.adapter.js';
+import { AutomationRuntimeService } from './automation-runtime.service.js';
+import { WorkerTokenGuard } from '../../common/internal/worker-token.guard.js';
 
 @Module({
-  controllers: [AutomationsController],
+  imports: [CampaignsModule, SchedulingModule, AnalyticsModule],
+  controllers: [AutomationsController, AutomationRuntimeController],
   providers: [
     AutomationsService,
-    {
-      provide: WORKFLOW_ENGINE_PORT,
-      useClass: BullMQWorkflowAdapter,
-    },
+    AutomationRuntimeService,
+    WorkerTokenGuard,
   ],
-  exports: [AutomationsService],
+  exports: [AutomationsService, AutomationRuntimeService],
 })
 export class AutomationsModule {}
