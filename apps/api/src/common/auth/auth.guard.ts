@@ -5,12 +5,14 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { FastifyRequest } from 'fastify';
 import { AuthService } from './auth.service.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import type { AuthenticatedUser } from './auth.types.js';
 
-type SecuredRequest = FastifyRequest & { user?: AuthenticatedUser };
+type SecuredRequest = {
+  headers: Record<string, string | string[] | undefined>;
+  user?: AuthenticatedUser;
+};
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -49,7 +51,7 @@ export class AuthGuard implements CanActivate {
     }
 
     const authorization = request.headers.authorization;
-    if (!authorization?.startsWith('Bearer ')) {
+    if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) {
       throw new UnauthorizedException('Bearer token is required');
     }
 
