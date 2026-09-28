@@ -500,6 +500,7 @@ export class AutomationRuntimeService {
       const result = await this.recommendations.generate(
         run.automation.workspaceId,
         brandId,
+        { supersedePending: false },
       );
       return {
         summary: result.summary,

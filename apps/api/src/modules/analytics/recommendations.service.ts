@@ -100,7 +100,11 @@ export class RecommendationsService {
     });
   }
 
-  async generate(workspaceId: number, brandId?: number) {
+  async generate(
+    workspaceId: number,
+    brandId?: number,
+    options: { supersedePending?: boolean } = {},
+  ) {
     const evidence = await this.buildEvidence(workspaceId);
     if (!evidence.metrics.length || !evidence.contentPerformance.length) {
       throw new BadRequestException(
@@ -178,15 +182,17 @@ export class RecommendationsService {
     };
 
     const inserted = await this.db.transaction(async (tx) => {
-      await tx
-        .update(schema.aiInsights)
-        .set({ status: 'superseded', updatedAt: new Date() })
-        .where(
-          and(
-            eq(schema.aiInsights.workspaceId, workspaceId),
-            inArray(schema.aiInsights.status, ['pending', 'informational']),
-          ),
-        );
+      if (options.supersedePending !== false) {
+        await tx
+          .update(schema.aiInsights)
+          .set({ status: 'superseded', updatedAt: new Date() })
+          .where(
+            and(
+              eq(schema.aiInsights.workspaceId, workspaceId),
+              inArray(schema.aiInsights.status, ['pending', 'informational']),
+            ),
+          );
+      }
 
       if (!safeInsights.length) return [];
 
