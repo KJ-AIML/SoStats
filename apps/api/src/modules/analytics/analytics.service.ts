@@ -12,6 +12,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  lt,
   sql,
 } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -218,104 +219,120 @@ export class AnalyticsService {
     const now = Date.now();
     const maxAge = 30 * 24 * 60 * 60_000;
     const initialDelay = 15 * 60_000;
+    const dispatchable: DispatchableAnalytics[] = [];
+    const batchSize = 500;
+    const maxScan = 5_000;
+    let cursor: number | undefined;
+    let scanned = 0;
 
-    const results = await this.db.query.publicationResults.findMany({
-      where: isNotNull(schema.publicationResults.platformPostId),
-      with: {
-        job: {
-          with: {
-            scheduledPublication: {
-              with: {
-                socialAccount: true,
-                workspace: true,
+    while (dispatchable.length < safeLimit && scanned < maxScan) {
+      const results = await this.db.query.publicationResults.findMany({
+        where: cursor
+          ? and(
+              isNotNull(schema.publicationResults.platformPostId),
+              lt(schema.publicationResults.id, cursor),
+            )
+          : isNotNull(schema.publicationResults.platformPostId),
+        with: {
+          job: {
+            with: {
+              scheduledPublication: {
+                with: {
+                  socialAccount: true,
+                  workspace: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: (fields, { desc: orderDesc }) => [
-        orderDesc(fields.createdAt),
-      ],
-      limit: 1000,
-    });
-
-    const candidates = results.filter((result) => {
-      const publication = result.job.scheduledPublication;
-      if (
-        publication.status !== 'published' ||
-        !result.platformPostId ||
-        now - result.createdAt.getTime() > maxAge
-      ) {
-        return false;
-      }
-
-      const description = this.providerRegistry.describeProvider(
-        publication.socialAccount.provider,
-      );
-      return Boolean(description.capabilities?.analytics);
-    });
-
-    const postIds = [
-      ...new Set(
-        candidates
-          .map((result) => result.platformPostId)
-          .filter((value): value is string => Boolean(value)),
-      ),
-    ];
-
-    const snapshots = postIds.length
-      ? await this.db.query.metricSnapshots.findMany({
-          where: inArray(schema.metricSnapshots.platformPostId, postIds),
-          orderBy: (fields, { desc: orderDesc }) => [
-            orderDesc(fields.snapshotAt),
-          ],
-        })
-      : [];
-
-    const latestByKey = new Map<
-      string,
-      typeof schema.metricSnapshots.$inferSelect
-    >();
-    for (const snapshot of snapshots) {
-      if (!snapshot.platformPostId || !snapshot.socialAccountId) continue;
-      const key = `${snapshot.contentItemId}:${snapshot.socialAccountId}:${snapshot.platformPostId}`;
-      if (!latestByKey.has(key)) latestByKey.set(key, snapshot);
-    }
-
-    const dispatchable: DispatchableAnalytics[] = [];
-
-    for (const result of candidates) {
-      const publication = result.job.scheduledPublication;
-      const account = publication.socialAccount;
-      const postId = result.platformPostId;
-      if (!postId) continue;
-
-      const key = `${publication.contentItemId}:${account.id}:${postId}`;
-      const latest = latestByKey.get(key);
-      const postAge = now - result.createdAt.getTime();
-      const interval = analyticsIntervalMs(postAge);
-      if (interval === null) continue;
-
-      const dueAt = latest
-        ? latest.snapshotAt.getTime() + interval
-        : result.createdAt.getTime() + initialDelay;
-
-      if (dueAt > now) continue;
-
-      dispatchable.push({
-        publicationResultId: result.id,
-        contentItemId: publication.contentItemId,
-        socialAccountId: account.id,
-        provider: account.provider,
-        platformPostId: postId,
-        expectedSnapshotAt: latest?.snapshotAt.toISOString() || null,
-        revision: latest
-          ? String(latest.snapshotAt.getTime())
-          : 'initial',
-        dueAt: new Date(dueAt).toISOString(),
+        orderBy: (fields, { desc: orderDesc }) => [
+          orderDesc(fields.id),
+        ],
+        limit: batchSize,
       });
 
-      if (dispatchable.length >= safeLimit) break;
+      if (!results.length) break;
+      scanned += results.length;
+      cursor = results[results.length - 1]?.id;
+
+      const candidates = results.filter((result) => {
+        const publication = result.job.scheduledPublication;
+        if (
+          publication.status !== 'published' ||
+          !result.platformPostId ||
+          now - result.createdAt.getTime() > maxAge
+        ) {
+          return false;
+        }
+
+        const description = this.providerRegistry.describeProvider(
+          publication.socialAccount.provider,
+        );
+        return Boolean(description.capabilities?.analytics);
+      });
+
+      const postIds = [
+        ...new Set(
+          candidates
+            .map((result) => result.platformPostId)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ];
+
+      const snapshots = postIds.length
+        ? await this.db.query.metricSnapshots.findMany({
+            where: inArray(schema.metricSnapshots.platformPostId, postIds),
+            orderBy: (fields, { desc: orderDesc }) => [
+              orderDesc(fields.snapshotAt),
+            ],
+          })
+        : [];
+
+      const latestByKey = new Map<
+        string,
+        typeof schema.metricSnapshots.$inferSelect
+      >();
+      for (const snapshot of snapshots) {
+        if (!snapshot.platformPostId || !snapshot.socialAccountId) continue;
+        const key = `${snapshot.contentItemId}:${snapshot.socialAccountId}:${snapshot.platformPostId}`;
+        if (!latestByKey.has(key)) latestByKey.set(key, snapshot);
+      }
+
+      for (const result of candidates) {
+        const publication = result.job.scheduledPublication;
+        const account = publication.socialAccount;
+        const postId = result.platformPostId;
+        if (!postId) continue;
+
+        const key = `${publication.contentItemId}:${account.id}:${postId}`;
+        const latest = latestByKey.get(key);
+        const postAge = now - result.createdAt.getTime();
+        const interval = analyticsIntervalMs(postAge);
+        if (interval === null) continue;
+
+        const dueAt = latest
+          ? latest.snapshotAt.getTime() + interval
+          : result.createdAt.getTime() + initialDelay;
+
+        if (dueAt > now) continue;
+
+        dispatchable.push({
+          publicationResultId: result.id,
+          contentItemId: publication.contentItemId,
+          socialAccountId: account.id,
+          provider: account.provider,
+          platformPostId: postId,
+          expectedSnapshotAt: latest?.snapshotAt.toISOString() || null,
+          revision: latest
+            ? String(latest.snapshotAt.getTime())
+            : 'initial',
+          dueAt: new Date(dueAt).toISOString(),
+        });
+
+        if (dispatchable.length >= safeLimit) break;
+      }
+
+      if (results.length < batchSize) break;
     }
 
     return dispatchable;
