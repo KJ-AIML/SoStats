@@ -2,7 +2,7 @@ import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { DRIZZLE } from '../../db/db.module.js';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 export interface CreateContentInput {
   workspaceId: number;
@@ -27,6 +27,16 @@ export class ContentService {
   ) {}
 
   async create(data: CreateContentInput) {
+    if (data.brandId) {
+      const brand = await this.db.query.brands.findFirst({
+        where: and(
+          eq(schema.brands.id, data.brandId),
+          eq(schema.brands.workspaceId, data.workspaceId),
+        ),
+      });
+      if (!brand) throw new NotFoundException('Brand not found');
+    }
+
     const [contentItem] = await this.db
       .insert(schema.contentItems)
       .values({
@@ -34,59 +44,65 @@ export class ContentService {
         status: data.status || 'draft',
       })
       .returning();
+
     return contentItem;
   }
 
-  async findAllForWorkspace(workspaceId: number) {
+  findAllForWorkspace(workspaceId: number) {
     return this.db.query.contentItems.findMany({
       where: eq(schema.contentItems.workspaceId, workspaceId),
       with: {
         variants: true,
-        tags: {
-          with: {
-            tag: true,
-          },
-        },
+        tags: { with: { tag: true } },
       },
     });
   }
 
-  async findOne(id: number) {
+  async findOne(workspaceId: number, id: number) {
     const contentItem = await this.db.query.contentItems.findFirst({
-      where: eq(schema.contentItems.id, id),
+      where: and(
+        eq(schema.contentItems.id, id),
+        eq(schema.contentItems.workspaceId, workspaceId),
+      ),
       with: {
         variants: true,
-        tags: {
-          with: {
-            tag: true,
-          },
-        },
-        assets: {
-          with: {
-            asset: true,
-          },
-        },
+        tags: { with: { tag: true } },
+        assets: { with: { asset: true } },
         approvalRequests: true,
       },
     });
+
     if (!contentItem) throw new NotFoundException('Content item not found');
     return contentItem;
   }
 
-  async updateStatus(id: number, data: UpdateContentStatusInput) {
+  async updateStatus(
+    workspaceId: number,
+    id: number,
+    data: UpdateContentStatusInput,
+  ) {
     const [contentItem] = await this.db
       .update(schema.contentItems)
       .set({ status: data.status, updatedAt: new Date() })
-      .where(eq(schema.contentItems.id, id))
+      .where(
+        and(
+          eq(schema.contentItems.id, id),
+          eq(schema.contentItems.workspaceId, workspaceId),
+        ),
+      )
       .returning();
+
     if (!contentItem) throw new NotFoundException('Content item not found');
     return contentItem;
   }
 
-  async repurpose(id: number, data: RepurposeContentInput) {
-    const contentItem = await this.findOne(id);
+  async repurpose(
+    workspaceId: number,
+    id: number,
+    data: RepurposeContentInput,
+  ) {
+    const contentItem = await this.findOne(workspaceId, id);
 
-    // Create variants for each platform
     const variants = await Promise.all(
       data.platforms.map(async (platform) => {
         const [variant] = await this.db
