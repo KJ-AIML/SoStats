@@ -5,21 +5,37 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   CurrentWorkspaceId,
   WorkspaceScoped,
 } from '../../common/workspace/workspace.decorator.js';
 import { AnalyticsService } from './analytics.service.js';
+import { RecommendationsService } from './recommendations.service.js';
 
 @WorkspaceScoped()
 @Controller('v1/analytics')
 export class AnalyticsController {
-  constructor(private readonly analyticsService: AnalyticsService) {}
+  constructor(
+    private readonly analyticsService: AnalyticsService,
+    private readonly recommendations: RecommendationsService,
+  ) {}
 
   @Get('overview')
   getOverview(@CurrentWorkspaceId() workspaceId: number) {
     return this.analyticsService.getOverview(workspaceId);
+  }
+
+  @Get('insights')
+  listInsights(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Query('limit') limit?: string,
+  ) {
+    return this.recommendations.list(
+      workspaceId,
+      limit ? Number.parseInt(limit, 10) : 30,
+    );
   }
 
   @Post('insights')
@@ -27,7 +43,23 @@ export class AnalyticsController {
     @CurrentWorkspaceId() workspaceId: number,
     @Body('brandId') brandId?: number,
   ) {
-    return this.analyticsService.generateInsights(workspaceId, brandId);
+    return this.recommendations.generate(workspaceId, brandId);
+  }
+
+  @Post('insights/:id/execute')
+  executeInsight(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.recommendations.execute(workspaceId, id);
+  }
+
+  @Post('insights/:id/dismiss')
+  dismissInsight(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.recommendations.dismiss(workspaceId, id);
   }
 
   @Get('content/:contentId')
