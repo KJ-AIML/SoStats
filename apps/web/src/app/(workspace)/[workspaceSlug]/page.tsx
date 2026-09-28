@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  BarChart3,
   CalendarDays,
   CheckCircle2,
   FileText,
@@ -31,7 +30,7 @@ export default async function WorkspaceDashboardPage({
   const content = snapshot?.content || [];
   const campaigns = snapshot?.campaigns || [];
   const schedules = (snapshot?.calendar || [])
-    .filter((item) => new Date(item.scheduledAt).getTime() >= Date.now())
+    .filter((item) => item.status === "scheduled")
     .sort(
       (a, b) =>
         new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
