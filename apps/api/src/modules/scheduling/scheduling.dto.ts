@@ -1,5 +1,4 @@
 export class CreateScheduleDto {
-  workspaceId!: number;
   contentItemId!: number;
   variantId?: number;
   socialAccountId!: number;
@@ -12,7 +11,6 @@ export class UpdateScheduleDto {
 }
 
 export class GetCalendarDto {
-  workspaceId!: number;
   startDate?: string;
   endDate?: string;
 }
