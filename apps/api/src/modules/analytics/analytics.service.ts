@@ -1,8 +1,8 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { DRIZZLE } from '../../db/db.module.js';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 @Injectable()
 export class AnalyticsService {
@@ -11,33 +11,48 @@ export class AnalyticsService {
   ) {}
 
   async getOverview(workspaceId: number) {
-    // Mock return data for overview
+    const rows = await this.db.query.analyticsDaily.findMany({
+      where: eq(schema.analyticsDaily.workspaceId, workspaceId),
+      orderBy: (fields, { desc }) => [desc(fields.date)],
+      limit: 30,
+    });
+
+    const totals = rows.reduce<Record<string, number>>((acc, row) => {
+      const metrics = (row.metrics ?? {}) as Record<string, unknown>;
+      for (const [key, value] of Object.entries(metrics)) {
+        if (typeof value === 'number') acc[key] = (acc[key] ?? 0) + value;
+      }
+      return acc;
+    }, {});
+
     return {
-      totalViews: 12500,
-      totalEngagement: 3200,
-      totalShares: 150,
-      platforms: {
-        linkedin: { views: 8000, engagement: 2000 },
-        twitter: { views: 4500, engagement: 1200 },
-      },
-      recentTrend: [
-        { date: '2023-10-01', views: 500, engagement: 120 },
-        { date: '2023-10-02', views: 700, engagement: 180 },
-        { date: '2023-10-03', views: 1200, engagement: 300 },
-      ],
+      workspaceId,
+      totals,
+      daily: rows,
+      hasData: rows.length > 0,
     };
   }
 
-  async getContentAnalytics(contentId: number) {
-    // Mock return data for a specific content item
+  async getContentAnalytics(workspaceId: number, contentId: number) {
+    const content = await this.db.query.contentItems.findFirst({
+      where: and(
+        eq(schema.contentItems.id, contentId),
+        eq(schema.contentItems.workspaceId, workspaceId),
+      ),
+    });
+
+    if (!content) throw new NotFoundException('Content item not found');
+
+    const snapshots = await this.db.query.metricSnapshots.findMany({
+      where: eq(schema.metricSnapshots.contentItemId, contentId),
+      orderBy: (fields, { desc }) => [desc(fields.snapshotAt)],
+    });
+
     return {
       contentId,
-      views: 450,
-      likes: 85,
-      comments: 12,
-      shares: 4,
-      reach: 1200,
-      clickThroughRate: 2.5,
+      latest: snapshots[0]?.metrics ?? null,
+      snapshots,
+      hasData: snapshots.length > 0,
     };
   }
 }

@@ -5,7 +5,7 @@ import * as schema from '../../db/schema.js';
 import { CreateAutomationDto } from './automations.dto.js';
 import { WORKFLOW_ENGINE_PORT } from './ports/workflow-engine.port.js';
 import type { WorkflowEnginePort } from './ports/workflow-engine.port.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 @Injectable()
 export class AutomationsService {
@@ -15,11 +15,11 @@ export class AutomationsService {
     private readonly workflowEngine: WorkflowEnginePort,
   ) {}
 
-  async create(dto: CreateAutomationDto) {
+  async create(workspaceId: number, dto: CreateAutomationDto) {
     const [automation] = await this.db
       .insert(schema.automations)
       .values({
-        workspaceId: dto.workspaceId,
+        workspaceId,
         name: dto.name,
         description: dto.description,
         triggerType: dto.triggerType,
@@ -39,16 +39,24 @@ export class AutomationsService {
     return { ...automation, versions: [version] };
   }
 
-  async findAll() {
-    const all = await this.db.select().from(schema.automations);
+  async findAll(workspaceId: number) {
+    const all = await this.db
+      .select()
+      .from(schema.automations)
+      .where(eq(schema.automations.workspaceId, workspaceId));
     return all;
   }
 
-  async run(id: number) {
+  async run(workspaceId: number, id: number) {
     const [automation] = await this.db
       .select()
       .from(schema.automations)
-      .where(eq(schema.automations.id, id));
+      .where(
+        and(
+          eq(schema.automations.id, id),
+          eq(schema.automations.workspaceId, workspaceId),
+        ),
+      );
 
     if (!automation) {
       throw new NotFoundException(`Automation with id ${id} not found`);

@@ -1,53 +1,67 @@
 import {
+  Body,
   Controller,
+  Delete,
   Get,
+  Param,
+  ParseIntPipe,
   Post,
   Put,
-  Delete,
-  Param,
-  Body,
-  Query,
-  ParseIntPipe,
 } from '@nestjs/common';
+import {
+  CurrentWorkspaceId,
+  WorkspaceScoped,
+} from '../../common/workspace/workspace.decorator.js';
 import { IntegrationsService } from './integrations.service.js';
 
+@WorkspaceScoped()
 @Controller('integrations')
 export class IntegrationsController {
   constructor(private readonly integrationsService: IntegrationsService) {}
 
   @Get()
-  async findAll(@Query('workspaceId', ParseIntPipe) workspaceId: number) {
+  findAll(@CurrentWorkspaceId() workspaceId: number) {
     return this.integrationsService.findAll(workspaceId);
   }
 
   @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.integrationsService.findOne(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.integrationsService.findOne(workspaceId, id);
   }
 
   @Post()
-  async create(
-    @Query('workspaceId', ParseIntPipe) workspaceId: number,
-    @Body() data: { type: string; config: any },
+  create(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Body() data: { type: string; config: Record<string, unknown> },
   ) {
     return this.integrationsService.create(workspaceId, data);
   }
 
   @Put(':id')
-  async update(
+  update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() data: { config?: any; status?: string },
+    @CurrentWorkspaceId() workspaceId: number,
+    @Body() data: { config?: Record<string, unknown>; status?: string },
   ) {
-    return this.integrationsService.update(id, data);
+    return this.integrationsService.update(workspaceId, id, data);
   }
 
   @Delete(':id')
-  async remove(@Param('id', ParseIntPipe) id: number) {
-    return this.integrationsService.remove(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.integrationsService.remove(workspaceId, id);
   }
 
   @Post(':id/sync')
-  async syncIntegration(@Param('id', ParseIntPipe) id: number) {
-    return this.integrationsService.syncIntegration(id);
+  syncIntegration(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.integrationsService.syncIntegration(workspaceId, id);
   }
 }

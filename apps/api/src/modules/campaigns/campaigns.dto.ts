@@ -1,5 +1,4 @@
 export class CreateCampaignDto {
-  workspaceId!: number;
   brandId?: number;
   name!: string;
   description?: string;

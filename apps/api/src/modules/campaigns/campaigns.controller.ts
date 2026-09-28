@@ -1,33 +1,45 @@
 import {
-  Controller,
-  Post,
-  Get,
   Body,
+  Controller,
+  Get,
   Param,
   ParseIntPipe,
+  Post,
 } from '@nestjs/common';
+import {
+  CurrentWorkspaceId,
+  WorkspaceScoped,
+} from '../../common/workspace/workspace.decorator.js';
 import { CampaignsService } from './campaigns.service.js';
 import { CreateCampaignDto, GenerateCampaignDto } from './campaigns.dto.js';
 
+@WorkspaceScoped()
 @Controller('v1/campaigns')
 export class CampaignsController {
   constructor(private readonly campaignsService: CampaignsService) {}
 
   @Post()
-  async create(@Body() body: CreateCampaignDto) {
-    return this.campaignsService.create(body);
+  create(
+    @Body() body: CreateCampaignDto,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.campaignsService.create(workspaceId, body);
   }
 
   @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.campaignsService.findOne(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.campaignsService.findOne(workspaceId, id);
   }
 
   @Post(':id/generate')
-  async generate(
+  generate(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: GenerateCampaignDto,
+    @CurrentWorkspaceId() workspaceId: number,
   ) {
-    return this.campaignsService.generate(id, body);
+    return this.campaignsService.generate(workspaceId, id, body);
   }
 }

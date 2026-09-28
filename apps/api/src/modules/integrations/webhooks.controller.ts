@@ -1,48 +1,59 @@
 import {
+  Body,
   Controller,
+  Delete,
   Get,
+  Param,
+  ParseIntPipe,
   Post,
   Put,
-  Delete,
-  Param,
-  Body,
-  Query,
-  ParseIntPipe,
 } from '@nestjs/common';
+import {
+  CurrentWorkspaceId,
+  WorkspaceScoped,
+} from '../../common/workspace/workspace.decorator.js';
 import { WebhooksService } from './webhooks.service.js';
 
+@WorkspaceScoped()
 @Controller('webhooks')
 export class WebhooksController {
   constructor(private readonly webhooksService: WebhooksService) {}
 
   @Get()
-  async findAll(@Query('workspaceId', ParseIntPipe) workspaceId: number) {
+  findAll(@CurrentWorkspaceId() workspaceId: number) {
     return this.webhooksService.findAll(workspaceId);
   }
 
   @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.webhooksService.findOne(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.webhooksService.findOne(workspaceId, id);
   }
 
   @Post()
-  async create(
-    @Query('workspaceId', ParseIntPipe) workspaceId: number,
+  create(
+    @CurrentWorkspaceId() workspaceId: number,
     @Body() data: { url: string; events: string[] },
   ) {
     return this.webhooksService.create(workspaceId, data);
   }
 
   @Put(':id')
-  async update(
+  update(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
     @Body() data: { url?: string; events?: string[]; active?: boolean },
   ) {
-    return this.webhooksService.update(id, data);
+    return this.webhooksService.update(workspaceId, id, data);
   }
 
   @Delete(':id')
-  async remove(@Param('id', ParseIntPipe) id: number) {
-    return this.webhooksService.remove(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.webhooksService.remove(workspaceId, id);
   }
 }

@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { MediaController } from './media.controller.js';
 import { MediaService } from './media.service.js';
 import { OBJECT_STORAGE_PORT } from './ports/object-storage.port.js';
-import { MockObjectStorageAdapter } from './adapters/mock-storage.adapter.js';
+import { S3ObjectStorageAdapter } from './adapters/s3-storage.adapter.js';
 
 @Module({
   controllers: [MediaController],
@@ -10,7 +10,7 @@ import { MockObjectStorageAdapter } from './adapters/mock-storage.adapter.js';
     MediaService,
     {
       provide: OBJECT_STORAGE_PORT,
-      useClass: MockObjectStorageAdapter,
+      useClass: S3ObjectStorageAdapter,
     },
   ],
   exports: [MediaService],

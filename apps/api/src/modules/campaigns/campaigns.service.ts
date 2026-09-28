@@ -1,9 +1,27 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Injectable,
+  Inject,
+  NotFoundException,
+} from '@nestjs/common';
 import { DRIZZLE } from '../../db/db.module.js';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { CreateCampaignDto, GenerateCampaignDto } from './campaigns.dto.js';
+
+interface AiCampaignPlan {
+  title: string;
+  objective: string;
+  audience: string;
+  channels: string[];
+  contentPillars: string[];
+  contentIdeas: Array<{
+    idea: string;
+    description: string;
+    format: string;
+  }>;
+}
 
 @Injectable()
 export class CampaignsService {
@@ -11,111 +29,152 @@ export class CampaignsService {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
   ) {}
 
-  async create(data: CreateCampaignDto) {
+  async create(workspaceId: number, data: CreateCampaignDto) {
+    if (data.brandId) {
+      const brand = await this.db.query.brands.findFirst({
+        where: and(
+          eq(schema.brands.id, data.brandId),
+          eq(schema.brands.workspaceId, workspaceId),
+        ),
+      });
+      if (!brand) throw new NotFoundException('Brand not found');
+    }
+
     const { startDate, endDate, ...rest } = data;
     const [campaign] = await this.db
       .insert(schema.campaigns)
       .values({
         ...rest,
+        workspaceId,
         startDate: startDate ? new Date(startDate) : undefined,
         endDate: endDate ? new Date(endDate) : undefined,
       })
       .returning();
+
     return campaign;
   }
 
-  async findOne(id: number) {
+  async findOne(workspaceId: number, id: number) {
     const campaign = await this.db.query.campaigns.findFirst({
-      where: eq(schema.campaigns.id, id),
+      where: and(
+        eq(schema.campaigns.id, id),
+        eq(schema.campaigns.workspaceId, workspaceId),
+      ),
       with: {
         channels: true,
         pillars: true,
-        contentItems: {
-          with: {
-            variants: true,
-          },
-        },
+        contentItems: { with: { variants: true } },
       },
     });
+
     if (!campaign) throw new NotFoundException('Campaign not found');
     return campaign;
   }
 
-  async generate(id: number, data: GenerateCampaignDto) {
-    const campaign = await this.findOne(id);
+  private async requestPlan(
+    campaign: Awaited<ReturnType<CampaignsService['findOne']>>,
+    data: GenerateCampaignDto,
+  ): Promise<AiCampaignPlan> {
+    const baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
 
-    // 1. Mock Axios call to the AI service
-    const mockAiPlan = {
-      channels: ['linkedin', 'twitter'],
-      pillars: ['AI Trends', 'Automation Strategy'],
-      contentItems: [
-        {
-          title: 'The Future of AI in Marketing',
-          description: 'A deep dive into AI tools for marketers.',
-          variants: [
-            {
-              platform: 'linkedin',
-              content:
-                'AI is changing marketing forever. Here are the top 3 trends...',
-            },
-            {
-              platform: 'twitter',
-              content: 'AI is changing marketing forever! #MarketingAI #Trends',
-            },
-          ],
-        },
-      ],
-    };
+    try {
+      const response = await fetch(baseUrl + '/v1/campaigns/plan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          goal: campaign.goal || data.topic || campaign.name,
+          audience: data.instructions || 'Existing brand audience',
+          channels: campaign.channels.map((channel) => channel.platform),
+          tone: 'Use the configured brand voice',
+          brand_context: campaign.description || undefined,
+        }),
+      });
 
-    // 2. Insert channels and pillars
-    if (mockAiPlan.channels.length > 0) {
-      await this.db.insert(schema.campaignChannels).values(
-        mockAiPlan.channels.map((platform) => ({
-          campaignId: id,
-          platform,
-        })),
-      );
+      if (!response.ok) {
+        throw new BadGatewayException(
+          `AI service returned HTTP ${response.status}`,
+        );
+      }
+
+      return (await response.json()) as AiCampaignPlan;
+    } catch (error) {
+      if (error instanceof BadGatewayException) throw error;
+      throw new BadGatewayException('AI campaign planning service unavailable');
+    } finally {
+      clearTimeout(timer);
     }
+  }
 
-    if (mockAiPlan.pillars.length > 0) {
-      await this.db.insert(schema.campaignPillars).values(
-        mockAiPlan.pillars.map((pillar) => ({
-          campaignId: id,
-          pillar,
-        })),
-      );
-    }
+  async generate(
+    workspaceId: number,
+    id: number,
+    data: GenerateCampaignDto,
+  ) {
+    const campaign = await this.findOne(workspaceId, id);
+    const plan = await this.requestPlan(campaign, data);
 
-    // 3. Insert content items and variants
-    for (const item of mockAiPlan.contentItems) {
-      const [insertedItem] = await this.db
-        .insert(schema.contentItems)
-        .values({
-          workspaceId: campaign.workspaceId,
-          brandId: campaign.brandId,
-          title: item.title,
-          description: item.description,
-          campaignId: id,
-        })
-        .returning();
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(schema.campaignChannels)
+        .where(eq(schema.campaignChannels.campaignId, id));
+      await tx
+        .delete(schema.campaignPillars)
+        .where(eq(schema.campaignPillars.campaignId, id));
 
-      if (item.variants.length > 0) {
-        await this.db.insert(schema.contentVariants).values(
-          item.variants.map((variant) => ({
-            contentItemId: insertedItem.id,
-            platform: variant.platform,
-            content: variant.content,
+      if (plan.channels.length) {
+        await tx.insert(schema.campaignChannels).values(
+          plan.channels.map((platform) => ({ campaignId: id, platform })),
+        );
+      }
+
+      if (plan.contentPillars.length) {
+        await tx.insert(schema.campaignPillars).values(
+          plan.contentPillars.map((pillar) => ({ campaignId: id, pillar })),
+        );
+      }
+
+      for (const idea of plan.contentIdeas) {
+        const [item] = await tx
+          .insert(schema.contentItems)
+          .values({
+            workspaceId,
+            brandId: campaign.brandId,
+            title: idea.idea,
+            description: idea.description,
+            campaignId: id,
+            status: 'draft',
+          })
+          .returning();
+
+        const platforms = plan.channels.length ? plan.channels : ['generic'];
+        await tx.insert(schema.contentVariants).values(
+          platforms.map((platform) => ({
+            contentItemId: item.id,
+            platform,
+            content: idea.description,
+            status: 'draft',
           })),
         );
       }
-    }
 
-    // 4. Update campaign status to active
-    await this.db
-      .update(schema.campaigns)
-      .set({ status: 'active', updatedAt: new Date() })
-      .where(eq(schema.campaigns.id, id));
+      await tx
+        .update(schema.campaigns)
+        .set({
+          description: campaign.description || plan.objective,
+          status: 'active',
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.campaigns.id, id),
+            eq(schema.campaigns.workspaceId, workspaceId),
+          ),
+        );
+    });
 
-    return this.findOne(id);
+    return this.findOne(workspaceId, id);
   }
 }
