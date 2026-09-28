@@ -136,12 +136,48 @@ export type AnalyticsOverview = {
   hasData: boolean;
 };
 
+export type AutomationVersionRecord = {
+  id: number;
+  automationId: number;
+  versionNumber: number;
+  workflowDefinition: unknown;
+  publishedAt?: string | null;
+  createdAt: string;
+};
+
+export type AutomationRunStepRecord = {
+  id: number;
+  runId: number;
+  stepId: string;
+  status: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  logs?: string | null;
+  error?: string | null;
+  createdAt: string;
+};
+
+export type AutomationRunRecord = {
+  id: number;
+  automationId: number;
+  versionId: number;
+  status: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  error?: string | null;
+  createdAt: string;
+  steps?: AutomationRunStepRecord[];
+  version?: AutomationVersionRecord;
+};
+
 export type AutomationRecord = {
   id: number;
   name: string;
   description?: string | null;
   triggerType: string;
   status: string;
+  versions?: AutomationVersionRecord[];
+  runs?: AutomationRunRecord[];
 };
 
 export type AssetRecord = {
