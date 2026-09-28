@@ -164,7 +164,6 @@ export function AutomationWorkspace({
             ? {
                 ...automation,
                 name,
-                status: "draft",
                 versions: [
                   ...(automation.versions || []),
                   {

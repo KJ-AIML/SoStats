@@ -128,7 +128,7 @@ export class AutomationsService {
 
     await this.db
       .update(schema.automations)
-      .set({ status: 'draft', updatedAt: new Date() })
+      .set({ updatedAt: new Date() })
       .where(eq(schema.automations.id, automationId));
 
     return version;
