@@ -6,7 +6,15 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import { FastifyReply, FastifyRequest } from 'fastify';
+
+type ReplyLike = {
+  status(code: number): ReplyLike;
+  send(payload: unknown): void;
+};
+
+type RequestLike = {
+  url: string;
+};
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -14,8 +22,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
-    const response = ctx.getResponse<FastifyReply>();
-    const request = ctx.getRequest<FastifyRequest>();
+    const response = ctx.getResponse<ReplyLike>();
+    const request = ctx.getRequest<RequestLike>();
 
     const status =
       exception instanceof HttpException
@@ -40,7 +48,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       path: request.url,
       message:
         typeof message === 'object' && message !== null && 'message' in message
-          ? (message as any).message
+          ? (message as { message?: unknown }).message
           : message,
     });
   }
