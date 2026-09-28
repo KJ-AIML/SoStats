@@ -1,35 +1,47 @@
-import * as crypto from 'crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from 'crypto';
 
-// In a real app, this should be in an environment variable, 32 bytes for aes-256-cbc
-const ENCRYPTION_KEY =
-  process.env.ENCRYPTION_KEY || '12345678901234567890123456789012'; // 32 chars
-const ALGORITHM = 'aes-256-cbc';
+const ALGORITHM = 'aes-256-gcm';
 
-export function encrypt(text: string): string {
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(
-    ALGORITHM,
-    Buffer.from(ENCRYPTION_KEY),
-    iv,
-  );
-  let encrypted = cipher.update(text);
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
-  return iv.toString('hex') + ':' + encrypted.toString('hex');
+function getKey(): Buffer {
+  const secret = process.env.ENCRYPTION_KEY;
+  if (!secret) throw new Error('ENCRYPTION_KEY must be configured');
+  return createHash('sha256').update(secret, 'utf8').digest();
 }
 
-export function decrypt(text: string): string {
-  const textParts = text.split(':');
-  const ivPart = textParts.shift();
-  if (!ivPart) throw new Error('Invalid encrypted text format');
+export function encrypt(text: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(ALGORITHM, getKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
 
-  const iv = Buffer.from(ivPart, 'hex');
-  const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-  const decipher = crypto.createDecipheriv(
+  return [
+    'v1',
+    iv.toString('base64url'),
+    tag.toString('base64url'),
+    encrypted.toString('base64url'),
+  ].join('.');
+}
+
+export function decrypt(value: string): string {
+  const [version, ivPart, tagPart, encryptedPart] = value.split('.');
+  if (version !== 'v1' || !ivPart || !tagPart || !encryptedPart) {
+    throw new Error('Unsupported encrypted value format');
+  }
+
+  const decipher = createDecipheriv(
     ALGORITHM,
-    Buffer.from(ENCRYPTION_KEY),
-    iv,
+    getKey(),
+    Buffer.from(ivPart, 'base64url'),
   );
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return decrypted.toString();
+  decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
+
+  return Buffer.concat([
+    decipher.update(Buffer.from(encryptedPart, 'base64url')),
+    decipher.final(),
+  ]).toString('utf8');
 }
