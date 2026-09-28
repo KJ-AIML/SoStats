@@ -139,6 +139,38 @@ export type AnalyticsOverview = {
   syncWindowDays?: number;
 };
 
+export type AiInsightRecord = {
+  id: number;
+  workspaceId: number;
+  brandId?: number | null;
+  generationId: string;
+  summary?: string | null;
+  finding: string;
+  evidence: string[];
+  recommendation: string;
+  impactEstimate?: string | null;
+  confidence: "low" | "medium" | "high";
+  actionType:
+    | "create_campaign"
+    | "repurpose_content"
+    | "reschedule_publication"
+    | "none";
+  actionPayload: Record<string, unknown>;
+  status:
+    | "pending"
+    | "executing"
+    | "executed"
+    | "failed"
+    | "dismissed"
+    | "superseded"
+    | "informational";
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  executedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AutomationVersionRecord = {
   id: number;
   automationId: number;
@@ -201,6 +233,7 @@ export type WorkspaceSnapshot = {
   content: ContentRecord[];
   calendar: ScheduleRecord[];
   analytics: AnalyticsOverview;
+  insights: AiInsightRecord[];
   channels: SocialAccountRecord[];
   automations: AutomationRecord[];
   assets: AssetRecord[];
@@ -331,6 +364,7 @@ export async function loadWorkspaceSnapshot(
     content,
     calendar,
     analytics,
+    insights,
     channels,
     automations,
     assets,
@@ -351,6 +385,12 @@ export async function loadWorkspaceSnapshot(
         trackedPosts: 0,
         syncWindowDays: 30,
       },
+      errors,
+    ),
+    safe(
+      "insights",
+      workspaceRequest<AiInsightRecord[]>(workspaceSlug, "/v1/analytics/insights?limit=30"),
+      [],
       errors,
     ),
     safe("channels", workspaceRequest<SocialAccountRecord[]>(workspaceSlug, "/v1/channels"), [], errors),
@@ -376,6 +416,7 @@ export async function loadWorkspaceSnapshot(
     content,
     calendar,
     analytics,
+    insights,
     channels,
     automations,
     assets,
