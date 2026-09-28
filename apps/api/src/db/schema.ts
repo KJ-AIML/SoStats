@@ -15,6 +15,7 @@ import { relations } from 'drizzle-orm';
 // users
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
+  authSubject: varchar('auth_subject', { length: 255 }).unique(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   name: varchar('name', { length: 255 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -25,6 +26,8 @@ export const users = pgTable('users', {
 export const workspaces = pgTable('workspaces', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
+  slug: varchar('slug', { length: 255 }).notNull().unique(),
+  timezone: varchar('timezone', { length: 100 }).notNull().default('UTC'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -141,6 +144,9 @@ export const brandRules = pgTable('brand_rules', {
 // social_accounts
 export const socialAccounts = pgTable('social_accounts', {
   id: serial('id').primaryKey(),
+  workspaceId: integer('workspace_id')
+    .notNull()
+    .references(() => workspaces.id, { onDelete: 'cascade' }),
   brandId: integer('brand_id')
     .notNull()
     .references(() => brands.id, { onDelete: 'cascade' }),
@@ -574,6 +580,7 @@ export const webhookDeliveries = pgTable('webhook_deliveries', {
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   members: many(workspaceMembers),
   brands: many(brands),
+  socialAccounts: many(socialAccounts),
   assets: many(assets),
   assetCollections: many(assetCollections),
   campaigns: many(campaigns),
@@ -657,6 +664,10 @@ export const brandRulesRelations = relations(brandRules, ({ one }) => ({
 export const socialAccountsRelations = relations(
   socialAccounts,
   ({ one, many }) => ({
+    workspace: one(workspaces, {
+      fields: [socialAccounts.workspaceId],
+      references: [workspaces.id],
+    }),
     brand: one(brands, {
       fields: [socialAccounts.brandId],
       references: [brands.id],
