@@ -8,6 +8,7 @@ dist/
 __pycache__/
 *.pyc
 .venv/
+*.tsbuildinfo
 
 # Environment
 .env
@@ -28,10 +29,15 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Test / coverage
+coverage/
+playwright-report/
+test-results/
+
 # Docker volumes
 infra/data/
 
-# Pi/Heli local state
+# Local agent/runtime state
 .heli/
 .pi/
 .agents/
