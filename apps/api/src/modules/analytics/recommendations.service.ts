@@ -26,21 +26,10 @@ import {
   calendarDayInZone,
 } from './analytics.service.js';
 
-type InsightActionType =
-  | 'create_campaign'
-  | 'repurpose_content'
-  | 'reschedule_publication'
-  | 'none';
-
-type AiInsightAction = {
-  type: InsightActionType;
-  campaign_goal?: string | null;
-  audience?: string | null;
-  source_content_id?: number | null;
-  target_platforms?: string[];
-  schedule_id?: number | null;
-  suggested_at?: string | null;
-};
+import {
+  sanitizeInsightAction,
+  type AiInsightAction,
+} from './recommendation-policy.js';
 
 type AiInsight = {
   finding: string;
@@ -71,11 +60,6 @@ type UpcomingSchedule = {
   platform: string;
   scheduled_at: string;
 };
-
-function normalizeProvider(value?: string | null) {
-  const normalized = (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  return normalized === 'twitter' ? 'x' : normalized;
-}
 
 function interactionScore(metrics: Record<string, number>) {
   return (
@@ -162,7 +146,7 @@ export class RecommendationsService {
     const safeInsights = (generated.insights || [])
       .slice(0, 5)
       .map((insight) => {
-        const action = this.sanitizeAction(
+        const action = sanitizeInsightAction(
           insight.action,
           insight.recommendation,
           evidence,
@@ -457,100 +441,6 @@ export class RecommendationsService {
       contentItemIds: generated.contentItems.map((item) => item.id),
       action: repurpose ? 'repurpose_content' : 'create_campaign',
     };
-  }
-
-  private sanitizeAction(
-    action: AiInsightAction | undefined,
-    recommendation: string,
-    evidence: Awaited<ReturnType<RecommendationsService['buildEvidence']>>,
-  ): {
-    type: InsightActionType;
-    payload: Record<string, unknown>;
-  } {
-    if (!action || !action.type) {
-      return { type: 'none', payload: {} };
-    }
-
-    const channelMap = new Map(
-      evidence.availableChannels.map((channel) => [
-        normalizeProvider(channel),
-        channel,
-      ]),
-    );
-    const targetPlatforms = (action.target_platforms || [])
-      .map((channel) => channelMap.get(normalizeProvider(channel)))
-      .filter((channel): channel is string => Boolean(channel));
-
-    if (action.type === 'repurpose_content') {
-      const allowedIds = new Set(
-        evidence.contentPerformance.map((item) => item.content_item_id),
-      );
-      if (
-        !action.source_content_id ||
-        !allowedIds.has(action.source_content_id)
-      ) {
-        return { type: 'none', payload: {} };
-      }
-
-      return {
-        type: 'repurpose_content',
-        payload: {
-          sourceContentId: action.source_content_id,
-          targetPlatforms:
-            targetPlatforms.length
-              ? targetPlatforms
-              : evidence.availableChannels.slice(0, 3),
-          campaignGoal:
-            action.campaign_goal || recommendation,
-          audience: action.audience || undefined,
-        },
-      };
-    }
-
-    if (action.type === 'reschedule_publication') {
-      const allowedSchedules = new Set(
-        evidence.upcomingSchedules.map((item) => item.schedule_id),
-      );
-      const suggested = action.suggested_at
-        ? new Date(action.suggested_at)
-        : null;
-
-      if (
-        !action.schedule_id ||
-        !allowedSchedules.has(action.schedule_id) ||
-        !suggested ||
-        Number.isNaN(suggested.getTime()) ||
-        suggested.getTime() <= Date.now() ||
-        suggested.getTime() > Date.now() + 60 * 24 * 60 * 60_000
-      ) {
-        return { type: 'none', payload: {} };
-      }
-
-      return {
-        type: 'reschedule_publication',
-        payload: {
-          scheduleId: action.schedule_id,
-          suggestedAt: suggested.toISOString(),
-        },
-      };
-    }
-
-    if (action.type === 'create_campaign') {
-      return {
-        type: 'create_campaign',
-        payload: {
-          campaignGoal:
-            action.campaign_goal || recommendation,
-          audience: action.audience || undefined,
-          targetPlatforms:
-            targetPlatforms.length
-              ? targetPlatforms
-              : evidence.availableChannels.slice(0, 3),
-        },
-      };
-    }
-
-    return { type: 'none', payload: {} };
   }
 
   private async buildEvidence(workspaceId: number) {
