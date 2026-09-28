@@ -37,8 +37,7 @@ External systems stay behind adapters:
 - integration adapters
 ```
 
-See [the architecture plan](docs/architecture/SoStats_Architecture_Implementation_Plan.md)
-and [Stage 0 hardening notes](docs/architecture/STAGE_0_HARDENING.md).
+See [the architecture plan](docs/architecture/SoStats_Architecture_Implementation_Plan.md),\n[Stage 0 hardening notes](docs/architecture/STAGE_0_HARDENING.md), and\n[Stage 1 vertical slice notes](docs/architecture/STAGE_1_VERTICAL_SLICE.md).
 
 ## Repository layout
 
