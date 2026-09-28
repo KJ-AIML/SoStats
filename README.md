@@ -37,7 +37,12 @@ External systems stay behind adapters:
 - integration adapters
 ```
 
-See [the architecture plan](docs/architecture/SoStats_Architecture_Implementation_Plan.md),\n[Stage 0 hardening notes](docs/architecture/STAGE_0_HARDENING.md), and\n[Stage 1 vertical slice notes](docs/architecture/STAGE_1_VERTICAL_SLICE.md).
+Architecture notes:
+
+- [Implementation plan](docs/architecture/SoStats_Architecture_Implementation_Plan.md)
+- [Stage 0 hardening](docs/architecture/STAGE_0_HARDENING.md)
+- [Stage 1 real-data vertical slice](docs/architecture/STAGE_1_VERTICAL_SLICE.md)
+- [Stage 2 reliable publishing](docs/architecture/STAGE_2_RELIABLE_PUBLISHING.md)
 
 ## Repository layout
 
@@ -73,12 +78,20 @@ pnpm dev:api
 pnpm dev:web
 ```
 
+For local web-to-API wiring, copy `apps/web/.env.example` to
+`apps/web/.env.local`. The browser talks to a same-origin Next.js BFF;
+backend auth credentials stay on the server.
+
 Build the worker before starting it:
 
 ```bash
 pnpm --filter worker build
 pnpm dev:worker
 ```
+
+The API and worker must share the same independent `WORKER_API_TOKEN`. The
+worker uses `SOSTATS_API_URL` to call the internal publication execution
+boundary and never receives OAuth access tokens in BullMQ jobs.
 
 ## AI service
 
@@ -108,5 +121,6 @@ every pull request.
 
 Do not commit real environment files or credentials.
 
-Production deployments must configure strong authentication/encryption secrets
-and must not enable `AUTH_DEV_BYPASS`.
+Production deployments must configure strong authentication/encryption secrets,
+must use an independent strong `WORKER_API_TOKEN`, and must not enable
+`AUTH_DEV_BYPASS`.

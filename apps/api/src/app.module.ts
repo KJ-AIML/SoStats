@@ -15,6 +15,7 @@ import { MediaModule } from './modules/media/media.module.js';
 import { ContentModule } from './modules/content/content.module.js';
 import { CampaignsModule } from './modules/campaigns/campaigns.module.js';
 import { SchedulingModule } from './modules/scheduling/scheduling.module.js';
+import { PublishingModule } from './modules/publishing/publishing.module.js';
 import { AutomationsModule } from './modules/automations/automations.module.js';
 import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 import { IntegrationsModule } from './modules/integrations/integrations.module.js';
@@ -32,6 +33,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module.j
     ContentModule,
     CampaignsModule,
     SchedulingModule,
+    PublishingModule,
     AutomationsModule,
     AnalyticsModule,
     IntegrationsModule,

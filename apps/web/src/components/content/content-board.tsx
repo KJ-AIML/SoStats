@@ -55,6 +55,11 @@ type ScheduleChannel = {
   accountName?: string | null;
 };
 
+function normalizeProvider(value?: string | null) {
+  const normalized = (value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normalized === "twitter" ? "x" : normalized;
+}
+
 export function ContentBoard({
   workspaceSlug,
   initialItems,
@@ -179,7 +184,7 @@ export function ContentBoard({
         queueMicrotask(() => {
           revertStatus(moved.id, previousStatus);
           setWorkflowMessage(
-            "Published is controlled by the publishing worker. Schedule approved content instead of manually marking it published.",
+            "Published is controlled by the publishing worker. Schedule reviewed content instead of manually marking it published.",
           );
         });
         return reordered;
@@ -229,12 +234,10 @@ export function ContentBoard({
       return;
     }
 
-    const normalize = (value?: string | null) =>
-      (value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const variant =
-      item.variantRefs?.find(
-        (entry) => normalize(entry.platform) === normalize(channel.provider),
-      ) || item.variantRefs?.[0];
+    const variant = item.variantRefs?.find(
+      (entry) =>
+        normalizeProvider(entry.platform) === normalizeProvider(channel.provider),
+    );
 
     setIsScheduling(true);
     setScheduleError(null);
@@ -261,13 +264,6 @@ export function ContentBoard({
         throw new Error(schedulePayload.error || "Unable to create schedule");
       }
 
-      const statusSaved = await persistStatus(item.id, "Scheduled");
-      if (!statusSaved) {
-        throw new Error(
-          "The schedule was created, but content status could not be updated.",
-        );
-      }
-
       setItems((current) =>
         current.map((entry) =>
           entry.id === item.id
@@ -281,7 +277,7 @@ export function ContentBoard({
       );
       setScheduleCandidate(null);
       setWorkflowMessage(
-        `Scheduled on ${channel.accountName || channel.provider}. It will now appear in Calendar.`,
+        `Scheduled on ${channel.accountName || channel.provider}. The worker will queue it near the requested publish time.`,
       );
     } catch (error) {
       setScheduleError(
@@ -330,7 +326,7 @@ export function ContentBoard({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 tracking-[-0.02em]">
               <CalendarClock className="h-4 w-4 text-[#ef2b2d]" />
-              Schedule approved content
+              Schedule reviewed content
             </DialogTitle>
           </DialogHeader>
 
@@ -367,6 +363,12 @@ export function ContentBoard({
               />
             </div>
 
+            {!itemHasCompatibleVariant(items, scheduleCandidate?.itemId, channelProvider(channels, selectedChannelId)) && scheduleCandidate && selectedChannelId && (
+              <p className="rounded-xl bg-amber-50 p-3 text-[9px] leading-4 text-amber-800">
+                No platform-specific variant exists for this channel. SoStats will publish the canonical content text.
+              </p>
+            )}
+
             {scheduleError && (
               <p className="rounded-xl bg-red-50 p-3 text-[9px] leading-4 text-red-700">
                 {scheduleError}
@@ -391,11 +393,28 @@ export function ContentBoard({
               {isScheduling && (
                 <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
               )}
-              Add to calendar
+              Add to publishing queue
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function channelProvider(channels: ScheduleChannel[], selectedChannelId: string) {
+  return channels.find((entry) => entry.id === Number(selectedChannelId))?.provider;
+}
+
+function itemHasCompatibleVariant(
+  items: ContentItem[],
+  itemId?: string,
+  provider?: string,
+) {
+  if (!itemId || !provider) return true;
+  const item = items.find((entry) => entry.id === itemId);
+  if (!item?.variantRefs?.length) return false;
+  return item.variantRefs.some(
+    (entry) => normalizeProvider(entry.platform) === normalizeProvider(provider),
   );
 }

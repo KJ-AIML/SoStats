@@ -14,11 +14,30 @@ export class ProviderRegistry {
     this.providers.set(provider.providerName, provider);
   }
 
+  hasProvider(providerName: string) {
+    return this.providers.has(providerName);
+  }
+
   getProvider(providerName: string): SocialPublisherPort {
     const provider = this.providers.get(providerName);
     if (!provider) {
       throw new NotFoundException(`Provider '${providerName}' not supported`);
     }
     return provider;
+  }
+
+  describeProvider(providerName: string) {
+    const provider = this.providers.get(providerName);
+    if (!provider) {
+      return {
+        supported: false,
+        capabilities: null,
+      };
+    }
+
+    return {
+      supported: true,
+      capabilities: provider.capabilities,
+    };
   }
 }

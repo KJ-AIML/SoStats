@@ -80,6 +80,33 @@ export type SocialAccountRecord = {
   accountName?: string | null;
   expiresAt?: string | null;
   status: string;
+  supported?: boolean;
+  capabilities?: {
+    text: boolean;
+    images: boolean;
+    video: boolean;
+    carousel: boolean;
+    analytics: boolean;
+    nativeScheduling: boolean;
+  } | null;
+};
+
+export type PublicationResultRecord = {
+  id: number;
+  platformPostId?: string | null;
+  platformPostUrl?: string | null;
+  errorType?: string | null;
+  errorMessage?: string | null;
+  createdAt: string;
+};
+
+export type PublicationJobRecord = {
+  id: number;
+  status: string;
+  attempts: number;
+  lastAttemptAt?: string | null;
+  nextAttemptAt?: string | null;
+  results?: PublicationResultRecord[];
 };
 
 export type ScheduleRecord = {
@@ -90,9 +117,12 @@ export type ScheduleRecord = {
   socialAccountId: number;
   scheduledAt: string;
   status: string;
+  createdAt?: string;
+  updatedAt?: string;
   contentItem?: ContentRecord;
   variant?: ContentVariantRecord | null;
   socialAccount?: SocialAccountRecord;
+  jobs?: PublicationJobRecord[];
 };
 
 export type AnalyticsOverview = {

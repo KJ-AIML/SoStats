@@ -15,20 +15,37 @@ export default async function CalendarPage({
     title: string;
     channel: string;
     scheduledAt: string;
+    status: string;
+    failureReason?: string;
+    postUrl?: string;
   }> = [];
   let connectionError = false;
 
   try {
     const snapshot = await loadWorkspaceSnapshot(workspaceSlug);
-    schedules = snapshot.calendar.map((schedule) => ({
-      id: schedule.id,
-      title:
-        schedule.contentItem?.title ||
-        schedule.variant?.content?.slice(0, 90) ||
-        "Scheduled content",
-      channel: schedule.socialAccount?.provider || "Channel",
-      scheduledAt: schedule.scheduledAt,
-    }));
+    schedules = snapshot.calendar.map((schedule) => {
+      const results =
+        schedule.jobs
+          ?.flatMap((job) => job.results || [])
+          .sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          ) || [];
+      const latest = results[0];
+
+      return {
+        id: schedule.id,
+        title:
+          schedule.contentItem?.title ||
+          schedule.variant?.content?.slice(0, 90) ||
+          "Scheduled content",
+        channel: schedule.socialAccount?.provider || "Channel",
+        scheduledAt: schedule.scheduledAt,
+        status: schedule.status,
+        failureReason: latest?.errorMessage || undefined,
+        postUrl: latest?.platformPostUrl || undefined,
+      };
+    });
   } catch {
     connectionError = true;
   }
@@ -38,7 +55,7 @@ export default async function CalendarPage({
       <PageHeading
         eyebrow="Calendar"
         title="Plan every channel in one view"
-        description="Review coverage, spot gaps and move approved content into the right publishing window."
+        description="Review coverage, spot gaps and monitor publication state from queue to confirmed provider result."
         actions={
           <>
             <Button variant="outline" className="h-10 rounded-xl text-[10px]">

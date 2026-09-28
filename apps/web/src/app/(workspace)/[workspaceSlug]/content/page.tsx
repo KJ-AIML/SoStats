@@ -45,7 +45,12 @@ export default async function ContentPage({
   try {
     const snapshot = await loadWorkspaceSnapshot(workspaceSlug);
     channels = snapshot.channels
-      .filter((channel) => channel.status === "active")
+      .filter(
+        (channel) =>
+          channel.status === "active" &&
+          channel.supported !== false &&
+          channel.capabilities?.text !== false,
+      )
       .map((channel) => ({
         id: channel.id,
         provider: channel.provider,

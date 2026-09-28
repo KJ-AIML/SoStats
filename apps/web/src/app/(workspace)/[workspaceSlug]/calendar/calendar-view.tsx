@@ -13,7 +13,16 @@ import {
   startOfWeek,
   subMonths,
 } from "date-fns";
-import { AlertCircle, ChevronLeft, ChevronRight, Clock3, LoaderCircle } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  ExternalLink,
+  LoaderCircle,
+  RefreshCw,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,10 +40,28 @@ type Post = {
   title: string;
   channel: string;
   date: Date;
+  status: string;
+  failureReason?: string;
+  postUrl?: string;
 };
 
 const today = new Date();
 const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function statusTone(status: string) {
+  switch (status) {
+    case "published":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "failed":
+      return "border-red-200 bg-red-50 text-red-700";
+    case "publishing":
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    case "cancelled":
+      return "border-neutral-200 bg-neutral-100 text-neutral-500";
+    default:
+      return "border-[#ef2b2d]/10 bg-[#fff7f7] text-[#d92023]";
+  }
+}
 
 export function CalendarView({
   workspaceSlug,
@@ -46,6 +73,9 @@ export function CalendarView({
     title: string;
     channel: string;
     scheduledAt: string;
+    status: string;
+    failureReason?: string;
+    postUrl?: string;
   }>;
 }) {
   const [currentDate, setCurrentDate] = useState(today);
@@ -55,6 +85,9 @@ export function CalendarView({
       title: schedule.title,
       channel: schedule.channel,
       date: new Date(schedule.scheduledAt),
+      status: schedule.status,
+      failureReason: schedule.failureReason,
+      postUrl: schedule.postUrl,
     })),
   );
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
@@ -105,17 +138,31 @@ export function CalendarView({
       setPosts((current) =>
         current.map((post) =>
           post.id === selectedPost.id
-            ? { ...post, title: editTitle, date: nextDate }
+            ? {
+                ...post,
+                title: editTitle,
+                date: nextDate,
+                status: "scheduled",
+                failureReason: undefined,
+              }
             : post,
         ),
       );
       setOpen(false);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to update schedule");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to update schedule",
+      );
     } finally {
       setIsSaving(false);
     }
   };
+
+  const canReschedule =
+    selectedPost &&
+    !["published", "cancelled", "publishing"].includes(selectedPost.status);
 
   return (
     <>
@@ -194,11 +241,22 @@ export function CalendarView({
                         <button
                           key={post.id}
                           onClick={() => openPost(post)}
-                          className="w-full rounded-lg border border-[#ef2b2d]/10 bg-[#fff7f7] p-2 text-left transition hover:border-[#ef2b2d]/20 hover:bg-[#fff1f1]"
+                          className={cn(
+                            "w-full rounded-lg border p-2 text-left transition hover:shadow-sm",
+                            statusTone(post.status),
+                          )}
                         >
-                          <div className="flex items-center gap-1 text-[8px] font-semibold capitalize text-[#d92023]">
-                            <Clock3 className="h-2.5 w-2.5" />
-                            {format(post.date, "HH:mm")} · {post.channel}
+                          <div className="flex items-center gap-1 text-[8px] font-semibold capitalize">
+                            {post.status === "published" ? (
+                              <CheckCircle2 className="h-2.5 w-2.5" />
+                            ) : post.status === "failed" ? (
+                              <AlertCircle className="h-2.5 w-2.5" />
+                            ) : post.status === "publishing" ? (
+                              <RefreshCw className="h-2.5 w-2.5" />
+                            ) : (
+                              <Clock3 className="h-2.5 w-2.5" />
+                            )}
+                            {format(post.date, "HH:mm")} · {post.channel} · {post.status}
                           </div>
                           <p className="mt-1 line-clamp-2 text-[9px] font-medium leading-3.5 text-neutral-700">
                             {post.title}
@@ -215,7 +273,7 @@ export function CalendarView({
 
         {posts.length === 0 && (
           <div className="border-t border-black/[0.045] px-5 py-4 text-[10px] text-muted-foreground">
-            Nothing scheduled yet. Approve content, connect a channel, then add it to the publishing calendar.
+            Nothing scheduled yet. Move reviewed content to Scheduled to add it to the publishing queue.
           </div>
         )}
       </div>
@@ -223,7 +281,11 @@ export function CalendarView({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="tracking-[-0.02em]">Edit scheduled content</DialogTitle>
+            <DialogTitle className="tracking-[-0.02em]">
+              {selectedPost?.status === "failed"
+                ? "Retry failed publication"
+                : "Publication details"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-3">
             <div>
@@ -235,9 +297,35 @@ export function CalendarView({
                 disabled
               />
               <p className="mt-1 text-[8px] text-muted-foreground">
-                Edit copy in Content; this dialog changes the publishing time.
+                Copy is edited in Content. This dialog controls the publishing time.
               </p>
             </div>
+
+            <div className="rounded-xl border border-black/[0.06] bg-neutral-50 p-3">
+              <p className="text-[8px] uppercase tracking-[0.1em] text-muted-foreground">
+                Publication state
+              </p>
+              <p className="mt-1 text-[10px] font-semibold capitalize">
+                {selectedPost?.status || "scheduled"}
+              </p>
+              {selectedPost?.failureReason && (
+                <p className="mt-2 text-[9px] leading-4 text-red-700">
+                  {selectedPost.failureReason}
+                </p>
+              )}
+              {selectedPost?.postUrl && (
+                <a
+                  href={selectedPost.postUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700"
+                >
+                  Open published post
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1.5 block text-[10px] font-semibold">Date</label>
@@ -246,6 +334,7 @@ export function CalendarView({
                   value={editDate}
                   onChange={(event) => setEditDate(event.target.value)}
                   className="rounded-xl"
+                  disabled={!canReschedule}
                 />
               </div>
               <div>
@@ -255,9 +344,17 @@ export function CalendarView({
                   value={editTime}
                   onChange={(event) => setEditTime(event.target.value)}
                   className="rounded-xl"
+                  disabled={!canReschedule}
                 />
               </div>
             </div>
+
+            {selectedPost?.status === "failed" && (
+              <p className="text-[8px] leading-4 text-muted-foreground">
+                Choose a new time and save. That creates a new schedule version, so any old queue job becomes stale and cannot publish.
+              </p>
+            )}
+
             {error && (
               <div className="flex items-center gap-2 rounded-xl bg-red-50 p-3 text-[9px] text-red-700">
                 <AlertCircle className="h-3.5 w-3.5" />
@@ -267,16 +364,18 @@ export function CalendarView({
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)} className="rounded-xl">
-              Cancel
+              Close
             </Button>
-            <Button
-              onClick={save}
-              disabled={isSaving}
-              className="rounded-xl bg-[#ef2b2d] hover:bg-[#da2427]"
-            >
-              {isSaving && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}
-              Save changes
-            </Button>
+            {canReschedule && (
+              <Button
+                onClick={save}
+                disabled={isSaving}
+                className="rounded-xl bg-[#ef2b2d] hover:bg-[#da2427]"
+              >
+                {isSaving && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}
+                {selectedPost?.status === "failed" ? "Retry publication" : "Save changes"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
