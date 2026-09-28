@@ -21,6 +21,7 @@ import { BrandContextService } from '../brands/brand-context.service.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import { ContentService } from '../content/content.service.js';
 import { SchedulingService } from '../scheduling/scheduling.service.js';
+import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 import {
   asNumericMetrics,
   calendarDayInZone,
@@ -90,6 +91,7 @@ export class RecommendationsService {
     private readonly campaigns: CampaignsService,
     private readonly content: ContentService,
     private readonly scheduling: SchedulingService,
+    private readonly providerRegistry: ProviderRegistry,
   ) {}
 
   list(workspaceId: number, limit = 30) {
@@ -579,7 +581,13 @@ export class RecommendationsService {
     const availableChannels = [
       ...new Set(
         accounts
-          .filter((account) => account.status === 'active')
+          .filter((account) => {
+            if (account.status !== 'active') return false;
+            const provider = this.providerRegistry.describeProvider(
+              account.provider,
+            );
+            return Boolean(provider.capabilities?.text);
+          })
           .map((account) => account.provider),
       ),
     ];
