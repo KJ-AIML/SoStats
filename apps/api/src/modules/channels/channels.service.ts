@@ -1,7 +1,12 @@
-import { Injectable, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+} from '@nestjs/common';
 import { DRIZZLE } from '../../db/db.module.js';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
+import { and, eq } from 'drizzle-orm';
 import { encrypt } from '../../utils/encryption.util.js';
 import { ProviderRegistry } from './ProviderRegistry.js';
 
@@ -14,25 +19,31 @@ export class ChannelsService {
 
   async connectProvider(
     provider: string,
+    workspaceId: number,
     brandId: number,
     code: string,
     redirectUri: string,
   ) {
-    const adapter = this.providerRegistry.getProvider(provider);
+    const brand = await this.db.query.brands.findFirst({
+      where: and(
+        eq(schema.brands.id, brandId),
+        eq(schema.brands.workspaceId, workspaceId),
+      ),
+    });
+    if (!brand) throw new NotFoundException('Brand not found');
 
-    // Exchange token using the provider adapter
+    const adapter = this.providerRegistry.getProvider(provider);
     const tokenData = await adapter.exchangeToken(code, redirectUri);
 
-    // Encrypt tokens
     const encryptedAccessToken = encrypt(tokenData.accessToken);
     const encryptedRefreshToken = tokenData.refreshToken
       ? encrypt(tokenData.refreshToken)
       : null;
 
-    // Save to DB
     const [socialAccount] = await this.db
       .insert(schema.socialAccounts)
       .values({
+        workspaceId,
         brandId,
         provider: adapter.providerName,
         providerAccountId: tokenData.providerAccountId,
@@ -44,6 +55,15 @@ export class ChannelsService {
       })
       .returning();
 
-    return socialAccount;
+    return {
+      id: socialAccount.id,
+      workspaceId: socialAccount.workspaceId,
+      brandId: socialAccount.brandId,
+      provider: socialAccount.provider,
+      providerAccountId: socialAccount.providerAccountId,
+      accountName: socialAccount.accountName,
+      expiresAt: socialAccount.expiresAt,
+      status: socialAccount.status,
+    };
   }
 }
