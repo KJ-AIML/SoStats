@@ -27,6 +27,14 @@ type LinkedInTokenResponse = {
 @Injectable()
 export class LinkedInPublisherAdapter implements SocialPublisherPort {
   readonly providerName = 'linkedin';
+  readonly capabilities = {
+    text: true,
+    images: false,
+    video: false,
+    carousel: false,
+    analytics: false,
+    nativeScheduling: false,
+  } as const;
 
   private clientId() {
     const value = process.env.LINKEDIN_CLIENT_ID;

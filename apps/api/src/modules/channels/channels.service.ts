@@ -17,8 +17,8 @@ export class ChannelsService {
     private readonly providerRegistry: ProviderRegistry,
   ) {}
 
-  findAll(workspaceId: number) {
-    return this.db.query.socialAccounts.findMany({
+  async findAll(workspaceId: number) {
+    const records = await this.db.query.socialAccounts.findMany({
       where: eq(schema.socialAccounts.workspaceId, workspaceId),
       columns: {
         id: true,
@@ -37,6 +37,11 @@ export class ChannelsService {
       },
       orderBy: (fields, { desc }) => [desc(fields.createdAt)],
     });
+
+    return records.map((record) => ({
+      ...record,
+      ...this.providerRegistry.describeProvider(record.provider),
+    }));
   }
 
   async connectProvider(
@@ -86,6 +91,8 @@ export class ChannelsService {
       accountName: socialAccount.accountName,
       expiresAt: socialAccount.expiresAt,
       status: socialAccount.status,
+      supported: true,
+      capabilities: adapter.capabilities,
     };
   }
 }

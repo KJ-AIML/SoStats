@@ -22,6 +22,15 @@ export default async function ChannelsPage({
     providerAccountId: string;
     status: string;
     updatedAt?: string;
+    supported?: boolean;
+    capabilities?: {
+      text: boolean;
+      images: boolean;
+      video: boolean;
+      carousel: boolean;
+      analytics: boolean;
+      nativeScheduling: boolean;
+    } | null;
   }> = [];
   let connectionError = false;
 
@@ -88,7 +97,11 @@ export default async function ChannelsPage({
               <div className="mt-4 flex items-center justify-between text-[8px] text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   <RefreshCw className="h-3 w-3" />
-                  Persisted account
+                  {channel.supported === false
+                    ? "Adapter unavailable"
+                    : channel.capabilities?.text
+                      ? "Text publishing ready"
+                      : "Connected"}
                 </span>
                 <button className="font-semibold text-neutral-600">Manage</button>
               </div>

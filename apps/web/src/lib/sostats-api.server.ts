@@ -80,6 +80,15 @@ export type SocialAccountRecord = {
   accountName?: string | null;
   expiresAt?: string | null;
   status: string;
+  supported?: boolean;
+  capabilities?: {
+    text: boolean;
+    images: boolean;
+    video: boolean;
+    carousel: boolean;
+    analytics: boolean;
+    nativeScheduling: boolean;
+  } | null;
 };
 
 export type PublicationResultRecord = {

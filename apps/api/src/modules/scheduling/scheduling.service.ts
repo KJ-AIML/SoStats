@@ -13,6 +13,7 @@ import {
   GetCalendarDto,
   UpdateScheduleDto,
 } from './scheduling.dto.js';
+import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 
 function normalizeProvider(value?: string | null) {
   const normalized = (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -24,6 +25,7 @@ function normalizeProvider(value?: string | null) {
 export class SchedulingService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
+    private readonly providerRegistry: ProviderRegistry,
   ) {}
 
   getCalendar(workspaceId: number, query: GetCalendarDto) {
@@ -83,6 +85,15 @@ export class SchedulingService {
     if (!socialAccount) throw new NotFoundException('Social account not found');
     if (socialAccount.status !== 'active' || !socialAccount.accessToken) {
       throw new BadRequestException('Social account is not ready to publish');
+    }
+
+    const provider = this.providerRegistry.describeProvider(
+      socialAccount.provider,
+    );
+    if (!provider.supported || !provider.capabilities?.text) {
+      throw new BadRequestException(
+        'This channel does not have an enabled text publishing adapter',
+      );
     }
 
     let variant:

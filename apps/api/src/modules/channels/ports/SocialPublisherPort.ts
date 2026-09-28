@@ -13,6 +13,15 @@ export type RefreshedToken = {
   expiresAt?: Date;
 };
 
+export type ProviderCapabilities = {
+  text: boolean;
+  images: boolean;
+  video: boolean;
+  carousel: boolean;
+  analytics: boolean;
+  nativeScheduling: boolean;
+};
+
 export class ProviderPublishError extends Error {
   readonly retryable: boolean;
   readonly outcomeUnknown: boolean;
@@ -36,6 +45,7 @@ export class ProviderPublishError extends Error {
 
 export interface SocialPublisherPort {
   readonly providerName: string;
+  readonly capabilities: ProviderCapabilities;
 
   publishPost(
     content: string,
