@@ -43,6 +43,7 @@ Architecture notes:
 - [Stage 0 hardening](docs/architecture/STAGE_0_HARDENING.md)
 - [Stage 1 real-data vertical slice](docs/architecture/STAGE_1_VERTICAL_SLICE.md)
 - [Stage 2 reliable publishing](docs/architecture/STAGE_2_RELIABLE_PUBLISHING.md)\n- [Stage 3 automation runtime](docs/architecture/STAGE_3_AUTOMATION_RUNTIME.md)
+- [Stage 4 real analytics ingestion](docs/architecture/STAGE_4_REAL_ANALYTICS.md)
 
 ## Repository layout
 

@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import {
   and,
-  desc,
   eq,
   gte,
   inArray,
@@ -71,7 +70,7 @@ function utcDay(date = new Date()) {
   );
 }
 
-function asNumericMetrics(value: unknown): NumericMetrics {
+export function asNumericMetrics(value: unknown): NumericMetrics {
   if (!value || typeof value !== 'object') return {};
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).filter(
@@ -81,7 +80,7 @@ function asNumericMetrics(value: unknown): NumericMetrics {
   );
 }
 
-function subtractMetrics(current: NumericMetrics, previous: NumericMetrics) {
+export function subtractMetrics(current: NumericMetrics, previous: NumericMetrics) {
   return Object.fromEntries(
     Object.entries(current).map(([key, value]) => [
       key,
@@ -90,7 +89,7 @@ function subtractMetrics(current: NumericMetrics, previous: NumericMetrics) {
   );
 }
 
-function addMetrics(current: NumericMetrics, delta: NumericMetrics) {
+export function addMetrics(current: NumericMetrics, delta: NumericMetrics) {
   const result = { ...current };
   for (const [key, value] of Object.entries(delta)) {
     result[key] = (result[key] || 0) + value;
@@ -98,7 +97,7 @@ function addMetrics(current: NumericMetrics, delta: NumericMetrics) {
   return result;
 }
 
-function analyticsIntervalMs(postAgeMs: number) {
+export function analyticsIntervalMs(postAgeMs: number) {
   const hour = 60 * 60_000;
   const day = 24 * hour;
 
@@ -379,15 +378,38 @@ export class AnalyticsService {
       const current = asNumericMetrics(
         await analytics.fetchPostMetrics(result.platformPostId, accessToken),
       );
-      const previous = asNumericMetrics(latest?.metrics);
-      const delta = subtractMetrics(current, previous);
       const day = utcDay();
 
       let insertedSnapshotId = 0;
+      let delta: NumericMetrics = {};
+      let staleAfterLock = false;
 
       await this.db.transaction(async (tx) => {
         await tx.execute(
           sql`select pg_advisory_xact_lock(${publication.workspaceId}, ${account.id})`,
+        );
+
+        const lockedLatest = await tx.query.metricSnapshots.findFirst({
+          where: and(
+            eq(schema.metricSnapshots.contentItemId, publication.contentItemId),
+            eq(schema.metricSnapshots.socialAccountId, account.id),
+            eq(schema.metricSnapshots.platformPostId, result.platformPostId),
+          ),
+          orderBy: (fields, { desc: orderDesc }) => [
+            orderDesc(fields.snapshotAt),
+          ],
+        });
+
+        const lockedVersion =
+          lockedLatest?.snapshotAt.toISOString() || null;
+        if ((expectedSnapshotAt || null) !== lockedVersion) {
+          staleAfterLock = true;
+          return;
+        }
+
+        delta = subtractMetrics(
+          current,
+          asNumericMetrics(lockedLatest?.metrics),
         );
 
         const [snapshot] = await tx
@@ -427,6 +449,10 @@ export class AnalyticsService {
           });
         }
       });
+
+      if (staleAfterLock) {
+        return { status: 'stale', publicationResultId };
+      }
 
       return {
         status: 'ingested',
