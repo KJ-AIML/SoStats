@@ -151,8 +151,7 @@ export class AutomationsService {
       .where(eq(schema.automationVersions.automationId, automationId))
       .orderBy(desc(schema.automationVersions.versionNumber));
 
-    const version =
-      versions.find((candidate) => Boolean(candidate.publishedAt)) || versions[0];
+    const version = versions[0];
 
     if (!version) {
       throw new NotFoundException('Automation version not found');

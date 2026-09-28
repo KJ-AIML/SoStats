@@ -221,18 +221,26 @@ export class AutomationRuntimeService {
       try {
         const output = await this.executeNode(run, node, order, index, step);
 
+        const completedAt = new Date();
+        const completedLogs = JSON.stringify({
+          ...parseStepLog(step.logs),
+          output,
+        });
+
         await this.db
           .update(schema.automationRunSteps)
           .set({
             status: 'completed',
-            completedAt: new Date(),
-            logs: JSON.stringify({
-              ...parseStepLog(step.logs),
-              output,
-            }),
+            completedAt,
+            logs: completedLogs,
             error: null,
           })
           .where(eq(schema.automationRunSteps.id, step.id));
+
+        step.status = 'completed';
+        step.completedAt = completedAt;
+        step.logs = completedLogs;
+        step.error = null;
       } catch (error) {
         const message =
           error instanceof Error ? error.message.slice(0, 1500) : String(error);
