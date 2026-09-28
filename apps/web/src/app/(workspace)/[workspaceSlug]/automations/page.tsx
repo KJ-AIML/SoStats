@@ -3,7 +3,7 @@ import {
   Plus,
   Rss,
   Sparkles,
-  Youtube,
+  Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeading } from "@/components/sostats/page-heading";
@@ -34,7 +34,7 @@ export default function AutomationsPage() {
         {[
           { icon: Rss, title: "Blog → Social", copy: "Turn a new article into channel-specific drafts." },
           { icon: Sparkles, title: "Weekly AI Plan", copy: "Generate ideas every Monday using performance data." },
-          { icon: Youtube, title: "Video Repurpose", copy: "Find highlights, create clips and schedule variants." },
+          { icon: Video, title: "Video Repurpose", copy: "Find highlights, create clips and schedule variants." },
         ].map((item) => (
           <button
             key={item.title}
