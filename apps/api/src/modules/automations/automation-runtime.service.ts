@@ -491,7 +491,7 @@ export class AutomationRuntimeService {
     }
 
     if (kind === 'schedule') {
-      return this.executeSchedule(run, node, order, index);
+      return this.executeSchedule(run, node, order, index, step);
     }
 
     if (kind === 'analyze') {
@@ -576,6 +576,7 @@ export class AutomationRuntimeService {
     node: WorkflowNode,
     order: WorkflowNode[],
     index: number,
+    step: typeof schema.automationRunSteps.$inferSelect,
   ) {
     const config = nodeConfig(node);
     const socialAccountId = numberConfig(config, 'socialAccountId');
@@ -610,7 +611,12 @@ export class AutomationRuntimeService {
       throw new BadRequestException('Configured social account was not found');
     }
 
-    const startAtRaw = stringConfig(config, 'startAt');
+    const log = parseStepLog(step.logs);
+    const startAtRaw =
+      stringConfig(config, 'startAt') ||
+      (typeof log.checkpoint?.startAt === 'string'
+        ? log.checkpoint.startAt
+        : undefined);
     const delayMinutes = numberConfig(config, 'delayMinutes', 60) || 60;
     const spacingMinutes = numberConfig(config, 'spacingMinutes', 60) || 60;
     const startAt = startAtRaw
@@ -619,6 +625,21 @@ export class AutomationRuntimeService {
 
     if (Number.isNaN(startAt.getTime())) {
       throw new BadRequestException('Schedule node startAt is invalid');
+    }
+
+    if (!startAtRaw) {
+      const checkpointLogs = JSON.stringify({
+        ...log,
+        checkpoint: {
+          ...(log.checkpoint || {}),
+          startAt: startAt.toISOString(),
+        },
+      });
+      await this.db
+        .update(schema.automationRunSteps)
+        .set({ logs: checkpointLogs })
+        .where(eq(schema.automationRunSteps.id, step.id));
+      step.logs = checkpointLogs;
     }
 
     const scheduleIds: number[] = [];
