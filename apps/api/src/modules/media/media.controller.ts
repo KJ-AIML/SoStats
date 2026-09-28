@@ -1,31 +1,36 @@
 import {
-  Controller,
-  Get,
-  Post,
-  Delete,
-  Param,
   Body,
-  Query,
+  Controller,
+  Delete,
+  Get,
+  Param,
   ParseIntPipe,
+  Post,
+  Query,
 } from '@nestjs/common';
+import {
+  CurrentWorkspaceId,
+  WorkspaceScoped,
+} from '../../common/workspace/workspace.decorator.js';
 import { MediaService } from './media.service.js';
 
+@WorkspaceScoped()
 @Controller('v1/assets')
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 
   @Get()
-  async listAssets(
-    @Query('workspaceId', ParseIntPipe) workspaceId: number,
+  listAssets(
+    @CurrentWorkspaceId() workspaceId: number,
     @Query('brandId') brandId?: string,
   ) {
-    const parsedBrandId = brandId ? parseInt(brandId, 10) : undefined;
+    const parsedBrandId = brandId ? Number.parseInt(brandId, 10) : undefined;
     return this.mediaService.listAssets(workspaceId, parsedBrandId);
   }
 
   @Post('upload-url')
-  async getUploadUrl(
-    @Body('workspaceId', ParseIntPipe) workspaceId: number,
+  getUploadUrl(
+    @CurrentWorkspaceId() workspaceId: number,
     @Body('fileName') fileName: string,
     @Body('fileType') fileType: string,
     @Body('mimeType') mimeType: string,
@@ -43,9 +48,9 @@ export class MediaController {
   }
 
   @Delete(':id')
-  async deleteAsset(
+  deleteAsset(
+    @CurrentWorkspaceId() workspaceId: number,
     @Param('id', ParseIntPipe) id: number,
-    @Query('workspaceId', ParseIntPipe) workspaceId: number,
   ) {
     return this.mediaService.deleteAsset(workspaceId, id);
   }
