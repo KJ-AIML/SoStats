@@ -7,5 +7,6 @@ import { SchedulingService } from './scheduling.service.js';
   imports: [ChannelsModule],
   controllers: [SchedulingController],
   providers: [SchedulingService],
+  exports: [SchedulingService],
 })
 export class SchedulingModule {}
