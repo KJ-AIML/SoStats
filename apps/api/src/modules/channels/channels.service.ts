@@ -17,6 +17,28 @@ export class ChannelsService {
     private readonly providerRegistry: ProviderRegistry,
   ) {}
 
+  findAll(workspaceId: number) {
+    return this.db.query.socialAccounts.findMany({
+      where: eq(schema.socialAccounts.workspaceId, workspaceId),
+      columns: {
+        id: true,
+        workspaceId: true,
+        brandId: true,
+        provider: true,
+        providerAccountId: true,
+        accountName: true,
+        expiresAt: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      with: {
+        channelRules: true,
+      },
+      orderBy: (fields, { desc }) => [desc(fields.createdAt)],
+    });
+  }
+
   async connectProvider(
     provider: string,
     workspaceId: number,

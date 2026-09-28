@@ -5,6 +5,7 @@ export class CreateCampaignDto {
   goal?: string;
   startDate?: string;
   endDate?: string;
+  channels?: string[];
 }
 
 export class GenerateCampaignDto {

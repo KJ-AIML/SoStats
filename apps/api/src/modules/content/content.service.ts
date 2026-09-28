@@ -52,9 +52,17 @@ export class ContentService {
     return this.db.query.contentItems.findMany({
       where: eq(schema.contentItems.workspaceId, workspaceId),
       with: {
+        campaign: true,
         variants: true,
         tags: { with: { tag: true } },
+        scheduledPublications: {
+          with: {
+            variant: true,
+            socialAccount: true,
+          },
+        },
       },
+      orderBy: (fields, { desc }) => [desc(fields.updatedAt)],
     });
   }
 
@@ -65,10 +73,17 @@ export class ContentService {
         eq(schema.contentItems.workspaceId, workspaceId),
       ),
       with: {
+        campaign: true,
         variants: true,
         tags: { with: { tag: true } },
         assets: { with: { asset: true } },
         approvalRequests: true,
+        scheduledPublications: {
+          with: {
+            variant: true,
+            socialAccount: true,
+          },
+        },
       },
     });
 
