@@ -82,8 +82,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
-export function getDispatchablePublications(until: string) {
-  const query = new URLSearchParams({ until });
+export function getDispatchablePublications(
+  until: string,
+  offset = 0,
+  limit = 250,
+) {
+  const query = new URLSearchParams({
+    until,
+    offset: String(offset),
+    limit: String(limit),
+  });
   return request<DispatchablePublication[]>(
     `/internal/publications/dispatchable?${query.toString()}`,
   );

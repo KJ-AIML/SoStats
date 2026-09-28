@@ -85,7 +85,11 @@ export class PublishingService {
     }
   }
 
-  async listDispatchable(until?: string): Promise<DispatchablePublication[]> {
+  async listDispatchable(
+    until?: string,
+    offset = 0,
+    limit = 250,
+  ): Promise<DispatchablePublication[]> {
     await this.reconcileStaleClaims();
 
     const horizon = until ? new Date(until) : new Date(Date.now() + 120_000);
@@ -93,13 +97,20 @@ export class PublishingService {
       throw new ConflictException('Invalid dispatch horizon');
     }
 
+    const safeOffset = Math.max(0, offset);
+    const safeLimit = Math.min(500, Math.max(1, limit));
+
     const records = await this.db.query.scheduledPublications.findMany({
       where: and(
         eq(schema.scheduledPublications.status, 'scheduled'),
         lte(schema.scheduledPublications.scheduledAt, horizon),
       ),
-      orderBy: (fields, { asc }) => [asc(fields.scheduledAt)],
-      limit: 100,
+      orderBy: (fields, { asc }) => [
+        asc(fields.scheduledAt),
+        asc(fields.id),
+      ],
+      limit: safeLimit,
+      offset: safeOffset,
     });
 
     return records.map((record) => ({

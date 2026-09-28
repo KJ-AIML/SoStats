@@ -32,7 +32,18 @@ async function dispatchOnce() {
 
   try {
     const horizon = new Date(Date.now() + horizonMs).toISOString();
-    const publications = await getDispatchablePublications(horizon);
+    const pageSize = 250;
+    const publications = [];
+
+    for (let offset = 0; offset < 5_000; offset += pageSize) {
+      const page = await getDispatchablePublications(
+        horizon,
+        offset,
+        pageSize,
+      );
+      publications.push(...page);
+      if (page.length < pageSize) break;
+    }
 
     for (const publication of publications) {
       const scheduledAt = new Date(publication.scheduledAt).getTime();

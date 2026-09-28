@@ -35,6 +35,16 @@ The internal worker API is not authenticated as a user. It is marked public for
 the normal user auth guard and then protected independently with a constant-time
 `WORKER_API_TOKEN` check.
 
+## Dispatcher scale behavior
+
+The internal dispatch endpoint is paginated. A worker scan can queue up to 5,000
+publication versions per poll, in stable `scheduledAt + id` order. BullMQ job
+ids deduplicate repeated scans, so horizontal dispatcher replicas can safely
+observe the same schedule rows.
+
+The internal worker routes bypass the user-facing request throttle but remain
+protected by `WORKER_API_TOKEN`.
+
 ## Queue identity and rescheduling
 
 A queue job id is derived from:
@@ -52,12 +62,17 @@ without publishing.
 
 ## Retry policy
 
-Retryable provider errors are:
+Automatic publish retry is provider-specific.
 
-- HTTP 429
-- provider HTTP 5xx responses
+For the first LinkedIn adapter:
 
-These return an internal 503 so BullMQ applies exponential retry.
+- HTTP 429 is retryable.
+- HTTP 4xx is treated as a provider rejection.
+- HTTP 5xx and network ambiguity are treated as an unknown publish outcome and are **not** replayed automatically, because the external POST may already have created a post.
+
+Token refresh is different: it has no publishing side effect, so transient refresh failures (429 / 5xx / network failure) can safely retry.
+
+Retryable failures return an internal 503 so BullMQ applies exponential backoff.
 
 Default policy:
 
@@ -132,6 +147,14 @@ That creates a new schedule version, which makes any old queue job stale.
 
 A schedule with an unknown provider outcome should be checked against the
 provider account before a human retries it.
+
+## Credential refresh
+
+Before publishing, the API checks the encrypted provider token expiry. If an
+encrypted refresh token exists, the provider adapter refreshes the access token
+and the API atomically stores the newly encrypted credentials. A permanent
+refresh rejection marks the social account expired; transient refresh failures
+stay retryable.
 
 ## Current provider scope
 
