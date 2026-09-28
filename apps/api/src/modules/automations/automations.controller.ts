@@ -1,30 +1,41 @@
 import {
-  Controller,
-  Post,
-  Get,
   Body,
+  Controller,
+  Get,
   Param,
   ParseIntPipe,
+  Post,
 } from '@nestjs/common';
+import {
+  CurrentWorkspaceId,
+  WorkspaceScoped,
+} from '../../common/workspace/workspace.decorator.js';
 import { AutomationsService } from './automations.service.js';
 import { CreateAutomationDto } from './automations.dto.js';
 
+@WorkspaceScoped()
 @Controller('v1/automations')
 export class AutomationsController {
   constructor(private readonly automationsService: AutomationsService) {}
 
   @Get()
-  async findAll() {
-    return this.automationsService.findAll();
+  findAll(@CurrentWorkspaceId() workspaceId: number) {
+    return this.automationsService.findAll(workspaceId);
   }
 
   @Post()
-  async create(@Body() body: CreateAutomationDto) {
-    return this.automationsService.create(body);
+  create(
+    @Body() body: CreateAutomationDto,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.automationsService.create(workspaceId, body);
   }
 
   @Post(':id/run')
-  async run(@Param('id', ParseIntPipe) id: number) {
-    return this.automationsService.run(id);
+  run(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.automationsService.run(workspaceId, id);
   }
 }
