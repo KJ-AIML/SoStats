@@ -1,10 +1,41 @@
+export type PublishResult = {
+  postId: string;
+  url?: string;
+};
+
+export type PublishContext = {
+  providerAccountId?: string;
+};
+
+export class ProviderPublishError extends Error {
+  readonly retryable: boolean;
+  readonly outcomeUnknown: boolean;
+  readonly statusCode?: number;
+
+  constructor(
+    message: string,
+    options: {
+      retryable?: boolean;
+      outcomeUnknown?: boolean;
+      statusCode?: number;
+    } = {},
+  ) {
+    super(message);
+    this.name = 'ProviderPublishError';
+    this.retryable = options.retryable ?? false;
+    this.outcomeUnknown = options.outcomeUnknown ?? false;
+    this.statusCode = options.statusCode;
+  }
+}
+
 export interface SocialPublisherPort {
   readonly providerName: string;
 
   publishPost(
     content: string,
     accessToken: string,
-  ): Promise<{ postId: string; url?: string }>;
+    context?: PublishContext,
+  ): Promise<PublishResult>;
 
   getAuthUrl(redirectUri: string): string;
 

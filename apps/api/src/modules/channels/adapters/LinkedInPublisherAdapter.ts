@@ -3,7 +3,12 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { SocialPublisherPort } from '../ports/SocialPublisherPort.js';
+import {
+  ProviderPublishError,
+  SocialPublisherPort,
+  type PublishContext,
+  type PublishResult,
+} from '../ports/SocialPublisherPort.js';
 
 type LinkedInUserInfo = {
   sub: string;
@@ -49,34 +54,49 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
   async publishPost(
     content: string,
     accessToken: string,
-  ): Promise<{ postId: string; url?: string }> {
-    const profile = await this.getUserInfo(accessToken);
-    const response = await fetch('https://api.linkedin.com/rest/posts', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        'content-type': 'application/json',
-        'linkedin-version': this.apiVersion(),
-        'x-restli-protocol-version': '2.0.0',
-      },
-      body: JSON.stringify({
-        author: `urn:li:person:${profile.sub}`,
-        commentary: content,
-        visibility: 'PUBLIC',
-        distribution: {
-          feedDistribution: 'MAIN_FEED',
-          targetEntities: [],
-          thirdPartyDistributionChannels: [],
+    context?: PublishContext,
+  ): Promise<PublishResult> {
+    const providerAccountId =
+      context?.providerAccountId || (await this.getUserInfo(accessToken)).sub;
+
+    let response: Response;
+    try {
+      response = await fetch('https://api.linkedin.com/rest/posts', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          'content-type': 'application/json',
+          'linkedin-version': this.apiVersion(),
+          'x-restli-protocol-version': '2.0.0',
         },
-        lifecycleState: 'PUBLISHED',
-        isReshareDisabledByAuthor: false,
-      }),
-    });
+        body: JSON.stringify({
+          author: `urn:li:person:${providerAccountId}`,
+          commentary: content,
+          visibility: 'PUBLIC',
+          distribution: {
+            feedDistribution: 'MAIN_FEED',
+            targetEntities: [],
+            thirdPartyDistributionChannels: [],
+          },
+          lifecycleState: 'PUBLISHED',
+          isReshareDisabledByAuthor: false,
+        }),
+      });
+    } catch {
+      throw new ProviderPublishError(
+        'LinkedIn publish request ended without a confirmed provider response',
+        { outcomeUnknown: true },
+      );
+    }
 
     if (!response.ok) {
       const detail = await response.text();
-      throw new BadGatewayException(
-        `LinkedIn publish failed (${response.status}): ${detail.slice(0, 300)}`,
+      throw new ProviderPublishError(
+        `LinkedIn publish failed (HTTP ${response.status}): ${detail.slice(0, 300)}`,
+        {
+          statusCode: response.status,
+          retryable: response.status === 429 || response.status >= 500,
+        },
       );
     }
 
@@ -85,7 +105,10 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
       response.headers.get('x-linkedin-id');
 
     if (!postId) {
-      throw new BadGatewayException('LinkedIn did not return a post id');
+      throw new ProviderPublishError(
+        'LinkedIn accepted the publish request but did not return a post id',
+        { outcomeUnknown: true },
+      );
     }
 
     return { postId };
