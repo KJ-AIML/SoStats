@@ -12,6 +12,7 @@ import {
   CreateAutomationDto,
   CreateAutomationVersionDto,
   RunAutomationDto,
+  UpdateAutomationDto,
 } from './automations.dto.js';
 import {
   orderWorkflow,
@@ -68,6 +69,37 @@ export class AutomationsService {
 
       return { ...automation, versions: [version], runs: [] };
     });
+  }
+
+  async update(
+    workspaceId: number,
+    automationId: number,
+    dto: UpdateAutomationDto,
+  ) {
+    await this.requireAutomation(workspaceId, automationId);
+
+    const values: { name?: string; description?: string; updatedAt: Date } = {
+      updatedAt: new Date(),
+    };
+    if (typeof dto.name === 'string' && dto.name.trim()) {
+      values.name = dto.name.trim();
+    }
+    if (typeof dto.description === 'string') {
+      values.description = dto.description;
+    }
+
+    const [updated] = await this.db
+      .update(schema.automations)
+      .set(values)
+      .where(
+        and(
+          eq(schema.automations.id, automationId),
+          eq(schema.automations.workspaceId, workspaceId),
+        ),
+      )
+      .returning();
+
+    return updated;
   }
 
   async createVersion(

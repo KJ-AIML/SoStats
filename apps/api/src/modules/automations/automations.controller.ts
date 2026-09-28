@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
 } from '@nestjs/common';
 import {
@@ -17,6 +18,7 @@ import {
   CreateAutomationDto,
   CreateAutomationVersionDto,
   RunAutomationDto,
+  UpdateAutomationDto,
 } from './automations.dto.js';
 
 @WorkspaceScoped()
@@ -38,6 +40,15 @@ export class AutomationsController {
     @CurrentWorkspaceId() workspaceId: number,
   ) {
     return this.automationsService.create(workspaceId, body);
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateAutomationDto,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.automationsService.update(workspaceId, id, body);
   }
 
   @Post(':id/versions')

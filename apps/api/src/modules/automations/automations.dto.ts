@@ -5,6 +5,11 @@ export class CreateAutomationDto {
   workflowDefinition!: unknown;
 }
 
+export class UpdateAutomationDto {
+  name?: string;
+  description?: string;
+}
+
 export class CreateAutomationVersionDto {
   workflowDefinition!: unknown;
 }

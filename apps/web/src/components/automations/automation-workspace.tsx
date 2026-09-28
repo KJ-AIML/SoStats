@@ -129,6 +129,19 @@ export function AutomationWorkspace({
         return payload.id;
       }
 
+      const metadataResponse = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/automations/${selectedId}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name }),
+        },
+      );
+      if (!metadataResponse.ok) {
+        const metadataPayload = (await metadataResponse.json()) as { error?: string };
+        throw new Error(metadataPayload.error || "Unable to save automation name");
+      }
+
       const response = await fetch(
         `/api/workspaces/${encodeURIComponent(workspaceSlug)}/automations/${selectedId}/versions`,
         {
@@ -150,6 +163,7 @@ export function AutomationWorkspace({
           automation.id === selectedId
             ? {
                 ...automation,
+                name,
                 status: "draft",
                 versions: [
                   ...(automation.versions || []),
@@ -213,8 +227,7 @@ export function AutomationWorkspace({
   };
 
   const testRun = async () => {
-    let id = selectedId;
-    if (!id) id = await createOrVersion();
+    const id = await createOrVersion();
     if (!id) return;
 
     setBusy("run");
