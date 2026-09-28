@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addMetrics,
   analyticsIntervalMs,
+  calendarDayInZone,
   asNumericMetrics,
   subtractMetrics,
 } from './analytics.service.js';
@@ -44,6 +45,15 @@ describe('analytics metric helpers', () => {
       reactions: 2,
       clicks: 3,
     });
+  });
+
+  it('buckets daily rollups in the workspace timezone', () => {
+    expect(
+      calendarDayInZone(
+        'Asia/Bangkok',
+        new Date('2026-09-28T18:00:00.000Z'),
+      ).toISOString(),
+    ).toBe('2026-09-29T00:00:00.000Z');
   });
 
   it('uses a slower collection cadence as posts age', () => {

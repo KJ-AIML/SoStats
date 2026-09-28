@@ -64,10 +64,24 @@ type IngestResult =
       permissionDenied?: boolean;
     };
 
-function utcDay(date = new Date()) {
-  return new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-  );
+export function calendarDayInZone(
+  timeZone: string,
+  date = new Date(),
+) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = formatter.formatToParts(date);
+  const value = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)]),
+  ) as Record<string, number>;
+
+  return new Date(Date.UTC(value.year, value.month - 1, value.day));
 }
 
 export function asNumericMetrics(value: unknown): NumericMetrics {
@@ -117,7 +131,11 @@ export class AnalyticsService {
   ) {}
 
   async getOverview(workspaceId: number) {
-    const start = utcDay();
+    const workspace = await this.db.query.workspaces.findFirst({
+      where: eq(schema.workspaces.id, workspaceId),
+      columns: { timezone: true },
+    });
+    const start = calendarDayInZone(workspace?.timezone || 'UTC');
     start.setUTCDate(start.getUTCDate() - 29);
 
     const rows = await this.db.query.analyticsDaily.findMany({
@@ -209,6 +227,7 @@ export class AnalyticsService {
             scheduledPublication: {
               with: {
                 socialAccount: true,
+                workspace: true,
               },
             },
           },
@@ -314,6 +333,7 @@ export class AnalyticsService {
             scheduledPublication: {
               with: {
                 socialAccount: true,
+                workspace: true,
               },
             },
           },
@@ -379,7 +399,9 @@ export class AnalyticsService {
       const current = asNumericMetrics(
         await analytics.fetchPostMetrics(platformPostId, accessToken),
       );
-      const day = utcDay();
+      const day = calendarDayInZone(
+        publication.workspace?.timezone || 'UTC',
+      );
 
       let insertedSnapshotId = 0;
       let delta: NumericMetrics = {};

@@ -162,55 +162,54 @@ export class LinkedInPublisherAdapter
   ): Promise<SocialMetricTotals> {
     const entity = this.analyticsEntity(platformPostId);
 
-    const entries = await Promise.all(
-      analyticsQueries.map(async ([key, queryType]) => {
-        const params = new URLSearchParams({
-          q: 'entity',
-          entity,
-          queryType,
-          aggregation: 'TOTAL',
-        });
+    const metrics: SocialMetricTotals = {};
 
-        let response: Response;
-        try {
-          response = await fetch(
-            `https://api.linkedin.com/rest/memberCreatorPostAnalytics?${params.toString()}`,
-            {
-              headers: {
-                authorization: `Bearer ${accessToken}`,
-                'content-type': 'application/json',
-                'linkedin-version': this.apiVersion(),
-                'x-restli-protocol-version': '2.0.0',
-              },
+    for (const [key, queryType] of analyticsQueries) {
+      const params = new URLSearchParams({
+        q: 'entity',
+        entity,
+        queryType,
+        aggregation: 'TOTAL',
+      });
+
+      let response: Response;
+      try {
+        response = await fetch(
+          `https://api.linkedin.com/rest/memberCreatorPostAnalytics?${params.toString()}`,
+          {
+            headers: {
+              authorization: `Bearer ${accessToken}`,
+              'content-type': 'application/json',
+              'linkedin-version': this.apiVersion(),
+              'x-restli-protocol-version': '2.0.0',
             },
-          );
-        } catch {
-          throw new ProviderAnalyticsError(
-            'LinkedIn analytics request failed before a provider response was received',
-            { retryable: true },
-          );
-        }
+          },
+        );
+      } catch {
+        throw new ProviderAnalyticsError(
+          'LinkedIn analytics request failed before a provider response was received',
+          { retryable: true },
+        );
+      }
 
-        if (!response.ok) {
-          const detail = await response.text();
-          throw new ProviderAnalyticsError(
-            `LinkedIn analytics failed for ${queryType} (HTTP ${response.status}): ${detail.slice(0, 300)}`,
-            {
-              statusCode: response.status,
-              retryable: response.status === 429 || response.status >= 500,
-              permissionDenied: response.status === 403,
-            },
-          );
-        }
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new ProviderAnalyticsError(
+          `LinkedIn analytics failed for ${queryType} (HTTP ${response.status}): ${detail.slice(0, 300)}`,
+          {
+            statusCode: response.status,
+            retryable: response.status === 429 || response.status >= 500,
+            permissionDenied: response.status === 403,
+          },
+        );
+      }
 
-        const payload = (await response.json()) as LinkedInAnalyticsResponse;
-        const count = payload.elements?.[0]?.count;
+      const payload = (await response.json()) as LinkedInAnalyticsResponse;
+      const count = payload.elements?.[0]?.count;
+      metrics[key] = typeof count === 'number' ? count : 0;
+    }
 
-        return [key, typeof count === 'number' ? count : 0] as const;
-      }),
-    );
-
-    return Object.fromEntries(entries) as SocialMetricTotals;
+    return metrics;
   }
 
   getAuthUrl(redirectUri: string): string {
