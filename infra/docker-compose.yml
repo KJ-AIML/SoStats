@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: sostats_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sostats}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sostats_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-sostats_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: sostats_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: minio/minio
+    container_name: sostats_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_secret_password}
+    ports:
+      - "9000:9000"  # API Port
+      - "9001:9001"  # Console UI Port
+    volumes:
+      - minio_data:/data
+
+  mailpit:
+    image: axllent/mailpit
+    container_name: sostats_mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    environment:
+      MP_MAX_MESSAGES: 500
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

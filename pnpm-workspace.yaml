@@ -1,0 +1,5 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+minimumReleaseAgeExclude:
+  - '@nestjs/platform-fastify@12.1.1'

@@ -1,0 +1,4 @@
+allowBuilds:
+  esbuild: set this to true or false
+minimumReleaseAgeExclude:
+  - '@nestjs/platform-fastify@12.1.1'
