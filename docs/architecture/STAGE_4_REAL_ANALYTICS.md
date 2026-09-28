@@ -82,6 +82,9 @@ After publication:
 - days 8–30: every 24 hours
 - after 30 days: automatic collection stops
 
+Each poll uses bounded keyset batches and can inspect up to 5,000 recent
+publication results without an unbounded table scan.
+
 The dispatcher polls for due work, and BullMQ job ids use:
 
 ```text
@@ -126,6 +129,10 @@ first collected. This is not a historical reconstruction of engagement that
 occurred before SoStats started tracking the post.
 
 ## Analytics overview
+
+AI insight generation uses the same workspace-local rolling 30-day window as
+the dashboard, so stale historical rows do not silently influence current
+recommendations.
 
 The workspace overview now returns:
 

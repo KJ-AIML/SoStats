@@ -531,11 +531,21 @@ export class AnalyticsService {
   }
 
   async generateInsights(workspaceId: number, brandId?: number) {
+    const workspace = await this.db.query.workspaces.findFirst({
+      where: eq(schema.workspaces.id, workspaceId),
+      columns: { timezone: true },
+    });
+    const start = calendarDayInZone(workspace?.timezone || 'UTC');
+    start.setUTCDate(start.getUTCDate() - 29);
+
     const rows = await this.db.query.analyticsDaily.findMany({
-      where: eq(schema.analyticsDaily.workspaceId, workspaceId),
+      where: and(
+        eq(schema.analyticsDaily.workspaceId, workspaceId),
+        gte(schema.analyticsDaily.date, start),
+      ),
       with: { socialAccount: true },
       orderBy: (fields, { desc: orderDesc }) => [orderDesc(fields.date)],
-      limit: 90,
+      limit: 1000,
     });
 
     const metrics = rows.flatMap((row) => {
