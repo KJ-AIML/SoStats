@@ -1,19 +1,25 @@
-import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
+import {
+  CurrentWorkspaceId,
+  WorkspaceScoped,
+} from '../../common/workspace/workspace.decorator.js';
 import { AnalyticsService } from './analytics.service.js';
 
+@WorkspaceScoped()
 @Controller('v1/analytics')
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('overview')
-  async getOverview(@Query('workspaceId', ParseIntPipe) workspaceId: number) {
+  getOverview(@CurrentWorkspaceId() workspaceId: number) {
     return this.analyticsService.getOverview(workspaceId);
   }
 
   @Get('content/:contentId')
-  async getContentAnalytics(
+  getContentAnalytics(
     @Param('contentId', ParseIntPipe) contentId: number,
+    @CurrentWorkspaceId() workspaceId: number,
   ) {
-    return this.analyticsService.getContentAnalytics(contentId);
+    return this.analyticsService.getContentAnalytics(workspaceId, contentId);
   }
 }
