@@ -1,4 +1,11 @@
-import { Controller, Get, Param, ParseIntPipe } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+} from '@nestjs/common';
 import {
   CurrentWorkspaceId,
   WorkspaceScoped,
@@ -13,6 +20,14 @@ export class AnalyticsController {
   @Get('overview')
   getOverview(@CurrentWorkspaceId() workspaceId: number) {
     return this.analyticsService.getOverview(workspaceId);
+  }
+
+  @Post('insights')
+  generateInsights(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Body('brandId') brandId?: number,
+  ) {
+    return this.analyticsService.generateInsights(workspaceId, brandId);
   }
 
   @Get('content/:contentId')

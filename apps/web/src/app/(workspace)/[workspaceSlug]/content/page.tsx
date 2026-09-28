@@ -8,9 +8,74 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ContentBoard } from "@/components/content/content-board";
+import type { ContentItem, ContentStatus } from "@/components/content/data";
 import { PageHeading } from "@/components/sostats/page-heading";
+import { loadWorkspaceSnapshot } from "@/lib/sostats-api.server";
 
-export default function ContentPage() {
+function toBoardStatus(status: string): ContentStatus {
+  switch (status) {
+    case "in_review":
+    case "approved":
+      return "Review";
+    case "scheduled":
+      return "Scheduled";
+    case "published":
+      return "Published";
+    case "draft":
+      return "Drafts";
+    default:
+      return "Ideas";
+  }
+}
+
+export default async function ContentPage({
+  params,
+}: {
+  params: Promise<{ workspaceSlug: string }>;
+}) {
+  const { workspaceSlug } = await params;
+  let items: ContentItem[] = [];
+  let channels: Array<{
+    id: number;
+    provider: string;
+    accountName?: string | null;
+  }> = [];
+  let connectionError = false;
+
+  try {
+    const snapshot = await loadWorkspaceSnapshot(workspaceSlug);
+    channels = snapshot.channels
+      .filter((channel) => channel.status === "active")
+      .map((channel) => ({
+        id: channel.id,
+        provider: channel.provider,
+        accountName: channel.accountName,
+      }));
+    items = snapshot.content.map((item) => ({
+      id: String(item.id),
+      title: item.title,
+      description: item.description || undefined,
+      status: toBoardStatus(item.status),
+      channel:
+        item.variants
+          ?.map((variant) => variant.platform)
+          .filter(Boolean)
+          .slice(0, 2)
+          .join(" + ") || "Generic",
+      campaign: item.campaign?.name || "Unassigned",
+      time:
+        item.scheduledPublications?.[0]?.scheduledAt
+          ? new Date(item.scheduledPublications[0].scheduledAt).toLocaleString()
+          : "Updated recently",
+      variantRefs: item.variants?.map((variant) => ({
+        id: variant.id,
+        platform: variant.platform,
+      })),
+    }));
+  } catch {
+    connectionError = true;
+  }
+
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-5 p-4 md:p-6 xl:p-8">
       <PageHeading
@@ -30,6 +95,12 @@ export default function ContentPage() {
           </>
         }
       />
+
+      {connectionError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[10px] text-amber-800">
+          The API is currently unavailable. Start the API/database stack to load and persist content.
+        </div>
+      )}
 
       <div className="sostats-card flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
         <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-xl bg-neutral-50 px-3">
@@ -55,8 +126,18 @@ export default function ContentPage() {
         </div>
       </div>
 
+      {items.length === 0 && !connectionError && (
+        <div className="rounded-xl border border-dashed border-black/[0.1] bg-white/60 px-4 py-3 text-[10px] text-muted-foreground">
+          No content yet. Generate a campaign in AI Studio and its content will appear here automatically.
+        </div>
+      )}
+
       <div className="min-h-[560px] flex-1">
-        <ContentBoard />
+        <ContentBoard
+          workspaceSlug={workspaceSlug}
+          initialItems={items}
+          channels={channels}
+        />
       </div>
     </div>
   );

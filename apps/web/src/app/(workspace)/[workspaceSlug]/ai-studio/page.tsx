@@ -1,13 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
+  AlertCircle,
   ArrowRight,
   Check,
   ChevronDown,
   FileText,
   Image as ImageIcon,
   Layers3,
+  LoaderCircle,
   Play,
   Sparkles,
   WandSparkles,
@@ -17,31 +20,63 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeading } from "@/components/sostats/page-heading";
 
+type Campaign = {
+  id: number;
+  name: string;
+  description?: string | null;
+  goal?: string | null;
+  status: string;
+  channels?: Array<{ id: number; platform: string }>;
+  pillars?: Array<{ id: number; pillar: string }>;
+  contentItems?: Array<{
+    id: number;
+    title: string;
+    description?: string | null;
+    variants?: Array<{ id: number; platform?: string | null; content: string }>;
+  }>;
+};
+
 const channelOptions = ["LinkedIn", "X", "Instagram", "TikTok"];
-const ideas = [
-  {
-    type: "LinkedIn",
-    title: "Why content automation should start with the workflow, not the prompt",
-    body: "Most teams do not have a content problem. They have a handoff problem. SoStats connects idea → review → publish → learn in one loop.",
-  },
-  {
-    type: "X",
-    title: "One idea → an entire campaign",
-    body: "AI content gets useful when it stops being a text box and starts becoming infrastructure.",
-  },
-  {
-    type: "TikTok",
-    title: "30-second founder hook",
-    body: "Show the old 7-tab workflow, then collapse it into one automated SoStats pipeline.",
-  },
-];
 
 export default function AiStudioPage() {
+  const params = useParams<{ workspaceSlug: string }>();
+  const workspaceSlug = params.workspaceSlug;
   const [brief, setBrief] = useState(
     "Launch SoStats to startup founders and small marketing teams. Focus on how one idea becomes a complete multi-channel content pipeline.",
   );
+  const [audience, setAudience] = useState("Founders + lean marketing teams");
   const [selectedChannels, setSelectedChannels] = useState(["LinkedIn", "X", "TikTok"]);
-  const [generated, setGenerated] = useState(true);
+  const [brandId, setBrandId] = useState<number | undefined>();
+  const [brandName, setBrandName] = useState("Brand Brain");
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/workspaces/${encodeURIComponent(workspaceSlug)}/state`)
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as {
+          brand?: { id: number; name: string } | null;
+        };
+      })
+      .then((state) => {
+        if (!active || !state?.brand) return;
+        setBrandId(state.brand.id);
+        setBrandName(state.brand.name);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [workspaceSlug]);
+
+  const contentIdeas = campaign?.contentItems || [];
+  const pillars = useMemo(
+    () => campaign?.pillars?.map((item) => item.pillar) || [],
+    [campaign],
+  );
 
   const toggleChannel = (channel: string) => {
     setSelectedChannels((current) =>
@@ -51,6 +86,43 @@ export default function AiStudioPage() {
     );
   };
 
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/campaigns`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            brandId,
+            name: "AI Content Automation Campaign",
+            description: brief,
+            goal: brief,
+            channels: selectedChannels.map((channel) => channel.toLowerCase()),
+            topic: brief,
+            instructions: audience,
+          }),
+        },
+      );
+      const payload = (await response.json()) as Campaign & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Campaign generation failed");
+      }
+      setCampaign(payload);
+    } catch (generationError) {
+      setError(
+        generationError instanceof Error
+          ? generationError.message
+          : "Campaign generation failed",
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6 xl:p-8">
       <PageHeading
@@ -58,7 +130,10 @@ export default function AiStudioPage() {
         title="Build a campaign from one idea"
         description="SoStats combines your Brand Brain with channel-aware generation to create a structured campaign, not a pile of disconnected prompts."
         actions={
-          <Button className="h-10 rounded-xl bg-[#ef2b2d] px-4 text-xs hover:bg-[#da2427]">
+          <Button
+            onClick={() => setCampaign(null)}
+            className="h-10 rounded-xl bg-[#ef2b2d] px-4 text-xs hover:bg-[#da2427]"
+          >
             <Sparkles className="mr-2 h-4 w-4" />
             New campaign
           </Button>
@@ -88,23 +163,29 @@ export default function AiStudioPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              {[
-                ["Goal", "Product launch"],
-                ["Audience", "Founders"],
-                ["Tone", "Clear + bold"],
-                ["Length", "14 days"],
-              ].map(([label, value]) => (
-                <button
-                  key={label}
-                  className="rounded-xl border border-black/[0.06] bg-neutral-50 p-3 text-left transition hover:bg-neutral-100"
-                >
-                  <p className="text-[9px] font-medium text-muted-foreground">{label}</p>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <p className="truncate text-[10px] font-semibold">{value}</p>
-                    <ChevronDown className="h-3 w-3 text-neutral-400" />
-                  </div>
-                </button>
-              ))}
+              <button className="rounded-xl border border-black/[0.06] bg-neutral-50 p-3 text-left">
+                <p className="text-[9px] font-medium text-muted-foreground">Goal</p>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <p className="truncate text-[10px] font-semibold">Product launch</p>
+                  <ChevronDown className="h-3 w-3 text-neutral-400" />
+                </div>
+              </button>
+              <label className="rounded-xl border border-black/[0.06] bg-neutral-50 p-3 text-left">
+                <span className="text-[9px] font-medium text-muted-foreground">Audience</span>
+                <input
+                  value={audience}
+                  onChange={(event) => setAudience(event.target.value)}
+                  className="mt-1 w-full bg-transparent text-[10px] font-semibold outline-none"
+                />
+              </label>
+              <button className="rounded-xl border border-black/[0.06] bg-neutral-50 p-3 text-left">
+                <p className="text-[9px] font-medium text-muted-foreground">Tone</p>
+                <p className="mt-1 truncate text-[10px] font-semibold">From Brand Brain</p>
+              </button>
+              <button className="rounded-xl border border-black/[0.06] bg-neutral-50 p-3 text-left">
+                <p className="text-[9px] font-medium text-muted-foreground">Length</p>
+                <p className="mt-1 truncate text-[10px] font-semibold">Campaign plan</p>
+              </button>
             </div>
 
             <div>
@@ -135,18 +216,32 @@ export default function AiStudioPage() {
                   <Sparkles className="h-3.5 w-3.5 text-[#ef2b2d]" />
                 </div>
                 <div>
-                  <p className="text-[10px] font-semibold">Brand Brain attached</p>
-                  <p className="text-[9px] text-muted-foreground">Voice, audience, products + 12 knowledge sources</p>
+                  <p className="text-[10px] font-semibold">{brandName} attached</p>
+                  <p className="text-[9px] text-muted-foreground">
+                    Voice, audience, products, pillars and guardrails flow into generation.
+                  </p>
                 </div>
               </div>
             </div>
 
+            {error && (
+              <div className="flex gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-[9px] leading-4 text-red-700">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                {error}
+              </div>
+            )}
+
             <Button
-              onClick={() => setGenerated(true)}
+              onClick={handleGenerate}
+              disabled={isGenerating || selectedChannels.length === 0 || !brief.trim()}
               className="h-11 w-full rounded-xl bg-neutral-950 text-xs text-white hover:bg-neutral-800"
             >
-              <WandSparkles className="mr-2 h-4 w-4" />
-              Generate campaign
+              {isGenerating ? (
+                <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <WandSparkles className="mr-2 h-4 w-4" />
+              )}
+              {isGenerating ? "Generating with Brand Brain..." : "Generate campaign"}
             </Button>
           </div>
         </aside>
@@ -156,81 +251,80 @@ export default function AiStudioPage() {
             <div className="flex flex-col gap-3 border-b border-black/[0.055] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-semibold">SoStats launch campaign</p>
-                  <Badge className="border-0 bg-emerald-50 text-[9px] text-emerald-700 shadow-none">
-                    Generated
-                  </Badge>
+                  <p className="text-sm font-semibold">
+                    {campaign?.name || "Campaign workspace"}
+                  </p>
+                  {campaign && (
+                    <Badge className="border-0 bg-emerald-50 text-[9px] text-emerald-700 shadow-none">
+                      Saved to SoStats
+                    </Badge>
+                  )}
                 </div>
                 <p className="mt-1 text-[10px] text-muted-foreground">
-                  14 days · 3 channels · 11 content pieces
+                  {campaign
+                    ? `${campaign.channels?.length || 0} channels · ${contentIdeas.length} content pieces`
+                    : "Generate a campaign to create persisted content items and channel variants."}
                 </p>
               </div>
-              <div className="flex gap-2">
-                <Button variant="outline" className="h-9 rounded-xl text-[10px]">
-                  Save draft
-                </Button>
+              {campaign && (
                 <Button className="h-9 rounded-xl bg-[#ef2b2d] text-[10px] hover:bg-[#da2427]">
-                  Send to content
-                  <ArrowRight className="ml-2 h-3.5 w-3.5" />
+                  Content created
+                  <Check className="ml-2 h-3.5 w-3.5" />
                 </Button>
-              </div>
+              )}
             </div>
 
-            {generated ? (
+            {campaign ? (
               <div className="grid gap-px bg-black/[0.05] lg:grid-cols-[1fr_300px]">
                 <div className="space-y-5 bg-white p-5">
                   <div>
                     <p className="sostats-kicker">Campaign strategy</p>
                     <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em]">
-                      Own the workflow, not just the prompt.
+                      {campaign.goal || campaign.name}
                     </h2>
                     <p className="mt-2 max-w-3xl text-[11px] leading-5 text-muted-foreground">
-                      Position SoStats as the operating layer that connects planning, generation, review, distribution and analytics. Lead with workflow pain, then show the closed-loop advantage.
+                      {campaign.description || brief}
                     </p>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    {[
-                      ["01", "Workflow pain", "Show the fragmented before state."],
-                      ["02", "Automation payoff", "Demonstrate idea → channel variants."],
-                      ["03", "Learning loop", "Turn performance back into content."],
-                    ].map(([number, title, body]) => (
-                      <div key={number} className="rounded-xl border border-black/[0.055] p-3.5">
-                        <span className="font-mono text-[9px] text-[#ef2b2d]">{number}</span>
-                        <p className="mt-2 text-[10px] font-semibold">{title}</p>
-                        <p className="mt-1 text-[9px] leading-4 text-muted-foreground">{body}</p>
-                      </div>
-                    ))}
                   </div>
 
                   <div>
                     <div className="mb-3 flex items-center justify-between">
                       <div>
                         <p className="text-[11px] font-semibold">Generated content</p>
-                        <p className="text-[9px] text-muted-foreground">Platform-specific variants from one campaign narrative</p>
+                        <p className="text-[9px] text-muted-foreground">
+                          Persisted in the content pipeline with platform variants
+                        </p>
                       </div>
-                      <button className="text-[10px] font-semibold text-[#d92023]">View all 11</button>
+                      <span className="text-[10px] font-semibold text-[#d92023]">
+                        {contentIdeas.length} items
+                      </span>
                     </div>
                     <div className="space-y-2.5">
-                      {ideas.map((idea) => (
-                        <div key={idea.title} className="rounded-xl border border-black/[0.055] p-4 transition hover:border-black/10 hover:bg-neutral-50/60">
+                      {contentIdeas.map((idea) => (
+                        <div
+                          key={idea.id}
+                          className="rounded-xl border border-black/[0.055] p-4 transition hover:border-black/10 hover:bg-neutral-50/60"
+                        >
                           <div className="flex items-start gap-3">
                             <div className="sostats-icon h-9 w-9 shrink-0">
                               <FileText className="h-4 w-4 text-neutral-500" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-md bg-neutral-100 px-2 py-1 text-[9px] font-semibold text-neutral-600">
-                                  {idea.type}
-                                </span>
-                                <span className="text-[9px] text-muted-foreground">Draft</span>
+                                {(idea.variants || []).slice(0, 4).map((variant) => (
+                                  <span
+                                    key={variant.id}
+                                    className="rounded-md bg-neutral-100 px-2 py-1 text-[9px] font-semibold capitalize text-neutral-600"
+                                  >
+                                    {variant.platform || "generic"}
+                                  </span>
+                                ))}
                               </div>
                               <p className="mt-2 text-[11px] font-semibold">{idea.title}</p>
-                              <p className="mt-1 text-[10px] leading-4 text-muted-foreground">{idea.body}</p>
+                              <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                                {idea.description}
+                              </p>
                             </div>
-                            <button className="rounded-lg border border-black/[0.06] px-2.5 py-1.5 text-[9px] font-semibold text-neutral-500">
-                              Edit
-                            </button>
                           </div>
                         </div>
                       ))}
@@ -242,39 +336,42 @@ export default function AiStudioPage() {
                   <div className="rounded-xl bg-neutral-950 p-4 text-white">
                     <div className="flex items-center gap-2">
                       <Sparkles className="h-4 w-4 text-red-300" />
-                      <p className="text-[10px] font-semibold">AI rationale</p>
+                      <p className="text-[10px] font-semibold">Real generation loop</p>
                     </div>
                     <p className="mt-3 text-[10px] leading-4 text-white/55">
-                      Educational hooks are prioritized early, then product proof is layered in after the audience understands the workflow problem.
+                      This campaign was created through the NestJS API, enriched with Brand Brain context, planned by the AI service, then persisted as campaign, content and variant records.
                     </p>
                   </div>
 
                   <div className="rounded-xl border border-black/[0.055] bg-white p-4">
-                    <p className="text-[10px] font-semibold">Media plan</p>
+                    <p className="text-[10px] font-semibold">Content pillars</p>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {(pillars.length ? pillars : ["AI planned"]).map((pillar) => (
+                        <span
+                          key={pillar}
+                          className="rounded-full bg-neutral-100 px-2.5 py-1 text-[9px] text-neutral-600"
+                        >
+                          {pillar}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-black/[0.055] bg-white p-4">
+                    <p className="text-[10px] font-semibold">Next in workflow</p>
                     <div className="mt-3 space-y-2">
                       {[
-                        { icon: ImageIcon, label: "3 product visuals" },
-                        { icon: Play, label: "4 short-video scripts" },
-                        { icon: Layers3, label: "2 carousel briefs" },
+                        { icon: Layers3, label: "Review content board" },
+                        { icon: ImageIcon, label: "Attach or generate media" },
+                        { icon: Play, label: "Schedule approved variants" },
                       ].map((item) => (
                         <div key={item.label} className="flex items-center gap-2.5">
                           <div className="sostats-icon h-7 w-7">
                             <item.icon className="h-3 w-3 text-neutral-500" />
                           </div>
                           <p className="text-[9px] font-medium">{item.label}</p>
-                          <Check className="ml-auto h-3 w-3 text-emerald-500" />
+                          <ArrowRight className="ml-auto h-3 w-3 text-neutral-300" />
                         </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-black/[0.055] bg-white p-4">
-                    <p className="text-[10px] font-semibold">Content pillars</p>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {["Education", "Founder story", "Product proof", "Automation"].map((pillar) => (
-                        <span key={pillar} className="rounded-full bg-neutral-100 px-2.5 py-1 text-[9px] text-neutral-600">
-                          {pillar}
-                        </span>
                       ))}
                     </div>
                   </div>
@@ -286,9 +383,9 @@ export default function AiStudioPage() {
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#fff0f0]">
                     <Sparkles className="h-5 w-5 text-[#ef2b2d]" />
                   </div>
-                  <p className="mt-4 text-sm font-semibold">Your campaign will appear here</p>
-                  <p className="mt-1 text-[10px] text-muted-foreground">
-                    Configure the brief and generate a structured campaign.
+                  <p className="mt-4 text-sm font-semibold">Your live campaign will appear here</p>
+                  <p className="mt-1 max-w-sm text-[10px] leading-4 text-muted-foreground">
+                    Generate to create real campaign and content records through the SoStats API.
                   </p>
                 </div>
               </div>

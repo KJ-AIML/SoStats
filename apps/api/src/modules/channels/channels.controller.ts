@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import {
   CurrentWorkspaceId,
   WorkspaceScoped,
@@ -15,6 +15,11 @@ export class ConnectDto {
 @Controller('v1/channels')
 export class ChannelsController {
   constructor(private readonly channelsService: ChannelsService) {}
+
+  @Get()
+  findAll(@CurrentWorkspaceId() workspaceId: number) {
+    return this.channelsService.findAll(workspaceId);
+  }
 
   @Post(':provider/connect')
   connect(

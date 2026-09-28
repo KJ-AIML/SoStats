@@ -18,6 +18,11 @@ import { CreateCampaignDto, GenerateCampaignDto } from './campaigns.dto.js';
 export class CampaignsController {
   constructor(private readonly campaignsService: CampaignsService) {}
 
+  @Get()
+  findAll(@CurrentWorkspaceId() workspaceId: number) {
+    return this.campaignsService.findAll(workspaceId);
+  }
+
   @Post()
   create(
     @Body() body: CreateCampaignDto,

@@ -9,6 +9,7 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { CreateCampaignDto, GenerateCampaignDto } from './campaigns.dto.js';
+import { BrandContextService } from '../brands/brand-context.service.js';
 
 interface AiCampaignPlan {
   title: string;
@@ -27,7 +28,21 @@ interface AiCampaignPlan {
 export class CampaignsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
+    private readonly brandContext: BrandContextService,
   ) {}
+
+  findAll(workspaceId: number) {
+    return this.db.query.campaigns.findMany({
+      where: eq(schema.campaigns.workspaceId, workspaceId),
+      with: {
+        brand: true,
+        channels: true,
+        pillars: true,
+        contentItems: { with: { variants: true } },
+      },
+      orderBy: (fields, { desc }) => [desc(fields.createdAt)],
+    });
+  }
 
   async create(workspaceId: number, data: CreateCampaignDto) {
     if (data.brandId) {
@@ -40,18 +55,30 @@ export class CampaignsService {
       if (!brand) throw new NotFoundException('Brand not found');
     }
 
-    const { startDate, endDate, ...rest } = data;
-    const [campaign] = await this.db
-      .insert(schema.campaigns)
-      .values({
-        ...rest,
-        workspaceId,
-        startDate: startDate ? new Date(startDate) : undefined,
-        endDate: endDate ? new Date(endDate) : undefined,
-      })
-      .returning();
+    const { startDate, endDate, channels = [], ...rest } = data;
 
-    return campaign;
+    return this.db.transaction(async (tx) => {
+      const [campaign] = await tx
+        .insert(schema.campaigns)
+        .values({
+          ...rest,
+          workspaceId,
+          startDate: startDate ? new Date(startDate) : undefined,
+          endDate: endDate ? new Date(endDate) : undefined,
+        })
+        .returning();
+
+      if (channels.length) {
+        await tx.insert(schema.campaignChannels).values(
+          [...new Set(channels)].map((platform) => ({
+            campaignId: campaign.id,
+            platform,
+          })),
+        );
+      }
+
+      return campaign;
+    });
   }
 
   async findOne(workspaceId: number, id: number) {
@@ -72,12 +99,24 @@ export class CampaignsService {
   }
 
   private async requestPlan(
+    workspaceId: number,
     campaign: Awaited<ReturnType<CampaignsService['findOne']>>,
     data: GenerateCampaignDto,
   ): Promise<AiCampaignPlan> {
     const baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
+    const brand = await this.brandContext.get(workspaceId, campaign.brandId);
+    const promptContext = this.brandContext.serialize(brand, {
+      campaignDescription: campaign.description,
+    });
+
+    const audience =
+      data.instructions ||
+      brand?.audiences[0]?.name ||
+      'Existing brand audience';
+    const tone =
+      brand?.voiceProfiles[0]?.tone || 'Use the configured brand voice';
 
     try {
       const response = await fetch(baseUrl + '/v1/campaigns/plan', {
@@ -86,10 +125,10 @@ export class CampaignsService {
         signal: controller.signal,
         body: JSON.stringify({
           goal: campaign.goal || data.topic || campaign.name,
-          audience: data.instructions || 'Existing brand audience',
+          audience,
           channels: campaign.channels.map((channel) => channel.platform),
-          tone: 'Use the configured brand voice',
-          brand_context: campaign.description || undefined,
+          tone,
+          brand_context: promptContext,
         }),
       });
 
@@ -114,7 +153,7 @@ export class CampaignsService {
     data: GenerateCampaignDto,
   ) {
     const campaign = await this.findOne(workspaceId, id);
-    const plan = await this.requestPlan(campaign, data);
+    const plan = await this.requestPlan(workspaceId, campaign, data);
 
     await this.db.transaction(async (tx) => {
       await tx
