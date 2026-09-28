@@ -1,12 +1,17 @@
 {
-  "name": "SoStats",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "sostats",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SoStats AI Content Automation Platform",
+  "packageManager": "pnpm@10.17.1",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev:web": "pnpm --filter web dev",
+    "dev:api": "pnpm --filter api start:dev",
+    "dev:worker": "pnpm --filter worker start",
+    "build": "pnpm -r --if-present build",
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm --filter web exec tsc --noEmit && pnpm --filter api exec tsc --noEmit && pnpm --filter worker exec tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "license": "UNLICENSED"
 }
