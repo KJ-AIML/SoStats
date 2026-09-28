@@ -5,12 +5,12 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { FastifyRequest } from 'fastify';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { WorkspaceAccessService } from './workspace-access.service.js';
 import { WORKSPACE_SCOPED_KEY } from './workspace.decorator.js';
 
-type WorkspaceRequest = FastifyRequest & {
+type WorkspaceRequest = {
+  headers: Record<string, string | string[] | undefined>;
   user?: AuthenticatedUser;
   workspaceId?: number;
 };
