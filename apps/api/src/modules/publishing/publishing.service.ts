@@ -43,7 +43,51 @@ export class PublishingService {
     private readonly providerRegistry: ProviderRegistry,
   ) {}
 
+  private async reconcileStaleClaims() {
+    const cutoff = new Date(Date.now() - 15 * 60_000);
+    const staleJobs = await this.db.query.publicationJobs.findMany({
+      where: and(
+        eq(schema.publicationJobs.status, 'processing'),
+        lte(schema.publicationJobs.lastAttemptAt, cutoff),
+      ),
+      with: {
+        scheduledPublication: true,
+      },
+      limit: 50,
+    });
+
+    for (const job of staleJobs) {
+      const publication = job.scheduledPublication;
+      if (!publication || publication.status !== 'publishing') continue;
+
+      await this.db.transaction(async (tx) => {
+        await tx
+          .update(schema.publicationJobs)
+          .set({
+            status: 'failed',
+            nextAttemptAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.publicationJobs.id, job.id));
+
+        await tx.insert(schema.publicationResults).values({
+          publicationJobId: job.id,
+          errorType: 'unknown_outcome',
+          errorMessage:
+            'Publishing execution lease expired before SoStats could confirm the provider outcome. Automatic retry was stopped to avoid duplicate publication.',
+        });
+
+        await tx
+          .update(schema.scheduledPublications)
+          .set({ status: 'failed', updatedAt: new Date() })
+          .where(eq(schema.scheduledPublications.id, publication.id));
+      });
+    }
+  }
+
   async listDispatchable(until?: string): Promise<DispatchablePublication[]> {
+    await this.reconcileStaleClaims();
+
     const horizon = until ? new Date(until) : new Date(Date.now() + 120_000);
     if (Number.isNaN(horizon.getTime())) {
       throw new ConflictException('Invalid dispatch horizon');

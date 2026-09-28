@@ -125,6 +125,8 @@ either published or cancelled.
 
 ## Recovery
 
+A publication left in `publishing` with a processing attempt older than 15 minutes is treated as an unknown provider outcome. The dispatcher reconciliation pass marks it failed instead of replaying the external side effect automatically. This prevents a crashed process from turning into a duplicate post later.
+
 A failed schedule can be retried by selecting a new publish time in Calendar.
 That creates a new schedule version, which makes any old queue job stale.
 

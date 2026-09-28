@@ -78,6 +78,11 @@ publishingWorker.on('error', (error) => {
   console.error('[PublishingProcessor] Worker error:', error);
 });
 
+export async function stopPublishingWorker() {
+  await publishingWorker.close();
+  await connection.quit();
+}
+
 console.log(
   `[PublishingProcessor] Listening to "publishing" with concurrency ${Math.max(1, concurrency)}`,
 );
