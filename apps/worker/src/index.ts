@@ -1,5 +1,11 @@
 import './media/media.processor';
-import './analytics/analytics.processor';
+import {
+  startAnalyticsDispatcher,
+  stopAnalyticsDispatcher,
+} from './analytics/analytics.dispatcher';
+import {
+  stopAnalyticsWorker,
+} from './analytics/analytics.processor';
 import {
   startPublishingDispatcher,
   stopPublishingDispatcher,
@@ -17,6 +23,7 @@ import {
 
 startPublishingDispatcher();
 startAutomationDispatcher();
+startAnalyticsDispatcher();
 
 let stopping = false;
 
@@ -30,6 +37,8 @@ async function shutdown(signal: string) {
     stopPublishingWorker(),
     stopAutomationDispatcher(),
     stopAutomationWorker(),
+    stopAnalyticsDispatcher(),
+    stopAnalyticsWorker(),
   ]);
   process.exit(0);
 }

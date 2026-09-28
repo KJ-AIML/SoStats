@@ -99,9 +99,11 @@ export default async function ChannelsPage({
                   <RefreshCw className="h-3 w-3" />
                   {channel.supported === false
                     ? "Adapter unavailable"
-                    : channel.capabilities?.text
-                      ? "Text publishing ready"
-                      : "Connected"}
+                    : channel.capabilities?.analytics
+                      ? "Publish + analytics ready"
+                      : channel.capabilities?.text
+                        ? "Text publishing ready"
+                        : "Connected"}
                 </span>
                 <button className="font-semibold text-neutral-600">Manage</button>
               </div>
@@ -119,7 +121,7 @@ export default async function ChannelsPage({
 
       <div className="flex items-center gap-2 text-[9px] text-muted-foreground">
         <Link2 className="h-3.5 w-3.5" />
-        Provider credentials remain encrypted inside the backend adapter layer and are never returned by this page.
+        Provider credentials remain encrypted inside the backend adapter layer. Existing LinkedIn connections created before analytics access was enabled may need to reconnect once to grant reporting permission.
       </div>
     </div>
   );

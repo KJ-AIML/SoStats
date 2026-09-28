@@ -134,6 +134,9 @@ export type AnalyticsOverview = {
     metrics: Record<string, number>;
   }>;
   hasData: boolean;
+  latestSnapshotAt?: string | null;
+  trackedPosts?: number;
+  syncWindowDays?: number;
 };
 
 export type AutomationVersionRecord = {
@@ -339,7 +342,15 @@ export async function loadWorkspaceSnapshot(
     safe(
       "analytics",
       workspaceRequest<AnalyticsOverview>(workspaceSlug, "/v1/analytics/overview"),
-      { workspaceId: workspace.id, totals: {}, daily: [], hasData: false },
+      {
+        workspaceId: workspace.id,
+        totals: {},
+        daily: [],
+        hasData: false,
+        latestSnapshotAt: null,
+        trackedPosts: 0,
+        syncWindowDays: 30,
+      },
       errors,
     ),
     safe("channels", workspaceRequest<SocialAccountRecord[]>(workspaceSlug, "/v1/channels"), [], errors),

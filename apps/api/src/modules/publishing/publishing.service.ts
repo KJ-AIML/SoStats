@@ -11,7 +11,7 @@ import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 import { ProviderPublishError } from '../channels/ports/SocialPublisherPort.js';
-import { decrypt, encrypt } from '../../utils/encryption.util.js';
+import { ChannelCredentialService } from '../channels/channel-credential.service.js';
 
 type DispatchablePublication = {
   id: number;
@@ -41,6 +41,7 @@ export class PublishingService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly providerRegistry: ProviderRegistry,
+    private readonly credentials: ChannelCredentialService,
   ) {}
 
   private async reconcileStaleClaims() {
@@ -304,60 +305,11 @@ export class PublishingService {
 
     try {
       const account = publication.socialAccount;
-      if (account.status !== 'active' || !account.accessToken) {
-        throw new ProviderPublishError(
-          'Connected channel is unavailable or has no usable access token',
-          { retryable: false },
-        );
-      }
-
       const adapter = this.providerRegistry.getProvider(account.provider);
-      let accessToken = decrypt(account.accessToken);
-
-      if (account.expiresAt && account.expiresAt.getTime() <= Date.now()) {
-        if (!account.refreshToken) {
-          await this.db
-            .update(schema.socialAccounts)
-            .set({ status: 'expired', updatedAt: new Date() })
-            .where(eq(schema.socialAccounts.id, account.id));
-
-          throw new ProviderPublishError(
-            'Connected channel access token is expired and no refresh token is available',
-            { retryable: false },
-          );
-        }
-
-        try {
-          const refreshed = await adapter.refreshAccessToken(
-            decrypt(account.refreshToken),
-          );
-          accessToken = refreshed.accessToken;
-
-          await this.db
-            .update(schema.socialAccounts)
-            .set({
-              accessToken: encrypt(refreshed.accessToken),
-              refreshToken: refreshed.refreshToken
-                ? encrypt(refreshed.refreshToken)
-                : account.refreshToken,
-              expiresAt: refreshed.expiresAt,
-              status: 'active',
-              updatedAt: new Date(),
-            })
-            .where(eq(schema.socialAccounts.id, account.id));
-        } catch (refreshError) {
-          if (
-            refreshError instanceof ProviderPublishError &&
-            !refreshError.retryable
-          ) {
-            await this.db
-              .update(schema.socialAccounts)
-              .set({ status: 'expired', updatedAt: new Date() })
-              .where(eq(schema.socialAccounts.id, account.id));
-          }
-          throw refreshError;
-        }
-      }
+      const accessToken = await this.credentials.getValidAccessToken(
+        account,
+        adapter,
+      );
 
       const content =
         publication.variant?.content ||
