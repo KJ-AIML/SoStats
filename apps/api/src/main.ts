@@ -3,8 +3,8 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
-import { AppModule } from './app.module.js';
 import helmet from '@fastify/helmet';
+import { AppModule } from './app.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 
 async function bootstrap() {
@@ -13,19 +13,23 @@ async function bootstrap() {
     new FastifyAdapter(),
   );
 
-  // Global Exception Filter
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Enable CORS
+  const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: allowedOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
 
-  // Helmet (Security Headers)
   await app.register(helmet);
 
-  await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
+  const port = Number.parseInt(process.env.PORT || '4000', 10);
+  await app.listen(port, '0.0.0.0');
 }
+
 await bootstrap();
