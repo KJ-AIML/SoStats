@@ -11,7 +11,7 @@ import * as schema from '../../db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { BrandContextService } from '../brands/brand-context.service.js';
 
-interface AiInsightResponse {
+export interface AiInsightResponse {
   insights: Array<{
     finding: string;
     recommendation: string;
