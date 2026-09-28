@@ -532,6 +532,46 @@ export const analyticsDaily = pgTable('analytics_daily', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// ai_insights
+export const aiInsights = pgTable(
+  'ai_insights',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    brandId: integer('brand_id').references(() => brands.id, {
+      onDelete: 'set null',
+    }),
+    generationId: varchar('generation_id', { length: 64 }).notNull(),
+    summary: text('summary'),
+    finding: text('finding').notNull(),
+    evidence: jsonb('evidence').notNull().default([]),
+    evidenceData: jsonb('evidence_data').notNull().default({}),
+    recommendation: text('recommendation').notNull(),
+    impactEstimate: text('impact_estimate'),
+    confidence: varchar('confidence', { length: 20 }).notNull().default('medium'),
+    actionType: varchar('action_type', { length: 50 }).notNull().default('none'),
+    actionPayload: jsonb('action_payload').notNull().default({}),
+    status: varchar('status', { length: 30 }).notNull().default('pending'),
+    result: jsonb('result'),
+    error: text('error'),
+    executedAt: timestamp('executed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    insightWorkspaceIdx: index('ai_insight_workspace_idx').on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    insightStatusIdx: index('ai_insight_status_idx').on(
+      table.workspaceId,
+      table.status,
+    ),
+  }),
+);
+
 // integrations
 export const integrations = pgTable('integrations', {
   id: serial('id').primaryKey(),
@@ -586,6 +626,7 @@ export const workspacesRelations = relations(workspaces, ({ many }) => ({
   campaigns: many(campaigns),
   scheduledPublications: many(scheduledPublications),
   automations: many(automations),
+  aiInsights: many(aiInsights),
   integrations: many(integrations),
   webhookEndpoints: many(webhookEndpoints),
 }));
@@ -621,6 +662,7 @@ export const brandsRelations = relations(brands, ({ one, many }) => ({
   socialAccounts: many(socialAccounts),
   assets: many(assets),
   campaigns: many(campaigns),
+  aiInsights: many(aiInsights),
 }));
 
 export const brandVoiceProfilesRelations = relations(
@@ -980,6 +1022,17 @@ export const analyticsDailyRelations = relations(analyticsDaily, ({ one }) => ({
   socialAccount: one(socialAccounts, {
     fields: [analyticsDaily.socialAccountId],
     references: [socialAccounts.id],
+  }),
+}));
+
+export const aiInsightsRelations = relations(aiInsights, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [aiInsights.workspaceId],
+    references: [workspaces.id],
+  }),
+  brand: one(brands, {
+    fields: [aiInsights.brandId],
+    references: [brands.id],
   }),
 }));
 
