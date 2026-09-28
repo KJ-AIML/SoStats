@@ -9,6 +9,7 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { CreateCampaignDto, GenerateCampaignDto } from './campaigns.dto.js';
+import { BrandContextService } from '../brands/brand-context.service.js';
 
 interface AiCampaignPlan {
   title: string;
@@ -27,6 +28,7 @@ interface AiCampaignPlan {
 export class CampaignsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
+    private readonly brandContext: BrandContextService,
   ) {}
 
   findAll(workspaceId: number) {
@@ -96,24 +98,6 @@ export class CampaignsService {
     return campaign;
   }
 
-  private async getBrandContext(workspaceId: number, brandId?: number | null) {
-    if (!brandId) return null;
-
-    return this.db.query.brands.findFirst({
-      where: and(
-        eq(schema.brands.id, brandId),
-        eq(schema.brands.workspaceId, workspaceId),
-      ),
-      with: {
-        voiceProfiles: true,
-        audiences: true,
-        products: true,
-        pillars: true,
-        rules: true,
-      },
-    });
-  }
-
   private async requestPlan(
     workspaceId: number,
     campaign: Awaited<ReturnType<CampaignsService['findOne']>>,
@@ -122,41 +106,10 @@ export class CampaignsService {
     const baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
-    const brand = await this.getBrandContext(workspaceId, campaign.brandId);
-
-    const brandContext = brand
-      ? JSON.stringify({
-          brand: {
-            name: brand.name,
-            description: brand.description,
-            websiteUrl: brand.websiteUrl,
-          },
-          voice: brand.voiceProfiles.map((profile) => ({
-            tone: profile.tone,
-            style: profile.style,
-            guidelines: profile.guidelines,
-          })),
-          audiences: brand.audiences.map((audience) => ({
-            name: audience.name,
-            demographics: audience.demographics,
-            painPoints: audience.painPoints,
-          })),
-          products: brand.products.map((product) => ({
-            name: product.name,
-            description: product.description,
-            features: product.features,
-          })),
-          pillars: brand.pillars.map((pillar) => ({
-            name: pillar.name,
-            description: pillar.description,
-          })),
-          rules: brand.rules.map((rule) => ({
-            type: rule.ruleType,
-            description: rule.description,
-          })),
-          campaignDescription: campaign.description,
-        })
-      : campaign.description || undefined;
+    const brand = await this.brandContext.get(workspaceId, campaign.brandId);
+    const promptContext = this.brandContext.serialize(brand, {
+      campaignDescription: campaign.description,
+    });
 
     const audience =
       data.instructions ||
@@ -175,7 +128,7 @@ export class CampaignsService {
           audience,
           channels: campaign.channels.map((channel) => channel.platform),
           tone,
-          brand_context: brandContext,
+          brand_context: promptContext,
         }),
       });
 
