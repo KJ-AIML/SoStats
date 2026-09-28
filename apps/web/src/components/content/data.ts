@@ -13,6 +13,10 @@ export interface ContentItem {
   channel?: string;
   campaign?: string;
   time?: string;
+  variantRefs?: Array<{
+    id: number;
+    platform?: string | null;
+  }>;
 }
 
 export const initialContentItems: ContentItem[] = [
@@ -60,23 +64,5 @@ export const initialContentItems: ContentItem[] = [
     channel: "LinkedIn",
     campaign: "SoStats launch",
     time: "Yesterday",
-  },
-  {
-    id: "6",
-    title: "Content flywheel visual",
-    status: "Drafts",
-    description: "Create → Publish → Measure → Learn → Create Better.",
-    channel: "Instagram",
-    campaign: "Product education",
-    time: "35m ago",
-  },
-  {
-    id: "7",
-    title: "AI recommendation demo",
-    status: "Review",
-    description: "Product clip showing stats turning into next actions.",
-    channel: "TikTok",
-    campaign: "Product demo",
-    time: "Needs review",
   },
 ];

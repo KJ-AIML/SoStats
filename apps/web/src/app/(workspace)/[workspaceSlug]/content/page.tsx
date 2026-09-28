@@ -35,10 +35,22 @@ export default async function ContentPage({
 }) {
   const { workspaceSlug } = await params;
   let items: ContentItem[] = [];
+  let channels: Array<{
+    id: number;
+    provider: string;
+    accountName?: string | null;
+  }> = [];
   let connectionError = false;
 
   try {
     const snapshot = await loadWorkspaceSnapshot(workspaceSlug);
+    channels = snapshot.channels
+      .filter((channel) => channel.status === "active")
+      .map((channel) => ({
+        id: channel.id,
+        provider: channel.provider,
+        accountName: channel.accountName,
+      }));
     items = snapshot.content.map((item) => ({
       id: String(item.id),
       title: item.title,
@@ -55,6 +67,10 @@ export default async function ContentPage({
         item.scheduledPublications?.[0]?.scheduledAt
           ? new Date(item.scheduledPublications[0].scheduledAt).toLocaleString()
           : "Updated recently",
+      variantRefs: item.variants?.map((variant) => ({
+        id: variant.id,
+        platform: variant.platform,
+      })),
     }));
   } catch {
     connectionError = true;
@@ -117,7 +133,11 @@ export default async function ContentPage({
       )}
 
       <div className="min-h-[560px] flex-1">
-        <ContentBoard workspaceSlug={workspaceSlug} initialItems={items} />
+        <ContentBoard
+          workspaceSlug={workspaceSlug}
+          initialItems={items}
+          channels={channels}
+        />
       </div>
     </div>
   );
