@@ -38,6 +38,9 @@ export default async function WorkspaceDashboardPage({
     .slice(0, 4);
   const channels = snapshot?.channels || [];
   const automations = snapshot?.automations || [];
+  const latestInsight = (snapshot?.insights || []).find((insight) =>
+    ["pending", "failed", "informational"].includes(insight.status),
+  );
 
   const counts = {
     draft: content.filter((item) => item.status === "draft").length,
@@ -205,18 +208,22 @@ export default async function WorkspaceDashboardPage({
           <div className="space-y-3 p-4">
             <div className="rounded-xl border border-[#ef2b2d]/10 bg-[#fff7f7] p-3.5">
               <p className="text-[11px] font-semibold">
-                {snapshot?.analytics.hasData
-                  ? "Performance data is ready for AI analysis"
-                  : "Waiting for provider metrics"}
+                {latestInsight
+                  ? latestInsight.finding
+                  : snapshot?.analytics.hasData
+                    ? "Performance data is ready for AI recommendations"
+                    : "Waiting for provider metrics"}
               </p>
-              <p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">
-                SoStats sends only persisted metrics plus Brand Brain context to the insight engine.
+              <p className="mt-1.5 line-clamp-3 text-[10px] leading-4 text-muted-foreground">
+                {latestInsight
+                  ? latestInsight.recommendation
+                  : "SoStats turns persisted metrics and Brand Brain context into controlled next actions."}
               </p>
               <Link
                 href={`/${workspaceSlug}/analytics`}
                 className="mt-3 inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#d92023]"
               >
-                Open analytics <ArrowRight className="h-3 w-3" />
+                {latestInsight ? "Review recommendation" : "Open analytics"} <ArrowRight className="h-3 w-3" />
               </Link>
             </div>
           </div>

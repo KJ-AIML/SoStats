@@ -42,8 +42,10 @@ Architecture notes:
 - [Implementation plan](docs/architecture/SoStats_Architecture_Implementation_Plan.md)
 - [Stage 0 hardening](docs/architecture/STAGE_0_HARDENING.md)
 - [Stage 1 real-data vertical slice](docs/architecture/STAGE_1_VERTICAL_SLICE.md)
-- [Stage 2 reliable publishing](docs/architecture/STAGE_2_RELIABLE_PUBLISHING.md)\n- [Stage 3 automation runtime](docs/architecture/STAGE_3_AUTOMATION_RUNTIME.md)
+- [Stage 2 reliable publishing](docs/architecture/STAGE_2_RELIABLE_PUBLISHING.md)
+- [Stage 3 automation runtime](docs/architecture/STAGE_3_AUTOMATION_RUNTIME.md)
 - [Stage 4 real analytics ingestion](docs/architecture/STAGE_4_REAL_ANALYTICS.md)
+- [Stage 5 closed AI learning loop](docs/architecture/STAGE_5_CLOSED_AI_LOOP.md)
 
 ## Repository layout
 
@@ -91,8 +93,9 @@ pnpm dev:worker
 ```
 
 The API and worker must share the same independent `WORKER_API_TOKEN`. The
-worker uses `SOSTATS_API_URL` to call the internal publication execution
-boundary and never receives OAuth access tokens in BullMQ jobs.
+worker uses `SOSTATS_API_URL` to call internal publishing, automation and
+analytics execution boundaries. Redis jobs carry stable ids/version tokens,
+never OAuth credentials or browser auth tokens.
 
 ## AI service
 
