@@ -30,9 +30,27 @@ const columns: ContentStatus[] = [
   "Published",
 ];
 
-export function ContentBoard() {
-  const [items, setItems] = useState<ContentItem[]>(initialContentItems);
+const apiStatus: Record<ContentStatus, string> = {
+  Ideas: "draft",
+  Drafts: "draft",
+  Review: "in_review",
+  Scheduled: "scheduled",
+  Published: "published",
+};
+
+export function ContentBoard({
+  workspaceSlug,
+  initialItems,
+}: {
+  workspaceSlug?: string;
+  initialItems?: ContentItem[];
+}) {
+  const [items, setItems] = useState<ContentItem[]>(
+    initialItems ?? initialContentItems,
+  );
   const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
+  const [activeStartStatus, setActiveStartStatus] =
+    useState<ContentStatus | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -40,7 +58,9 @@ export function ContentBoard() {
   );
 
   const handleDragStart = (event: DragStartEvent) => {
-    setActiveItem(items.find((item) => item.id === event.active.id) || null);
+    const item = items.find((entry) => entry.id === event.active.id) || null;
+    setActiveItem(item);
+    setActiveStartStatus(item?.status || null);
   };
 
   const handleDragOver = (event: DragOverEvent) => {
@@ -80,16 +100,51 @@ export function ContentBoard() {
     });
   };
 
+  const persistStatus = async (
+    itemId: string,
+    nextStatus: ContentStatus,
+    previousStatus: ContentStatus,
+  ) => {
+    if (!workspaceSlug || nextStatus === previousStatus) return;
+
+    const response = await fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceSlug)}/content/${itemId}/status`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: apiStatus[nextStatus] }),
+      },
+    );
+
+    if (!response.ok) {
+      setItems((current) =>
+        current.map((item) =>
+          item.id === itemId ? { ...item, status: previousStatus } : item,
+        ),
+      );
+    }
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
+    const previousStatus = activeStartStatus;
     setActiveItem(null);
-    if (!event.over || event.active.id === event.over.id) return;
+    setActiveStartStatus(null);
+
+    if (!event.over) return;
 
     setItems((current) => {
       const activeIndex = current.findIndex((item) => item.id === event.active.id);
       const overIndex = current.findIndex((item) => item.id === event.over?.id);
-      return activeIndex >= 0 && overIndex >= 0
-        ? arrayMove(current, activeIndex, overIndex)
-        : current;
+      const reordered =
+        activeIndex >= 0 && overIndex >= 0
+          ? arrayMove(current, activeIndex, overIndex)
+          : current;
+
+      const moved = reordered.find((item) => item.id === event.active.id);
+      if (moved && previousStatus) {
+        void persistStatus(String(moved.id), moved.status, previousStatus);
+      }
+      return reordered;
     });
   };
 

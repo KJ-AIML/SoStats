@@ -96,13 +96,74 @@ export class CampaignsService {
     return campaign;
   }
 
+  private async getBrandContext(workspaceId: number, brandId?: number | null) {
+    if (!brandId) return null;
+
+    return this.db.query.brands.findFirst({
+      where: and(
+        eq(schema.brands.id, brandId),
+        eq(schema.brands.workspaceId, workspaceId),
+      ),
+      with: {
+        voiceProfiles: true,
+        audiences: true,
+        products: true,
+        pillars: true,
+        rules: true,
+      },
+    });
+  }
+
   private async requestPlan(
+    workspaceId: number,
     campaign: Awaited<ReturnType<CampaignsService['findOne']>>,
     data: GenerateCampaignDto,
   ): Promise<AiCampaignPlan> {
     const baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
+    const brand = await this.getBrandContext(workspaceId, campaign.brandId);
+
+    const brandContext = brand
+      ? JSON.stringify({
+          brand: {
+            name: brand.name,
+            description: brand.description,
+            websiteUrl: brand.websiteUrl,
+          },
+          voice: brand.voiceProfiles.map((profile) => ({
+            tone: profile.tone,
+            style: profile.style,
+            guidelines: profile.guidelines,
+          })),
+          audiences: brand.audiences.map((audience) => ({
+            name: audience.name,
+            demographics: audience.demographics,
+            painPoints: audience.painPoints,
+          })),
+          products: brand.products.map((product) => ({
+            name: product.name,
+            description: product.description,
+            features: product.features,
+          })),
+          pillars: brand.pillars.map((pillar) => ({
+            name: pillar.name,
+            description: pillar.description,
+          })),
+          rules: brand.rules.map((rule) => ({
+            type: rule.ruleType,
+            description: rule.description,
+          })),
+          campaignDescription: campaign.description,
+        })
+      : campaign.description || undefined;
+
+    const audience =
+      data.instructions ||
+      brand?.audiences[0]?.name ||
+      'Existing brand audience';
+    const tone =
+      brand?.voiceProfiles[0]?.tone || 'Use the configured brand voice';
 
     try {
       const response = await fetch(baseUrl + '/v1/campaigns/plan', {
@@ -111,10 +172,10 @@ export class CampaignsService {
         signal: controller.signal,
         body: JSON.stringify({
           goal: campaign.goal || data.topic || campaign.name,
-          audience: data.instructions || 'Existing brand audience',
+          audience,
           channels: campaign.channels.map((channel) => channel.platform),
-          tone: 'Use the configured brand voice',
-          brand_context: campaign.description || undefined,
+          tone,
+          brand_context: brandContext,
         }),
       });
 
@@ -139,7 +200,7 @@ export class CampaignsService {
     data: GenerateCampaignDto,
   ) {
     const campaign = await this.findOne(workspaceId, id);
-    const plan = await this.requestPlan(campaign, data);
+    const plan = await this.requestPlan(workspaceId, campaign, data);
 
     await this.db.transaction(async (tx) => {
       await tx

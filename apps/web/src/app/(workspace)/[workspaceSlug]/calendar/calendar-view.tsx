@@ -13,7 +13,7 @@ import {
   startOfWeek,
   subMonths,
 } from "date-fns";
-import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, Clock3, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,56 +27,43 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 type Post = {
-  id: string;
+  id: number;
   title: string;
   channel: string;
   date: Date;
 };
 
 const today = new Date();
-const initialPosts: Post[] = [
-  {
-    id: "1",
-    title: "Why AI workflows beat prompts",
-    channel: "LinkedIn",
-    date: new Date(today.getFullYear(), today.getMonth(), 5, 9, 30),
-  },
-  {
-    id: "2",
-    title: "Product workflow carousel",
-    channel: "Instagram",
-    date: new Date(today.getFullYear(), today.getMonth(), 11, 13, 0),
-  },
-  {
-    id: "3",
-    title: "Founder automation stack",
-    channel: "X",
-    date: new Date(today.getFullYear(), today.getMonth(), 15, 10, 0),
-  },
-  {
-    id: "4",
-    title: "SoStats product demo",
-    channel: "TikTok",
-    date: new Date(today.getFullYear(), today.getMonth(), 22, 18, 30),
-  },
-  {
-    id: "5",
-    title: "Stats → next content",
-    channel: "LinkedIn",
-    date: new Date(today.getFullYear(), today.getMonth(), 28, 9, 0),
-  },
-];
-
 const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export function CalendarView() {
+export function CalendarView({
+  workspaceSlug,
+  initialSchedules,
+}: {
+  workspaceSlug: string;
+  initialSchedules: Array<{
+    id: number;
+    title: string;
+    channel: string;
+    scheduledAt: string;
+  }>;
+}) {
   const [currentDate, setCurrentDate] = useState(today);
-  const [posts, setPosts] = useState(initialPosts);
+  const [posts, setPosts] = useState<Post[]>(
+    initialSchedules.map((schedule) => ({
+      id: schedule.id,
+      title: schedule.title,
+      channel: schedule.channel,
+      date: new Date(schedule.scheduledAt),
+    })),
+  );
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [open, setOpen] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const monthStart = startOfMonth(currentDate);
   const days = eachDayOfInterval({
@@ -89,22 +76,45 @@ export function CalendarView() {
     setEditTitle(post.title);
     setEditDate(format(post.date, "yyyy-MM-dd"));
     setEditTime(format(post.date, "HH:mm"));
+    setError(null);
     setOpen(true);
   };
 
-  const save = () => {
+  const save = async () => {
     if (!selectedPost) return;
     const [year, month, day] = editDate.split("-").map(Number);
     const [hours, minutes] = editTime.split(":").map(Number);
     const nextDate = new Date(year, month - 1, day, hours, minutes);
-    setPosts((current) =>
-      current.map((post) =>
-        post.id === selectedPost.id
-          ? { ...post, title: editTitle, date: nextDate }
-          : post,
-      ),
-    );
-    setOpen(false);
+
+    setIsSaving(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/schedules/${selectedPost.id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ scheduledAt: nextDate.toISOString() }),
+        },
+      );
+      if (!response.ok) {
+        const payload = (await response.json()) as { error?: string };
+        throw new Error(payload.error || "Unable to update schedule");
+      }
+
+      setPosts((current) =>
+        current.map((post) =>
+          post.id === selectedPost.id
+            ? { ...post, title: editTitle, date: nextDate }
+            : post,
+        ),
+      );
+      setOpen(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to update schedule");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -186,7 +196,7 @@ export function CalendarView() {
                           onClick={() => openPost(post)}
                           className="w-full rounded-lg border border-[#ef2b2d]/10 bg-[#fff7f7] p-2 text-left transition hover:border-[#ef2b2d]/20 hover:bg-[#fff1f1]"
                         >
-                          <div className="flex items-center gap-1 text-[8px] font-semibold text-[#d92023]">
+                          <div className="flex items-center gap-1 text-[8px] font-semibold capitalize text-[#d92023]">
                             <Clock3 className="h-2.5 w-2.5" />
                             {format(post.date, "HH:mm")} · {post.channel}
                           </div>
@@ -202,6 +212,12 @@ export function CalendarView() {
             </div>
           </div>
         </div>
+
+        {posts.length === 0 && (
+          <div className="border-t border-black/[0.045] px-5 py-4 text-[10px] text-muted-foreground">
+            Nothing scheduled yet. Approve content, connect a channel, then add it to the publishing calendar.
+          </div>
+        )}
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -216,7 +232,11 @@ export function CalendarView() {
                 value={editTitle}
                 onChange={(event) => setEditTitle(event.target.value)}
                 className="rounded-xl"
+                disabled
               />
+              <p className="mt-1 text-[8px] text-muted-foreground">
+                Edit copy in Content; this dialog changes the publishing time.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -238,12 +258,23 @@ export function CalendarView() {
                 />
               </div>
             </div>
+            {error && (
+              <div className="flex items-center gap-2 rounded-xl bg-red-50 p-3 text-[9px] text-red-700">
+                <AlertCircle className="h-3.5 w-3.5" />
+                {error}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)} className="rounded-xl">
               Cancel
             </Button>
-            <Button onClick={save} className="rounded-xl bg-[#ef2b2d] hover:bg-[#da2427]">
+            <Button
+              onClick={save}
+              disabled={isSaving}
+              className="rounded-xl bg-[#ef2b2d] hover:bg-[#da2427]"
+            >
+              {isSaving && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}
               Save changes
             </Button>
           </DialogFooter>
