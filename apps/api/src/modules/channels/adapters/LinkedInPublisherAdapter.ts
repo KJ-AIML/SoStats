@@ -10,6 +10,11 @@ import {
   type PublishResult,
   type RefreshedToken,
 } from '../ports/SocialPublisherPort.js';
+import {
+  ProviderAnalyticsError,
+  type SocialAnalyticsPort,
+  type SocialMetricTotals,
+} from '../ports/SocialAnalyticsPort.js';
 
 type LinkedInUserInfo = {
   sub: string;
@@ -24,15 +29,32 @@ type LinkedInTokenResponse = {
   refresh_token?: string;
 };
 
+type LinkedInAnalyticsResponse = {
+  elements?: Array<{
+    count?: number;
+  }>;
+};
+
+const analyticsQueries = [
+  ['impressions', 'IMPRESSION'],
+  ['reach', 'MEMBERS_REACHED'],
+  ['shares', 'RESHARE'],
+  ['reactions', 'REACTION'],
+  ['comments', 'COMMENT'],
+  ['clicks', 'LINK_CLICKS'],
+] as const;
+
 @Injectable()
-export class LinkedInPublisherAdapter implements SocialPublisherPort {
+export class LinkedInPublisherAdapter
+  implements SocialPublisherPort, SocialAnalyticsPort
+{
   readonly providerName = 'linkedin';
   readonly capabilities = {
     text: true,
     images: false,
     video: false,
     carousel: false,
-    analytics: false,
+    analytics: true,
     nativeScheduling: false,
   } as const;
 
@@ -57,13 +79,14 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
   }
 
   private apiVersion() {
-    const value = process.env.LINKEDIN_API_VERSION;
-    if (!value) {
-      throw new ServiceUnavailableException(
-        'LINKEDIN_API_VERSION is not configured',
-      );
-    }
-    return value;
+    return process.env.LINKEDIN_API_VERSION || '202609';
+  }
+
+  private scopes() {
+    return (
+      process.env.LINKEDIN_SCOPES ||
+      'openid profile email w_member_social r_member_postAnalytics'
+    );
   }
 
   async publishPost(
@@ -133,13 +156,70 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
     return { postId };
   }
 
+  async fetchPostMetrics(
+    platformPostId: string,
+    accessToken: string,
+  ): Promise<SocialMetricTotals> {
+    const entity = this.analyticsEntity(platformPostId);
+
+    const entries = await Promise.all(
+      analyticsQueries.map(async ([key, queryType]) => {
+        const params = new URLSearchParams({
+          q: 'entity',
+          entity,
+          queryType,
+          aggregation: 'TOTAL',
+        });
+
+        let response: Response;
+        try {
+          response = await fetch(
+            `https://api.linkedin.com/rest/memberCreatorPostAnalytics?${params.toString()}`,
+            {
+              headers: {
+                authorization: `Bearer ${accessToken}`,
+                'content-type': 'application/json',
+                'linkedin-version': this.apiVersion(),
+                'x-restli-protocol-version': '2.0.0',
+              },
+            },
+          );
+        } catch {
+          throw new ProviderAnalyticsError(
+            'LinkedIn analytics request failed before a provider response was received',
+            { retryable: true },
+          );
+        }
+
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new ProviderAnalyticsError(
+            `LinkedIn analytics failed for ${queryType} (HTTP ${response.status}): ${detail.slice(0, 300)}`,
+            {
+              statusCode: response.status,
+              retryable: response.status === 429 || response.status >= 500,
+              permissionDenied: response.status === 403,
+            },
+          );
+        }
+
+        const payload = (await response.json()) as LinkedInAnalyticsResponse;
+        const count = payload.elements?.[0]?.count;
+
+        return [key, typeof count === 'number' ? count : 0] as const;
+      }),
+    );
+
+    return Object.fromEntries(entries) as SocialMetricTotals;
+  }
+
   getAuthUrl(redirectUri: string): string {
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.clientId(),
       redirect_uri: redirectUri,
       state: crypto.randomUUID(),
-      scope: 'openid profile email w_member_social',
+      scope: this.scopes(),
     });
 
     return `https://www.linkedin.com/oauth/v2/authorization?${params.toString()}`;
@@ -180,7 +260,9 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
 
     const token = (await response.json()) as LinkedInTokenResponse;
     if (!token.access_token) {
-      throw new BadGatewayException('LinkedIn token exchange returned no access token');
+      throw new BadGatewayException(
+        'LinkedIn token exchange returned no access token',
+      );
     }
 
     const profile = await this.getUserInfo(token.access_token);
@@ -249,6 +331,25 @@ export class LinkedInPublisherAdapter implements SocialPublisherPort {
         ? new Date(Date.now() + token.expires_in * 1000)
         : undefined,
     };
+  }
+
+  private analyticsEntity(platformPostId: string) {
+    const value = platformPostId.trim();
+
+    if (value.startsWith('urn:li:ugcPost:')) {
+      return `(ugc:${value})`;
+    }
+    if (value.startsWith('urn:li:share:')) {
+      return `(share:${value})`;
+    }
+    if (/^\d+$/.test(value)) {
+      return `(share:urn:li:share:${value})`;
+    }
+
+    throw new ProviderAnalyticsError(
+      `LinkedIn analytics cannot normalize post id "${value}" into a share or UGC post URN`,
+      { retryable: false },
+    );
   }
 
   private async getUserInfo(accessToken: string): Promise<LinkedInUserInfo> {
