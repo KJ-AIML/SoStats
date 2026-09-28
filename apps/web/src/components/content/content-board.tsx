@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -9,111 +9,87 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  DragStartEvent,
-  DragOverEvent,
-  DragEndEvent,
+  type DragStartEvent,
+  type DragOverEvent,
+  type DragEndEvent,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
-import { ContentStatus, ContentItem, initialContentItems } from "./data";
+import {
+  type ContentStatus,
+  type ContentItem,
+  initialContentItems,
+} from "./data";
 import { ContentColumn } from "./content-column";
 import { ContentCard } from "./content-card";
 
-const columns: ContentStatus[] = ["Ideas", "Drafts", "Review", "Scheduled", "Published"];
+const columns: ContentStatus[] = [
+  "Ideas",
+  "Drafts",
+  "Review",
+  "Scheduled",
+  "Published",
+];
 
 export function ContentBoard() {
   const [items, setItems] = useState<ContentItem[]>(initialContentItems);
   const [activeItem, setActiveItem] = useState<ContentItem | null>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 5,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const handleDragStart = (event: DragStartEvent) => {
-    const { active } = event;
-    const item = items.find((i) => i.id === active.id);
-    if (item) {
-      setActiveItem(item);
-    }
+    setActiveItem(items.find((item) => item.id === event.active.id) || null);
   };
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    if (!over) return;
+    if (!over || active.id === over.id) return;
 
-    const activeId = active.id;
-    const overId = over.id;
-
-    if (activeId === overId) return;
-
-    const isActiveTask = active.data.current?.type === "Item";
-    const isOverTask = over.data.current?.type === "Item";
+    const isActiveItem = active.data.current?.type === "Item";
+    const isOverItem = over.data.current?.type === "Item";
     const isOverColumn = over.data.current?.type === "Column";
+    if (!isActiveItem) return;
 
-    if (!isActiveTask) return;
+    setItems((current) => {
+      const activeIndex = current.findIndex((item) => item.id === active.id);
+      if (activeIndex < 0) return current;
 
-    // Dropping a Task over another Task
-    if (isActiveTask && isOverTask) {
-      setItems((prev) => {
-        const activeIndex = prev.findIndex((t) => t.id === activeId);
-        const overIndex = prev.findIndex((t) => t.id === overId);
+      if (isOverItem) {
+        const overIndex = current.findIndex((item) => item.id === over.id);
+        if (overIndex < 0) return current;
+        const next = [...current];
+        next[activeIndex] = {
+          ...next[activeIndex],
+          status: next[overIndex].status,
+        };
+        return arrayMove(next, activeIndex, overIndex);
+      }
 
-        if (prev[activeIndex].status !== prev[overIndex].status) {
-          const newItems = [...prev];
-          newItems[activeIndex] = {
-            ...newItems[activeIndex],
-            status: prev[overIndex].status,
-          };
-          return arrayMove(newItems, activeIndex, overIndex);
-        }
+      if (isOverColumn) {
+        const next = [...current];
+        next[activeIndex] = {
+          ...next[activeIndex],
+          status: over.id as ContentStatus,
+        };
+        return next;
+      }
 
-        return arrayMove(prev, activeIndex, overIndex);
-      });
-    }
-
-    // Dropping a Task over a Column
-    if (isActiveTask && isOverColumn) {
-      setItems((prev) => {
-        const activeIndex = prev.findIndex((t) => t.id === activeId);
-        const newStatus = overId as ContentStatus;
-
-        if (prev[activeIndex].status !== newStatus) {
-          const newItems = [...prev];
-          newItems[activeIndex] = {
-            ...newItems[activeIndex],
-            status: newStatus,
-          };
-          return arrayMove(newItems, activeIndex, activeIndex); // maintain relative index for now
-        }
-        return prev;
-      });
-    }
+      return current;
+    });
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     setActiveItem(null);
-    const { active, over } = event;
-    if (!over) return;
+    if (!event.over || event.active.id === event.over.id) return;
 
-    const activeId = active.id;
-    const overId = over.id;
-
-    if (activeId === overId) return;
-
-    setItems((prev) => {
-      const activeIndex = prev.findIndex((t) => t.id === activeId);
-      const overIndex = prev.findIndex((t) => t.id === overId);
-
-      if (activeIndex !== -1 && overIndex !== -1) {
-        return arrayMove(prev, activeIndex, overIndex);
-      }
-      return prev;
+    setItems((current) => {
+      const activeIndex = current.findIndex((item) => item.id === event.active.id);
+      const overIndex = current.findIndex((item) => item.id === event.over?.id);
+      return activeIndex >= 0 && overIndex >= 0
+        ? arrayMove(current, activeIndex, overIndex)
+        : current;
     });
   };
 
@@ -125,7 +101,7 @@ export function ContentBoard() {
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex flex-row gap-6 overflow-x-auto pb-4 h-full">
+      <div className="flex h-full min-h-[530px] gap-3 overflow-x-auto pb-2 xl:grid xl:grid-cols-5 xl:overflow-visible">
         {columns.map((status) => (
           <ContentColumn
             key={status}
@@ -134,10 +110,7 @@ export function ContentBoard() {
           />
         ))}
       </div>
-
-      <DragOverlay>
-        {activeItem ? <ContentCard item={activeItem} /> : null}
-      </DragOverlay>
+      <DragOverlay>{activeItem ? <ContentCard item={activeItem} /> : null}</DragOverlay>
     </DndContext>
   );
 }

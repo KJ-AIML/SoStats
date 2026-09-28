@@ -1,65 +1,76 @@
-import { Handle, Position } from '@xyflow/react';
-import { type ReactNode } from 'react';
-import { Settings, Play, Image as ImageIcon, CheckCircle, Calendar, FileText } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Handle, Position } from "@xyflow/react";
+import type { ReactNode } from "react";
+import {
+  Calendar,
+  CheckCircle2,
+  Image as ImageIcon,
+  Play,
+  Settings,
+  Sparkles,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
-export type WorkflowNodeType = 'trigger' | 'generate' | 'image' | 'review' | 'schedule';
+export type WorkflowNodeType =
+  | "trigger"
+  | "generate"
+  | "image"
+  | "review"
+  | "schedule";
 
-interface WorkflowNodeProps {
+const icons: Record<WorkflowNodeType, ReactNode> = {
+  trigger: <Play className="h-3.5 w-3.5 text-emerald-600" />,
+  generate: <Sparkles className="h-3.5 w-3.5 text-[#ef2b2d]" />,
+  image: <ImageIcon className="h-3.5 w-3.5 text-violet-600" />,
+  review: <CheckCircle2 className="h-3.5 w-3.5 text-amber-600" />,
+  schedule: <Calendar className="h-3.5 w-3.5 text-blue-600" />,
+};
+
+export function WorkflowNode({
+  data,
+  selected,
+}: {
   data: {
     label: string;
     type: WorkflowNodeType;
     description?: string;
   };
   selected?: boolean;
-}
-
-const icons: Record<WorkflowNodeType, ReactNode> = {
-  trigger: <Play className="w-4 h-4 text-green-500" />,
-  generate: <FileText className="w-4 h-4 text-blue-500" />,
-  image: <ImageIcon className="w-4 h-4 text-purple-500" />,
-  review: <CheckCircle className="w-4 h-4 text-orange-500" />,
-  schedule: <Calendar className="w-4 h-4 text-indigo-500" />,
-};
-
-export function WorkflowNode({ data, selected }: WorkflowNodeProps) {
+}) {
   return (
     <div
       className={cn(
-        "min-w-[200px] bg-white dark:bg-zinc-900 border-2 rounded-xl shadow-sm transition-all",
-        selected ? "border-blue-500 shadow-md ring-4 ring-blue-500/10" : "border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700"
+        "min-w-[220px] rounded-2xl border bg-white shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition",
+        selected
+          ? "border-[#ef2b2d]/40 ring-4 ring-[#ef2b2d]/8"
+          : "border-black/[0.07] hover:border-black/15",
       )}
     >
-      {/* Target handle (input) */}
-      {data.type !== 'trigger' && (
+      {data.type !== "trigger" && (
         <Handle
           type="target"
           position={Position.Left}
-          className="w-3 h-3 border-2 border-white dark:border-zinc-900 bg-zinc-400 dark:bg-zinc-600 rounded-full -ml-1.5"
+          className="!-ml-1.5 !h-3 !w-3 !rounded-full !border-2 !border-white !bg-neutral-400"
         />
       )}
-      
-      <div className="p-4 flex items-start gap-3">
-        <div className="p-2 bg-zinc-50 dark:bg-zinc-800 rounded-lg flex-shrink-0">
-          {icons[data.type] || <Settings className="w-4 h-4 text-zinc-500" />}
+
+      <div className="flex items-start gap-3 p-4">
+        <div className="sostats-icon h-9 w-9 shrink-0">
+          {icons[data.type] || <Settings className="h-3.5 w-3.5" />}
         </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-            {data.label}
-          </h3>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[11px] font-semibold">{data.label}</p>
           {data.description && (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2 mt-1">
+            <p className="mt-1 line-clamp-2 text-[9px] leading-4 text-muted-foreground">
               {data.description}
             </p>
           )}
         </div>
       </div>
 
-      {/* Source handle (output) */}
       <Handle
         type="source"
         position={Position.Right}
-        className="w-3 h-3 border-2 border-white dark:border-zinc-900 bg-blue-500 rounded-full -mr-1.5"
+        className="!-mr-1.5 !h-3 !w-3 !rounded-full !border-2 !border-white !bg-[#ef2b2d]"
       />
     </div>
   );

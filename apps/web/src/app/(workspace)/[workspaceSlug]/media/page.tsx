@@ -1,174 +1,118 @@
-"use client";
-
-import React, { useState } from "react";
-import { AssetCard, Asset } from "@/components/media/AssetCard";
+import {
+  FileImage,
+  Film,
+  Folder,
+  Image as ImageIcon,
+  Plus,
+  Search,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { UploadIcon, SearchIcon, FilterIcon } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
+import { PageHeading } from "@/components/sostats/page-heading";
 
-const MOCK_ASSETS: Asset[] = [
-  {
-    id: "1",
-    url: "https://images.unsplash.com/photo-1682687220742-aba13b6e50ba",
-    type: "image",
-    title: "Mountain Landscape",
-    tags: ["nature", "travel", "landscape"]
-  },
-  {
-    id: "2",
-    url: "https://images.unsplash.com/photo-1682687982501-1e58f813fb3f",
-    type: "image",
-    title: "Ocean View",
-    tags: ["nature", "water", "travel"]
-  },
-  {
-    id: "3",
-    url: "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-    type: "video",
-    title: "Sample Video Promo",
-    tags: ["promo", "video"]
-  },
-  {
-    id: "4",
-    url: "https://images.unsplash.com/photo-1682695796954-bad0d0f59ff1",
-    type: "image",
-    title: "City Streets",
-    tags: ["urban", "city"]
-  },
-  {
-    id: "5",
-    url: "https://images.unsplash.com/photo-1682687220199-d0124f48f95b",
-    type: "image",
-    title: "Desert Dunes",
-    tags: ["nature", "desert"]
-  },
-  {
-    id: "6",
-    url: "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-    type: "video",
-    title: "Animation Short",
-    tags: ["animation", "video"]
-  },
+const assets = [
+  ["Product workflow", "Image · 1600×900", "from-red-500/80 via-orange-400/40 to-neutral-950"],
+  ["Launch teaser", "Video · 00:18", "from-neutral-950 via-red-950 to-red-500/70"],
+  ["Dashboard hero", "Image · 1920×1080", "from-neutral-200 via-white to-red-100"],
+  ["Founder clip", "Video · 00:32", "from-stone-900 via-neutral-700 to-red-500/50"],
+  ["AI insight card", "Image · 1200×1200", "from-red-50 via-white to-neutral-200"],
+  ["Campaign carousel", "Image · 1080×1350", "from-neutral-950 via-neutral-800 to-orange-500/60"],
 ];
 
-export default function MediaLibraryPage() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [activeFilter, setActiveFilter] = useState<string | null>(null);
-
-  // Collect all unique tags for filtering
-  const allTags = Array.from(new Set(MOCK_ASSETS.flatMap(asset => asset.tags)));
-
-  // Filter assets based on search query and active filter
-  const filteredAssets = MOCK_ASSETS.filter(asset => {
-    const matchesSearch = asset.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          asset.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    const matchesFilter = activeFilter ? asset.tags.includes(activeFilter) : true;
-    
-    return matchesSearch && matchesFilter;
-  });
-
+export default function MediaPage() {
   return (
-    <div className="flex flex-col h-full space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Media Library</h1>
-          <p className="text-muted-foreground mt-1">Manage your images, videos, and files.</p>
-        </div>
-        
-        <Dialog>
-          <DialogTrigger
-            render={
-              <Button className="flex items-center gap-2">
-                <UploadIcon className="w-4 h-4" />
-                <span>Upload</span>
-              </Button>
-            }
-          />
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Upload Asset</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="border-2 border-dashed rounded-lg p-10 flex flex-col items-center justify-center text-muted-foreground gap-2 cursor-pointer hover:bg-muted/50 transition-colors">
-                <UploadIcon className="w-8 h-8" />
-                <p>Drag & drop files here or click to browse</p>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="tags">Tags (comma separated)</Label>
-                <Input id="tags" placeholder="e.g. social, campaign, product" />
-              </div>
-            </div>
-            <DialogFooter showCloseButton>
-              <DialogClose render={<Button variant="outline">Cancel</Button>} />
-              <Button>Upload Files</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
-        <div className="relative w-full max-w-sm">
-          <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search assets..."
-            className="pl-9 w-full"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground mr-2">
-            <FilterIcon className="w-4 h-4" />
-            <span>Filter:</span>
-          </div>
-          <Button 
-            variant={activeFilter === null ? "default" : "outline"} 
-            size="sm"
-            onClick={() => setActiveFilter(null)}
-          >
-            All
-          </Button>
-          {allTags.map(tag => (
-            <Button
-              key={tag}
-              variant={activeFilter === tag ? "default" : "outline"}
-              size="sm"
-              onClick={() => setActiveFilter(tag)}
-            >
-              {tag}
+    <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6 xl:p-8">
+      <PageHeading
+        eyebrow="Media"
+        title="Every asset, ready for every channel"
+        description="Manage uploaded, generated and brand-owned media without turning your content workflow into a file manager."
+        actions={
+          <>
+            <Button variant="outline" className="h-10 rounded-xl text-[10px]">
+              <Upload className="mr-2 h-3.5 w-3.5" />
+              Upload
             </Button>
+            <Button className="h-10 rounded-xl bg-[#ef2b2d] text-[10px] hover:bg-[#da2427]">
+              <Sparkles className="mr-2 h-3.5 w-3.5" />
+              Generate asset
+            </Button>
+          </>
+        }
+      />
+
+      <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+        <div className="sostats-card flex h-11 items-center gap-2 px-3">
+          <Search className="h-3.5 w-3.5 text-neutral-400" />
+          <input className="min-w-0 flex-1 bg-transparent text-[10px] outline-none" placeholder="Search assets, tags or campaigns..." />
+        </div>
+        <div className="flex gap-2">
+          {["All assets", "Images", "Video", "Brand"].map((item, index) => (
+            <button
+              key={item}
+              className={
+                index === 0
+                  ? "rounded-xl bg-neutral-950 px-3 text-[9px] font-semibold text-white"
+                  : "rounded-xl border border-black/[0.06] bg-white px-3 text-[9px] font-medium text-neutral-500"
+              }
+            >
+              {item}
+            </button>
           ))}
         </div>
       </div>
 
-      {filteredAssets.length === 0 ? (
-        <div className="flex flex-col items-center justify-center p-12 border rounded-xl border-dashed bg-muted/10 flex-1">
-          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-            <SearchIcon className="w-8 h-8 text-muted-foreground" />
-          </div>
-          <h3 className="text-xl font-semibold mb-2">No assets found</h3>
-          <p className="text-muted-foreground text-center max-w-sm mb-6">
-            We couldn&apos;t find any assets matching your current search or filter criteria.
-          </p>
-          <Button variant="outline" onClick={() => {
-            setSearchQuery("");
-            setActiveFilter(null);
-          }}>
-            Clear filters
-          </Button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 auto-rows-max">
-          {filteredAssets.map(asset => (
-            <AssetCard key={asset.id} asset={asset} />
+      <div className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)]">
+        <aside className="sostats-card self-start p-3">
+          <p className="px-2 py-2 text-[10px] font-semibold">Collections</p>
+          {[
+            { icon: Folder, label: "All assets", count: "48" },
+            { icon: FileImage, label: "Brand system", count: "12" },
+            { icon: Film, label: "Product demos", count: "8" },
+            { icon: ImageIcon, label: "Campaign visuals", count: "18" },
+          ].map((item, index) => (
+            <button
+              key={item.label}
+              className={
+                index === 0
+                  ? "flex w-full items-center gap-2 rounded-xl bg-[#fff0f0] px-2.5 py-2 text-[9px] font-semibold text-[#d92023]"
+                  : "flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-[9px] font-medium text-neutral-500 hover:bg-neutral-50"
+              }
+            >
+              <item.icon className="h-3.5 w-3.5" />
+              {item.label}
+              <span className="ml-auto text-[8px]">{item.count}</span>
+            </button>
           ))}
-        </div>
-      )}
+          <button className="mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed border-black/[0.08] px-2.5 py-2 text-[9px] text-muted-foreground">
+            <Plus className="h-3.5 w-3.5" /> New collection
+          </button>
+        </aside>
+
+        <main className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {assets.map(([title, meta, gradient]) => (
+            <article key={title} className="sostats-card overflow-hidden">
+              <div className={`aspect-[16/10] bg-gradient-to-br ${gradient} p-4`}>
+                <div className="flex h-full items-end">
+                  <span className="rounded-lg border border-white/20 bg-black/25 px-2 py-1 text-[8px] font-semibold text-white backdrop-blur">
+                    SoStats
+                  </span>
+                </div>
+              </div>
+              <div className="p-3.5">
+                <p className="text-[10px] font-semibold">{title}</p>
+                <p className="mt-0.5 text-[8px] text-muted-foreground">{meta}</p>
+                <div className="mt-3 flex items-center gap-1.5">
+                  {["Launch", "Product"].map((tag) => (
+                    <span key={tag} className="rounded-md bg-neutral-100 px-2 py-1 text-[8px] text-neutral-500">{tag}</span>
+                  ))}
+                  <button className="ml-auto text-[8px] font-semibold text-neutral-500">•••</button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </main>
+      </div>
     </div>
   );
 }

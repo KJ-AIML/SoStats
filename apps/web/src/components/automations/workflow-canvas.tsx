@@ -1,61 +1,88 @@
-'use client';
+"use client";
 
-import { useState, useCallback } from 'react';
+import { useCallback, useState } from "react";
 import {
-  ReactFlow,
-  Controls,
-  Background,
-  applyNodeChanges,
-  applyEdgeChanges,
   addEdge,
-  type Node,
-  type Edge,
-  type NodeChange,
-  type EdgeChange,
+  applyEdgeChanges,
+  applyNodeChanges,
+  Background,
+  Controls,
   type Connection,
+  type Edge,
+  type EdgeChange,
+  type Node,
+  type NodeChange,
   Panel,
-} from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
-import { WorkflowNode } from './workflow-node';
-import { Play, FileText, Image as ImageIcon, CheckCircle, Calendar, Plus, Settings } from 'lucide-react';
+  ReactFlow,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import {
+  Calendar,
+  CheckCircle2,
+  Image as ImageIcon,
+  Play,
+  Settings,
+  Sparkles,
+} from "lucide-react";
+import { WorkflowNode } from "./workflow-node";
 
-const nodeTypes = {
-  workflowNode: WorkflowNode,
-};
+const nodeTypes = { workflowNode: WorkflowNode };
 
 const initialNodes: Node[] = [
   {
-    id: '1',
-    type: 'workflowNode',
-    position: { x: 250, y: 150 },
-    data: { 
-      label: 'New Content Trigger', 
-      type: 'trigger',
-      description: 'Runs when new content is added to a specific folder'
+    id: "1",
+    type: "workflowNode",
+    position: { x: 140, y: 210 },
+    data: {
+      label: "Every Monday · 08:00",
+      type: "trigger",
+      description: "Start the weekly content planning workflow.",
     },
   },
   {
-    id: '2',
-    type: 'workflowNode',
-    position: { x: 550, y: 150 },
-    data: { 
-      label: 'Generate Posts', 
-      type: 'generate',
-      description: 'Creates LinkedIn and Twitter posts from source material'
+    id: "2",
+    type: "workflowNode",
+    position: { x: 460, y: 210 },
+    data: {
+      label: "Generate weekly ideas",
+      type: "generate",
+      description: "Use Brand Brain + recent performance to create 5 ideas.",
+    },
+  },
+  {
+    id: "3",
+    type: "workflowNode",
+    position: { x: 780, y: 210 },
+    data: {
+      label: "Human review",
+      type: "review",
+      description: "Pause until the content owner approves drafts.",
+    },
+  },
+  {
+    id: "4",
+    type: "workflowNode",
+    position: { x: 1100, y: 210 },
+    data: {
+      label: "Schedule approved posts",
+      type: "schedule",
+      description: "Find open slots across selected channels.",
     },
   },
 ];
 
 const initialEdges: Edge[] = [
-  { id: 'e1-2', source: '1', target: '2', animated: true },
+  { id: "e1-2", source: "1", target: "2", animated: true },
+  { id: "e2-3", source: "2", target: "3", animated: true },
+  { id: "e3-4", source: "3", target: "4", animated: true },
 ];
 
 const availableNodes = [
-  { type: 'trigger', label: 'Trigger', icon: Play, desc: 'Start automation based on events' },
-  { type: 'generate', label: 'Generate Posts', icon: FileText, desc: 'Use AI to generate content' },
-  { type: 'image', label: 'Create Images', icon: ImageIcon, desc: 'Generate or resize assets' },
-  { type: 'review', label: 'Review Step', icon: CheckCircle, desc: 'Require human approval' },
-  { type: 'schedule', label: 'Schedule', icon: Calendar, desc: 'Add content to calendar' },
+  { type: "trigger", label: "Trigger", icon: Play, desc: "Schedule, webhook or event" },
+  { type: "generate", label: "AI Generate", icon: Sparkles, desc: "Create or transform content" },
+  { type: "image", label: "Create Media", icon: ImageIcon, desc: "Generate or process assets" },
+  { type: "review", label: "Review", icon: CheckCircle2, desc: "Wait for human approval" },
+  { type: "schedule", label: "Schedule", icon: Calendar, desc: "Place content on calendar" },
 ];
 
 export function WorkflowCanvas() {
@@ -64,155 +91,158 @@ export function WorkflowCanvas() {
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    []
+    (changes: NodeChange[]) =>
+      setNodes((current) => applyNodeChanges(changes, current)),
+    [],
   );
-
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    []
+    (changes: EdgeChange[]) =>
+      setEdges((current) => applyEdgeChanges(changes, current)),
+    [],
   );
-
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    []
+    (params: Connection) =>
+      setEdges((current) => addEdge({ ...params, animated: true }, current)),
+    [],
   );
-
-  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    setSelectedNode(node);
-  }, []);
-
-  const onPaneClick = useCallback(() => {
-    setSelectedNode(null);
-  }, []);
 
   const addNode = (type: string, label: string) => {
-    const newNode: Node = {
-      id: crypto.randomUUID(),
-      type: 'workflowNode',
-      position: { x: 100, y: 100 },
-      data: { label, type, description: 'Configure this step' },
-    };
-    setNodes((nds) => nds.concat(newNode));
+    setNodes((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        type: "workflowNode",
+        position: { x: 280 + current.length * 32, y: 380 },
+        data: { label, type, description: "Configure this step." },
+      },
+    ]);
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] w-full border-t border-zinc-200 dark:border-zinc-800">
-      {/* Node Drawer (Left) */}
-      <div className="w-64 bg-white dark:bg-zinc-950 border-r border-zinc-200 dark:border-zinc-800 flex flex-col h-full overflow-y-auto">
-        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Blocks</h2>
-          <p className="text-xs text-zinc-500 mt-1">Click to add to canvas</p>
+    <div className="grid min-h-[650px] overflow-hidden rounded-2xl border border-black/[0.065] bg-white xl:grid-cols-[225px_minmax(0,1fr)_280px]">
+      <aside className="border-b border-black/[0.055] bg-neutral-50/70 p-3 xl:border-b-0 xl:border-r">
+        <div className="px-2 py-2">
+          <p className="text-[11px] font-semibold">Blocks</p>
+          <p className="mt-0.5 text-[9px] text-muted-foreground">
+            Add a step to your workflow
+          </p>
         </div>
-        <div className="p-4 space-y-3">
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
           {availableNodes.map((item) => (
             <button
               key={item.type}
               onClick={() => addNode(item.type, item.label)}
-              className="w-full flex items-start gap-3 p-3 text-left rounded-lg border border-zinc-200 dark:border-zinc-800 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors group"
+              className="flex items-start gap-2.5 rounded-xl border border-black/[0.055] bg-white p-3 text-left transition hover:border-[#ef2b2d]/20 hover:bg-[#fffafa]"
             >
-              <div className="p-2 bg-zinc-100 dark:bg-zinc-800 rounded-md group-hover:bg-white dark:group-hover:bg-zinc-900 transition-colors">
-                <item.icon className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+              <div className="sostats-icon h-8 w-8 shrink-0">
+                <item.icon className="h-3.5 w-3.5 text-neutral-500" />
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.label}</div>
-                <div className="text-xs text-zinc-500 truncate">{item.desc}</div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold">{item.label}</p>
+                <p className="mt-0.5 text-[8px] text-muted-foreground">{item.desc}</p>
               </div>
             </button>
           ))}
         </div>
-      </div>
+      </aside>
 
-      {/* Canvas (Center) */}
-      <div className="flex-1 h-full relative">
+      <div className="relative min-h-[520px] bg-[#faf9f7]">
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          onNodeClick={onNodeClick}
-          onPaneClick={onPaneClick}
-          nodeTypes={nodeTypes}
+          onNodeClick={(_, node) => setSelectedNode(node)}
+          onPaneClick={() => setSelectedNode(null)}
           fitView
-          className="bg-zinc-50 dark:bg-zinc-900/50"
         >
-          <Background color="#ccc" gap={16} />
-          <Controls className="!bg-white dark:!bg-zinc-900 !border-zinc-200 dark:!border-zinc-800 !shadow-sm" />
-          <Panel position="top-right" className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500">
-            Draft
+          <Background color="#e7e5e4" gap={22} size={1} />
+          <Controls className="!rounded-xl !border-black/[0.07] !bg-white !shadow-sm" />
+          <Panel
+            position="top-right"
+            className="!m-3 rounded-full border border-black/[0.06] bg-white/90 px-3 py-1.5 text-[9px] font-semibold text-neutral-500 shadow-sm backdrop-blur"
+          >
+            Draft · 4 steps
           </Panel>
         </ReactFlow>
       </div>
 
-      {/* Config Panel (Right) */}
-      <div className="w-80 bg-white dark:bg-zinc-950 border-l border-zinc-200 dark:border-zinc-800 flex flex-col h-full overflow-y-auto">
-        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
-          <Settings className="w-4 h-4 text-zinc-500" />
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Configuration</h2>
+      <aside className="border-t border-black/[0.055] bg-white xl:border-l xl:border-t-0">
+        <div className="flex items-center gap-2 border-b border-black/[0.055] px-4 py-3.5">
+          <Settings className="h-3.5 w-3.5 text-neutral-400" />
+          <p className="text-[10px] font-semibold">Configuration</p>
         </div>
         <div className="p-4">
           {selectedNode ? (
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-zinc-500 mb-1">Step Name</label>
+                <label className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                  Step name
+                </label>
                 <input
-                  type="text"
                   value={selectedNode.data.label as string}
-                  onChange={(e) => {
-                    setNodes((nds) =>
-                      nds.map((n) => {
-                        if (n.id === selectedNode.id) {
-                          return {
-                            ...n,
-                            data: { ...n.data, label: e.target.value },
-                          };
-                        }
-                        return n;
-                      })
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setNodes((current) =>
+                      current.map((node) =>
+                        node.id === selectedNode.id
+                          ? { ...node, data: { ...node.data, label: value } }
+                          : node,
+                      ),
+                    );
+                    setSelectedNode((current) =>
+                      current
+                        ? { ...current, data: { ...current.data, label: value } }
+                        : current,
                     );
                   }}
-                  className="w-full px-3 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none focus:border-[#ef2b2d]/30"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-zinc-500 mb-1">Description</label>
+                <label className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                  Description
+                </label>
                 <textarea
-                  value={selectedNode.data.description as string || ''}
-                  onChange={(e) => {
-                    setNodes((nds) =>
-                      nds.map((n) => {
-                        if (n.id === selectedNode.id) {
-                          return {
-                            ...n,
-                            data: { ...n.data, description: e.target.value },
-                          };
-                        }
-                        return n;
-                      })
+                  value={(selectedNode.data.description as string) || ""}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setNodes((current) =>
+                      current.map((node) =>
+                        node.id === selectedNode.id
+                          ? { ...node, data: { ...node.data, description: value } }
+                          : node,
+                      ),
                     );
                   }}
-                  rows={3}
-                  className="w-full px-3 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  rows={4}
+                  className="w-full resize-none rounded-xl border border-black/[0.07] bg-neutral-50 p-3 text-[10px] leading-4 outline-none focus:border-[#ef2b2d]/30"
                 />
               </div>
-              
-              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-900/50">
-                <p className="text-sm text-blue-700 dark:text-blue-400">
-                  Settings specific to the <strong>{selectedNode.data.type as string}</strong> block will appear here.
+              <div className="rounded-xl border border-[#ef2b2d]/10 bg-[#fff7f7] p-3">
+                <p className="text-[9px] font-semibold text-[#d92023]">
+                  {String(selectedNode.data.type).toUpperCase()} STEP
+                </p>
+                <p className="mt-1 text-[9px] leading-4 text-muted-foreground">
+                  Step-specific fields will be provided by the workflow adapter schema.
                 </p>
               </div>
             </div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-center text-zinc-500 pt-12">
-              <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-900 rounded-full flex items-center justify-center mb-3">
-                <Settings className="w-6 h-6 text-zinc-400" />
+            <div className="pt-14 text-center">
+              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-neutral-100">
+                <Settings className="h-4 w-4 text-neutral-400" />
               </div>
-              <p className="text-sm">Select a block on the canvas<br />to configure its settings.</p>
+              <p className="mt-3 text-[10px] font-semibold">Select a block</p>
+              <p className="mt-1 text-[9px] leading-4 text-muted-foreground">
+                Its configuration will appear here.
+              </p>
             </div>
           )}
         </div>
-      </div>
+      </aside>
     </div>
   );
 }

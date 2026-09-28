@@ -1,16 +1,82 @@
-export type ContentStatus = 'Ideas' | 'Drafts' | 'Review' | 'Scheduled' | 'Published';
+export type ContentStatus =
+  | "Ideas"
+  | "Drafts"
+  | "Review"
+  | "Scheduled"
+  | "Published";
 
 export interface ContentItem {
   id: string;
   title: string;
   status: ContentStatus;
   description?: string;
+  channel?: string;
+  campaign?: string;
+  time?: string;
 }
 
 export const initialContentItems: ContentItem[] = [
-  { id: '1', title: 'Q1 Roadmap', status: 'Ideas', description: 'Draft the roadmap for Q1.' },
-  { id: '2', title: 'Product Launch Announcement', status: 'Drafts', description: 'Write the blog post for the new product launch.' },
-  { id: '3', title: 'Weekly Newsletter', status: 'Review', description: 'Review the content for this week\'s newsletter.' },
-  { id: '4', title: 'Social Media Strategy', status: 'Scheduled', description: 'Schedule the social media posts for the week.' },
-  { id: '5', title: '2023 Year in Review', status: 'Published', description: 'Publish the year in review blog post.' },
+  {
+    id: "1",
+    title: "Founder POV: AI content needs a workflow",
+    status: "Ideas",
+    description: "Turn the founder note into a strong point-of-view post.",
+    channel: "LinkedIn",
+    campaign: "SoStats launch",
+    time: "Idea",
+  },
+  {
+    id: "2",
+    title: "One idea → five channel variants",
+    status: "Drafts",
+    description: "Show how the same campaign adapts without copy-paste content.",
+    channel: "Multi-channel",
+    campaign: "SoStats launch",
+    time: "12m ago",
+  },
+  {
+    id: "3",
+    title: "The hidden cost of manual content ops",
+    status: "Review",
+    description: "Educational carousel with a workflow breakdown and CTA.",
+    channel: "Instagram",
+    campaign: "Automation education",
+    time: "Needs review",
+  },
+  {
+    id: "4",
+    title: "3 automations I use every week",
+    status: "Scheduled",
+    description: "Short-form post adapted for X and LinkedIn.",
+    channel: "X",
+    campaign: "Founder content",
+    time: "Today · 13:00",
+  },
+  {
+    id: "5",
+    title: "Why we built SoStats",
+    status: "Published",
+    description: "Founder story with product workflow screenshots.",
+    channel: "LinkedIn",
+    campaign: "SoStats launch",
+    time: "Yesterday",
+  },
+  {
+    id: "6",
+    title: "Content flywheel visual",
+    status: "Drafts",
+    description: "Create → Publish → Measure → Learn → Create Better.",
+    channel: "Instagram",
+    campaign: "Product education",
+    time: "35m ago",
+  },
+  {
+    id: "7",
+    title: "AI recommendation demo",
+    status: "Review",
+    description: "Product clip showing stats turning into next actions.",
+    channel: "TikTok",
+    campaign: "Product demo",
+    time: "Needs review",
+  },
 ];
