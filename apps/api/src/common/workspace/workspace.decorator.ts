@@ -3,12 +3,11 @@ import {
   ExecutionContext,
   SetMetadata,
 } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
 
 export const WORKSPACE_SCOPED_KEY = 'sostats:workspace-scoped';
 export const WorkspaceScoped = () => SetMetadata(WORKSPACE_SCOPED_KEY, true);
 
-type WorkspaceRequest = FastifyRequest & { workspaceId?: number };
+type WorkspaceRequest = { workspaceId?: number };
 
 export const CurrentWorkspaceId = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): number => {
