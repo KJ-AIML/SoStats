@@ -325,6 +325,7 @@ export class AnalyticsService {
       throw new NotFoundException('Published provider result not found');
     }
 
+    const platformPostId = result.platformPostId;
     const publication = result.job.scheduledPublication;
     const account = publication.socialAccount;
 
@@ -341,7 +342,7 @@ export class AnalyticsService {
       where: and(
         eq(schema.metricSnapshots.contentItemId, publication.contentItemId),
         eq(schema.metricSnapshots.socialAccountId, account.id),
-        eq(schema.metricSnapshots.platformPostId, result.platformPostId),
+        eq(schema.metricSnapshots.platformPostId, platformPostId),
       ),
       orderBy: (fields, { desc: orderDesc }) => [
         orderDesc(fields.snapshotAt),
@@ -376,7 +377,7 @@ export class AnalyticsService {
         publisher,
       );
       const current = asNumericMetrics(
-        await analytics.fetchPostMetrics(result.platformPostId, accessToken),
+        await analytics.fetchPostMetrics(platformPostId, accessToken),
       );
       const day = utcDay();
 
@@ -393,7 +394,7 @@ export class AnalyticsService {
           where: and(
             eq(schema.metricSnapshots.contentItemId, publication.contentItemId),
             eq(schema.metricSnapshots.socialAccountId, account.id),
-            eq(schema.metricSnapshots.platformPostId, result.platformPostId),
+            eq(schema.metricSnapshots.platformPostId, platformPostId),
           ),
           orderBy: (fields, { desc: orderDesc }) => [
             orderDesc(fields.snapshotAt),
@@ -417,7 +418,7 @@ export class AnalyticsService {
           .values({
             contentItemId: publication.contentItemId,
             socialAccountId: account.id,
-            platformPostId: result.platformPostId,
+            platformPostId,
             metrics: current,
             snapshotAt: new Date(),
           })
