@@ -39,6 +39,7 @@ describe('AuthGuard API key boundary', () => {
       reflector as never,
       {} as never,
       apiKeys as never,
+      {} as never,
     );
 
     await expect(
@@ -69,6 +70,7 @@ describe('AuthGuard API key boundary', () => {
       reflector as never,
       {} as never,
       apiKeys as never,
+      {} as never,
     );
 
     await expect(
