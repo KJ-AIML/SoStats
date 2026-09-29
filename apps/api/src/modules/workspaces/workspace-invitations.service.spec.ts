@@ -3,7 +3,7 @@ import { WorkspaceInvitationsService } from './workspace-invitations.service.js'
 
 function service() {
   const access = {
-    requireMembership: vi.fn().mockResolvedValue({ role: 'owner' }),
+    requireOwner: vi.fn().mockResolvedValue({ role: 'owner' }),
   };
   return {
     access,
@@ -25,7 +25,7 @@ describe('WorkspaceInvitationsService validation', () => {
       }),
     ).rejects.toThrow('A valid invitation email is required');
 
-    expect(access.requireMembership).toHaveBeenCalledWith(10, 1, ['owner']);
+    expect(access.requireOwner).toHaveBeenCalledWith(10, 1);
   });
 
   it('only allows admin/member invitation roles', async () => {
