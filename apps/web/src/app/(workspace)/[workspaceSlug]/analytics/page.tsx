@@ -279,7 +279,7 @@ export default async function AnalyticsPage({
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Reach / Views"
-          value={formatCompact(reach)}
+          value={hasData ? formatCompact(reach) : "—"}
           change={hasData ? `Real provider deltas · ${days}d` : "No provider data"}
           icon={Eye}
           bars={normalizeSeries(reachSeries)}
@@ -297,13 +297,13 @@ export default async function AnalyticsPage({
         />
         <MetricCard
           label="Clicks"
-          value={formatCompact(clicks)}
+          value={hasData ? formatCompact(clicks) : "—"}
           change={hasData ? `Real provider deltas · ${days}d` : "No provider data"}
           icon={MousePointerClick}
           bars={normalizeSeries(clickSeries)}
         />
         <MetricCard
-          label="Published Content"
+          label="Published Posts"
           value={String(publishedCount)}
           change={`Lifecycle records · ${days}d`}
           icon={BarChart3}
