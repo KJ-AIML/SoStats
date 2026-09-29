@@ -32,6 +32,10 @@
 - Never log provider error messages, response bodies, tokens or signed URLs. Log `error_class` and `status_code` only. Checkpoints carry no secrets.
 - Migration file: `infra/postgres/migrations/007_stage15_publication_safety.sql`, wrapped in `begin; … commit;`, forward-only.
 - `oxlint` rule `typescript/no-floating-promises` is an error: every promise is awaited, returned, or assigned.
+- **Real infrastructure is a hard gate.** Task 1 and Task 2 (PostgreSQL) and Task 9 (Redis) are not complete until their integration tests actually execute and pass against real services. Never replace them with mocks to keep moving.
+- **Terminology.** `dispatch_generation` is queue-delivery identity on `scheduled_publications`. `attempt_number` / `attempt_count` are provider attempts on `publication_jobs`. Never derive one from the other.
+- **Ledger authority.** After Task 5, every write to publication execution state goes through `PublicationLedger`: `scheduled_publications.status` / `active_attempt_id` / `lease_expires_at` / `dispatch_generation` / `attempt_count` / `next_attempt_at`, and `publication_jobs.status`. Scheduling and channel code keep only their own compare-and-set user mutations (Task 6). Every task reviewer checks this.
+- **Review scope.** Task reviewers review the accumulated branch state against the spec, not only their task's diff.
 - Local integration prerequisites: Docker Desktop running, then `docker compose --env-file .env -f infra/docker-compose.yml up -d db redis`.
   - `TEST_DATABASE_URL=postgres://<POSTGRES_USER>:<POSTGRES_PASSWORD>@localhost:5432/postgres`, using the values from your local `.env`. Never paste them into commits.
   - `REDIS_HOST=localhost`.
@@ -68,7 +72,9 @@ git show b5b9194:apps/api/src/db/schema.ts > apps/api/test/integration/schema-b5
   printf -- '-- Test fixture: SoStats schema at b5b9194 (pre-migration 007).\n'
   printf -- '-- Generated from git show b5b9194:apps/api/src/db/schema.ts with:\n'
   printf -- '--   pnpm exec drizzle-kit export --dialect=postgresql --schema=<that file> --sql\n'
-  printf -- '-- NOT a production baseline; canonical from-zero bootstrap is ST15-36.1.\n\n'
+  printf -- '-- NOT a production baseline; canonical from-zero bootstrap is ST15-36.1.\n'
+  printf -- '-- Pinned to b5b9194 forever: NEVER regenerate from the current schema.ts, or the\n'
+  printf -- '-- migration tests stop exercising the real pre-007 -> 007 upgrade path.\n\n'
   (cd apps/api && pnpm exec drizzle-kit export --dialect=postgresql --schema=./test/integration/schema-b5b9194.tmp.ts --sql)
 } > apps/api/test/integration/pre-007-schema.sql
 rm apps/api/test/integration/schema-b5b9194.tmp.ts
@@ -546,6 +552,28 @@ describe('migration 007', () => {
       { id: laterRejected, status: 'failed' },
       { id: laterUnknown, status: 'needs_review' },
     ]);
+  });
+
+  it('leaves existing safe rows unchanged', async () => {
+    const { sql, applyPostBaselineMigrations } = await legacyDatabase();
+    const seeded = await seedChannel(sql);
+    const kept = {
+      scheduled: await publication(sql, seeded, 'scheduled', '2026-10-01T09:00:00Z'),
+      published: await publication(sql, seeded, 'published', '2026-10-02T09:00:00Z'),
+      cancelled: await publication(sql, seeded, 'cancelled', '2026-10-03T09:00:00Z'),
+      failed: await publication(sql, seeded, 'failed', '2026-10-04T09:00:00Z'),
+    };
+    const failedJob = await job(sql, kept.failed, 'failed', '2026-09-30T00:00:00Z');
+    await result(sql, failedJob, 'provider_rejected', '2026-09-30T00:01:00Z');
+    const snapshot = () =>
+      sql<{ id: number; status: string; scheduled_at: string; updated_at: string }[]>`
+        select id, status, scheduled_at::text, updated_at::text
+        from scheduled_publications order by id`;
+    const before = await snapshot();
+
+    await applyPostBaselineMigrations();
+
+    expect(await snapshot()).toEqual(before);
   });
 
   it('backfills attempt numbers in creation order', async () => {
@@ -3162,12 +3190,22 @@ Then replace `providers` with:
 Run: `pnpm --filter api test && pnpm --filter api test:int && pnpm --filter api exec tsc --noEmit && pnpm --filter api lint`
 Expected: all unit and integration tests PASS; no type or lint errors.
 
-- [ ] **Step 7: Verify the API boots and fails on unsafe config**
+- [ ] **Step 7: Verify ledger authority**
+
+Run:
+
+```bash
+grep -nE "update\((schema\.)?(scheduledPublications|publicationJobs|sp|pj)\b" apps/api/src/modules/publishing/*.ts | grep -v publication-ledger.ts
+```
+
+Expected: no output. Every execution-state write in the publishing module is in `publication-ledger.ts`.
+
+- [ ] **Step 8: Verify the API boots and fails on unsafe config**
 
 Run (with db up and a valid local `.env`): `PUBLISH_LEASE_SECONDS=10 pnpm --filter api start`
 Expected: the process exits during bootstrap with `PUBLISH_LEASE_SECONDS must cover PUBLISH_PROVIDER_BUDGET_MS plus 60 seconds`. Then start normally (`pnpm dev:api`); it boots.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add apps/api/src/modules/publishing apps/api/test/integration
@@ -3403,6 +3441,51 @@ describe('schedule mutations under concurrency', () => {
       claimScheduleStartAt(database.db, { id: step.id, logs: null }, new Date('2026-10-01T09:00:05Z')),
     ]);
     expect(a.startAt.toISOString()).toBe(b.startAt.toISOString());
+  });
+
+  it('turns two concurrent schedule-step executions into one startAt and one publication (D3)', async () => {
+    const seeded = await seedChannel(database.sql);
+    const [automation] = await database.sql<{ id: number }[]>`
+      insert into automations (workspace_id, name, trigger_type) values (${seeded.workspaceId}, 'B', 'manual') returning id`;
+    const [version] = await database.sql<{ id: number }[]>`
+      insert into automation_versions (automation_id, version_number, workflow_definition)
+      values (${automation.id}, 1, '{}'::jsonb) returning id`;
+    const [run] = await database.sql<{ id: number }[]>`
+      insert into automation_runs (automation_id, version_id) values (${automation.id}, ${version.id}) returning id`;
+    const [step] = await database.sql<{ id: number }[]>`
+      insert into automation_run_steps (run_id, step_id) values (${run.id}, 'schedule') returning id`;
+
+    // The two DB effects of executeSchedule, raced exactly as two concurrent executions would.
+    // The loser may fail (e.g. content already `scheduled`); its run status is 32C scope.
+    const execution = async (proposed: string) => {
+      const { startAt } = await claimScheduleStartAt(
+        database.db,
+        { id: step.id, logs: null },
+        new Date(proposed),
+      );
+      return scheduling
+        .createSchedule(seeded.workspaceId, {
+          contentItemId: seeded.contentItemId,
+          socialAccountId: seeded.socialAccountId,
+          scheduledAt: startAt.toISOString(),
+        })
+        .catch((error: unknown) => error);
+    };
+    await Promise.all([
+      execution(new Date(Date.now() + 3_600_000).toISOString()),
+      execution(new Date(Date.now() + 3_605_000).toISOString()),
+    ]);
+
+    const [persisted] = await database.sql<{ logs: string }[]>`
+      select logs from automation_run_steps where id = ${step.id}`;
+    const startAt = (JSON.parse(persisted.logs) as { checkpoint: { startAt: string } })
+      .checkpoint.startAt;
+    const rows = await database.db
+      .select()
+      .from(sp)
+      .where(eq(sp.contentItemId, seeded.contentItemId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].scheduledAt.toISOString()).toBe(startAt);
   });
 });
 ```
@@ -4940,6 +5023,26 @@ In `README.md`, after the Stage 15 transactional outbox link, add:
 
 In the spec, change the status line to `Status: implemented on feat/stage-15-32a-publication-safety, rev 2`.
 
+Append this hard checklist to `infra/postgres/migrations/README.md` (operators apply migrations from here). Copy the same checklist into the PR description:
+
+```markdown
+## 007 rollout (hard sequence — do not reorder)
+
+- [ ] Pause publication dispatch: stop every worker process.
+- [ ] Drain: wait for in-flight API executions to finish.
+- [ ] Assert zero legacy in-flight work:
+      `select count(*) from scheduled_publications where status = 'publishing';` → 0
+      `select count(*) from publication_jobs where status in ('processing', 'pending');` → 0
+      (If a row cannot drain: verify it on the provider, or run 007 with
+      `set sostats.inflight_publications = 'mark_unknown';` in the same session. Never make it retryable.)
+- [ ] Apply `007_stage15_publication_safety.sql` (it re-checks the drain and fails loudly).
+- [ ] Deploy the API.
+- [ ] Deploy the worker (this resumes dispatch).
+- [ ] Deploy the web app.
+- [ ] Smoke test: one post to a sandbox channel reaches `published`; its attempt row has a request marker and is `completed`.
+- [ ] On smoke failure: stop the worker and roll back the code (worker, then API); keep the schema.
+```
+
 - [ ] **Step 2: Full verification, exactly as CI runs it**
 
 Run (with db and redis up, env set):
@@ -4970,6 +5073,6 @@ Expected: no hits in `publishing.service.ts` or `scheduling.service.ts`. The led
 - [ ] **Step 4: Commit**
 
 ```bash
-git add infra/.env.example docs README.md
-git commit -m "docs(stage-15): document 32A publication safety configuration and pointers"
+git add infra/.env.example infra/postgres/migrations/README.md docs README.md
+git commit -m "docs(stage-15): document 32A configuration, rollout runbook and pointers"
 ```

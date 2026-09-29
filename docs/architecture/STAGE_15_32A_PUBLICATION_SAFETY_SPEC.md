@@ -83,8 +83,10 @@ Rejected in 32A with 409 Conflict: reschedule or cancel from `publishing`, `unkn
 
 `processing` → one of `completed` | `failed` | `unknown` | `abandoned`.
 `abandoned` = lease expired before the request marker. Enforced by `CHECK`.
-The only transition out of a terminal attempt status is `unknown` → `completed`,
-when that same attempt's confirmed success arrives late (or 32B confirms it).
+One narrow, intentional exception exists: an `unknown` attempt becomes `completed`
+only when **that same owning attempt** receives a confirmed provider success late,
+because its external call was already in flight. No other terminal attempt status
+is ever reopened.
 
 ## 4. Data model — migration `007_stage15_publication_safety.sql`
 
