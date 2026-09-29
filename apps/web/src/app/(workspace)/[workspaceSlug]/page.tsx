@@ -103,11 +103,8 @@ export default async function WorkspaceDashboardPage({
   const content = snapshot?.content || [];
   const campaigns = snapshot?.campaigns || [];
   const allSchedules = snapshot?.calendar || [];
-  const currentTime = Date.now();
   const scheduledPublications = allSchedules.filter(
-    (item) =>
-      item.status === "scheduled" &&
-      new Date(item.scheduledAt).getTime() >= currentTime,
+    (item) => item.status === "scheduled",
   );
   const upcomingSchedules = [...scheduledPublications]
     .sort(
