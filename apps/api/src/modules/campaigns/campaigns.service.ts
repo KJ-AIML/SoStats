@@ -46,7 +46,11 @@ export class CampaignsService {
     });
   }
 
-  async create(workspaceId: number, data: CreateCampaignDto) {
+  async create(
+    workspaceId: number,
+    data: CreateCampaignDto,
+    options: { sourceKey?: string } = {},
+  ) {
     if (data.brandId) {
       const brand = await this.db.query.brands.findFirst({
         where: and(
@@ -60,15 +64,41 @@ export class CampaignsService {
     const { startDate, endDate, channels = [], ...rest } = data;
 
     return this.db.transaction(async (tx) => {
-      const [campaign] = await tx
-        .insert(schema.campaigns)
-        .values({
-          ...rest,
-          workspaceId,
-          startDate: startDate ? new Date(startDate) : undefined,
-          endDate: endDate ? new Date(endDate) : undefined,
-        })
-        .returning();
+      const values = {
+        ...rest,
+        workspaceId,
+        sourceKey: options.sourceKey?.slice(0, 255) || null,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+      };
+
+      const [created] = options.sourceKey
+        ? await tx
+            .insert(schema.campaigns)
+            .values(values)
+            .onConflictDoNothing({ target: schema.campaigns.sourceKey })
+            .returning()
+        : await tx.insert(schema.campaigns).values(values).returning();
+
+      if (!created && options.sourceKey) {
+        const existing = await tx.query.campaigns.findFirst({
+          where: and(
+            eq(schema.campaigns.workspaceId, workspaceId),
+            eq(schema.campaigns.sourceKey, options.sourceKey.slice(0, 255)),
+          ),
+        });
+        if (!existing) {
+          throw new ConflictException(
+            'Campaign source key was claimed by another workspace',
+          );
+        }
+        return existing;
+      }
+
+      const campaign = created;
+      if (!campaign) {
+        throw new ConflictException('Campaign could not be created');
+      }
 
       if (channels.length) {
         await tx.insert(schema.campaignChannels).values(
