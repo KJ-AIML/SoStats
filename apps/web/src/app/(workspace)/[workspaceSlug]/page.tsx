@@ -199,7 +199,7 @@ export default async function WorkspaceDashboardPage({
           </h1>
           <p className="mt-1 text-[13px] text-muted-foreground">
             {snapshot
-              ? `${counts.review} item${counts.review === 1 ? "" : "s"} need review and ${scheduledPublications.length} publication${schedules.length === 1 ? "" : "s"} are coming up.`
+              ? `${counts.review} item${counts.review === 1 ? "" : "s"} need review and ${scheduledPublications.length} publication${scheduledPublications.length === 1 ? "" : "s"} are coming up.`
               : "Start the API/database stack to load your live workspace."}
           </p>
         </div>
@@ -258,7 +258,7 @@ export default async function WorkspaceDashboardPage({
               {[
                 [String(activeCampaigns.length), "Campaigns"],
                 [String(counts.review), "Review"],
-                [String(schedules.length), "Upcoming"],
+                [String(scheduledPublications.length), "Upcoming"],
               ].map(([value, label]) => (
                 <div key={label} className="rounded-xl bg-black/20 p-3">
                   <p className="text-lg font-semibold">{value}</p>
