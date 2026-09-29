@@ -12,7 +12,13 @@ create table if not exists workspace_audit_events (
   target_type varchar(80) not null,
   target_id varchar(120),
   metadata jsonb not null default '{}'::jsonb,
-  created_at timestamp not null default now()
+  created_at timestamp not null default now(),
+  constraint workspace_audit_auth_method_check
+    check (auth_method in ('jwt', 'development', 'api_key', 'invitation_token', 'system')),
+  constraint workspace_audit_action_check
+    check (length(trim(action)) between 1 and 120),
+  constraint workspace_audit_target_type_check
+    check (length(trim(target_type)) between 1 and 80)
 );
 
 create index if not exists workspace_audit_workspace_created_idx
