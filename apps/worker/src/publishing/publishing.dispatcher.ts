@@ -4,7 +4,7 @@ import {
   getDispatchablePublications,
   type PublishingJobData,
 } from './publishing.api';
-import { buildPublicationJob } from './publishing.jobs';
+import { buildPublicationJob, isValidDispatchGeneration } from './publishing.jobs';
 
 const connection = createRedisConnection();
 const publishingQueue = new Queue<PublishingJobData>('publishing', {
@@ -42,6 +42,16 @@ export async function dispatchOnce() {
     }
 
     for (const publication of publications) {
+      if (!isValidDispatchGeneration(publication.dispatchGeneration)) {
+        console.warn(
+          JSON.stringify({
+            event: 'publication.dispatch_skipped',
+            publication_id: publication.id,
+            reason: 'invalid_dispatch_generation',
+          }),
+        );
+        continue;
+      }
       const job = buildPublicationJob(publication, Date.now());
       await publishingQueue.add(job.name, job.data, job.opts);
     }

@@ -9,6 +9,10 @@ function positive(raw: string | undefined, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+export function isValidDispatchGeneration(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
 export function publicationJobId(
   publication: Pick<DispatchablePublication, 'id' | 'dispatchGeneration'>,
 ) {
@@ -21,6 +25,9 @@ export function buildPublicationJob(
   now: number,
   env: NodeJS.ProcessEnv = process.env,
 ): { name: 'publish'; data: PublishingJobData; opts: JobsOptions } {
+  if (!isValidDispatchGeneration(publication.dispatchGeneration)) {
+    throw new Error('invalid_dispatch_generation');
+  }
   const dueAt = Math.max(
     new Date(publication.scheduledAt).getTime(),
     publication.nextAttemptAt ? new Date(publication.nextAttemptAt).getTime() : 0,

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   buildPublicationJob,
   publicationJobId,
+  isValidDispatchGeneration,
 } = require('../dist/publishing/publishing.jobs.js');
 
 const publication = {
@@ -51,4 +52,15 @@ test('transport attempts fall back to PUBLISH_MAX_ATTEMPTS', () => {
     buildPublicationJob(publication, 0, { PUBLISH_TRANSPORT_ATTEMPTS: '2', PUBLISH_MAX_ATTEMPTS: '7' }).opts.attempts,
     2,
   );
+});
+
+test('rejects a missing, null, zero or fractional dispatch generation', () => {
+  for (const bad of [undefined, null, 0, -1, 1.5, '3']) {
+    assert.equal(isValidDispatchGeneration(bad), false);
+    assert.throws(
+      () => buildPublicationJob({ ...publication, dispatchGeneration: bad }, 0, {}),
+      /invalid_dispatch_generation/,
+    );
+  }
+  assert.equal(isValidDispatchGeneration(1), true);
 });

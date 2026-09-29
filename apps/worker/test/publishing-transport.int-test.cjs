@@ -8,6 +8,7 @@ async function startFakeApi() {
     executeCalls: 0,
     deadLetterCalls: 0,
     generation: 1,
+    bodies: [],
   };
   const server = http.createServer((req, res) => {
     if (req.url.startsWith('/internal/publications/dispatchable')) {
@@ -27,6 +28,25 @@ async function startFakeApi() {
     }
     if (req.url === '/internal/publications/42/execute') {
       state.executeCalls += 1;
+      let raw = '';
+      req.on('data', (chunk) => (raw += chunk));
+      req.on('end', () => {
+        try {
+          state.bodies.push(JSON.parse(raw));
+        } catch {
+          state.bodies.push(null);
+        }
+      });
+      if (state.executeMode === 'emptyjson') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
+        return;
+      }
+      if (state.executeMode === 'text') {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('not json');
+        return;
+      }
       if (state.executeMode === 'down') {
         res.writeHead(503, { 'content-type': 'application/json' });
         res.end('{}');
@@ -54,12 +74,15 @@ async function waitFor(predicate, timeoutMs = 15_000) {
   }
 }
 
-test('transport exhaustion leaves the domain alone and the generation is re-dispatched', async () => {
+test('transport exhaustion leaves the domain alone and the generation is re-dispatched', { timeout: 60_000 }, async () => {
   if (!process.env.REDIS_HOST) throw new Error('REDIS_HOST is required for worker integration tests');
   const api = await startFakeApi();
   process.env.SOSTATS_API_URL = api.url;
   process.env.WORKER_API_TOKEN = 'test-token';
   process.env.REDIS_DB = process.env.REDIS_DB || '15';
+  if (Number.parseInt(process.env.REDIS_DB, 10) === 0) {
+    throw new Error('Refusing to flushdb on REDIS_DB 0; use a dedicated test DB (default 15)');
+  }
   process.env.PUBLISH_TRANSPORT_ATTEMPTS = '2';
   process.env.PUBLISH_TRANSPORT_BACKOFF_MS = '50';
 
@@ -97,12 +120,46 @@ test('transport exhaustion leaves the domain alone and the generation is re-disp
     api.state.generation = 2;
     await dispatcher.dispatchOnce();
     await waitFor(async () => api.state.executeCalls === 4);
+    assert.deepEqual(
+      api.state.bodies.map((b) => [b.expectedDispatchGeneration, b.queueJobId]),
+      [
+        [1, 'publication-42-dispatch-1'],
+        [1, 'publication-42-dispatch-1'],
+        [1, 'publication-42-dispatch-1'],
+        [2, 'publication-42-dispatch-2'],
+      ],
+    );
+
+    // Unrecognised 200 responses are transport failures: never completed,
+    // removed, and re-dispatchable.
+    for (const [generation, mode] of [
+      [3, 'emptyjson'],
+      [4, 'text'],
+    ]) {
+      const before = api.state.executeCalls;
+      const jobId = `publication-42-dispatch-${generation}`;
+      api.state.generation = generation;
+      api.state.executeMode = mode;
+      await dispatcher.dispatchOnce();
+      await waitFor(
+        async () => api.state.executeCalls >= before + 2 && !(await queue.getJob(jobId)),
+      );
+      assert.equal(await queue.getJob(jobId), undefined, `${mode}: job removed, not completed`);
+      assert.equal(api.state.deadLetterCalls, 0);
+    }
+    api.state.executeMode = 'up';
+    await dispatcher.dispatchOnce();
+    await waitFor(async () => {
+      const job = await queue.getJob('publication-42-dispatch-4');
+      return Boolean(job) && (await job.getState()) === 'completed';
+    });
   } finally {
-    await queue.close();
-    await queueConnection.quit();
-    await processor.stopPublishingWorker();
-    await dispatcher.stopPublishingDispatcher();
-    await admin.quit();
-    api.server.close();
+    await Promise.allSettled([
+      queue.close().then(() => queueConnection.quit()),
+      processor.stopPublishingWorker(),
+      dispatcher.stopPublishingDispatcher(),
+      admin.quit(),
+      new Promise((resolve) => api.server.close(resolve)),
+    ]);
   }
 });

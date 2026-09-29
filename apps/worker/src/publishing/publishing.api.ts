@@ -112,8 +112,22 @@ function executeTimeoutMs() {
   return Number.isFinite(value) && value > 0 ? value : 180_000;
 }
 
-export function executePublication(data: PublishingJobData, queueJobId?: string) {
-  return request<ExecutePublicationResponse>(
+const EXECUTE_STATUSES: readonly string[] = [
+  'published',
+  'already_published',
+  'stale',
+  'terminal',
+  'in_progress',
+  'outcome_unknown',
+  'retry_scheduled',
+  'failed_terminal',
+];
+
+export async function executePublication(
+  data: PublishingJobData,
+  queueJobId?: string,
+) {
+  const result = await request<ExecutePublicationResponse>(
     `/internal/publications/${data.scheduledPublicationId}/execute`,
     {
       method: 'POST',
@@ -125,4 +139,14 @@ export function executePublication(data: PublishingJobData, queueJobId?: string)
     },
     executeTimeoutMs(),
   );
+  // An unrecognised 200 means the protocol did not complete: treat it as a
+  // transport failure so the job is retried/removed, never completed.
+  const status = (result as { status?: unknown } | null)?.status;
+  if (typeof status !== 'string' || !EXECUTE_STATUSES.includes(status)) {
+    throw new PublishingApiError(
+      'Publishing API returned an unrecognised execute response',
+      200,
+    );
+  }
+  return result;
 }
