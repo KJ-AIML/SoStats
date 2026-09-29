@@ -1,4 +1,11 @@
 import {
+  startKnowledgeDispatcher,
+  stopKnowledgeDispatcher,
+} from './knowledge/knowledge.dispatcher';
+import {
+  stopKnowledgeWorker,
+} from './knowledge/knowledge.processor';
+import {
   startRssTriggerDispatcher,
   stopRssTriggerDispatcher,
 } from './triggers/rss-trigger.dispatcher';
@@ -39,6 +46,7 @@ startAutomationDispatcher();
 startAnalyticsDispatcher();
 startMediaDispatcher();
 startRssTriggerDispatcher();
+startKnowledgeDispatcher();
 
 let stopping = false;
 
@@ -58,6 +66,8 @@ async function shutdown(signal: string) {
     stopMediaWorker(),
     stopRssTriggerDispatcher(),
     stopRssTriggerWorker(),
+    stopKnowledgeDispatcher(),
+    stopKnowledgeWorker(),
   ]);
   process.exit(0);
 }
