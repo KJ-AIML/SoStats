@@ -12,12 +12,14 @@ import { CurrentUser } from '../../common/auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../common/auth/auth.types.js';
 import { WorkspacesService } from './workspaces.service.js';
 import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
+import { ApiKeyService } from '../../common/auth/api-key.service.js';
 
 @Controller('workspaces')
 export class WorkspacesController {
   constructor(
     private readonly workspacesService: WorkspacesService,
     private readonly invitationsService: WorkspaceInvitationsService,
+    private readonly apiKeys: ApiKeyService,
   ) {}
 
   @Post()
@@ -76,6 +78,39 @@ export class WorkspacesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.invitationsService.revoke(id, user.id, invitationId);
+  }
+
+  @Post(':id/api-keys')
+  createApiKey(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      name?: unknown;
+      scopes?: unknown;
+      expiresInDays?: unknown;
+    },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.apiKeys.create(id, user.id, body);
+  }
+
+  @Post(':id/api-keys/:keyId/rotate')
+  rotateApiKey(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('keyId', ParseIntPipe) keyId: number,
+    @Body() body: { expiresInDays?: unknown },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.apiKeys.rotate(id, user.id, keyId, body);
+  }
+
+  @Delete(':id/api-keys/:keyId')
+  revokeApiKey(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('keyId', ParseIntPipe) keyId: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.apiKeys.revoke(id, user.id, keyId);
   }
 
   @Post(':id/ownership-transfer')
