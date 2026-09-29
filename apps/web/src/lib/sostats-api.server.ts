@@ -303,6 +303,10 @@ export type PublicationResultRecord = {
 export type PublicationJobRecord = {
   id: number;
   status: string;
+  executionPhase?: "idle" | "claimed" | "provider_request_started" | "provider_confirmed" | "terminal" | string;
+  executionToken?: string | null;
+  leaseExpiresAt?: string | null;
+  providerRequestStartedAt?: string | null;
   attempts: number;
   lastAttemptAt?: string | null;
   nextAttemptAt?: string | null;
@@ -408,11 +412,14 @@ export type AutomationRunStepRecord = {
   runId: number;
   stepId: string;
   status: string;
+  attempts?: number;
+  leaseExpiresAt?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   logs?: string | null;
   error?: string | null;
   createdAt: string;
+  updatedAt?: string;
 };
 
 export type AutomationRunRecord = {
