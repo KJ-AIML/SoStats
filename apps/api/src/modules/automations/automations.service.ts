@@ -24,6 +24,15 @@ import {
   workflowTriggerMode,
 } from './workflow-definition.js';
 
+function recordText(
+  value: Record<string, unknown>,
+  key: string,
+  fallback = '',
+) {
+  const candidate = value[key];
+  return typeof candidate === 'string' ? candidate : fallback;
+}
+
 function webhookBaseUrl(required = false) {
   const configured =
     process.env.WEBHOOK_PUBLIC_BASE_URL ||
@@ -238,9 +247,13 @@ export class AutomationsService {
 
       if (triggerType === 'rss') {
         const rssConfig = {
-          feedUrl: String(triggerConfig.feedUrl || '').trim(),
+          feedUrl: recordText(triggerConfig, 'feedUrl').trim(),
           pollMinutes: Number(triggerConfig.pollMinutes ?? 15),
-          initialSync: String(triggerConfig.initialSync || 'baseline'),
+          initialSync: recordText(
+            triggerConfig,
+            'initialSync',
+            'baseline',
+          ),
         };
 
         if (existingTrigger) {
@@ -250,7 +263,7 @@ export class AutomationsService {
               ? (existingTrigger.config as Record<string, unknown>)
               : {};
           const feedChanged =
-            String(previousConfig.feedUrl || '').trim() !== rssConfig.feedUrl;
+            recordText(previousConfig, 'feedUrl').trim() !== rssConfig.feedUrl;
 
           await tx
             .update(schema.automationTriggers)
@@ -284,14 +297,19 @@ export class AutomationsService {
           });
         }
       } else if (triggerType === 'webhook') {
-        const sourceType = String(triggerConfig.sourceType || 'generic')
+        const sourceType = recordText(
+          triggerConfig,
+          'sourceType',
+          'generic',
+        )
           .trim()
           .toLowerCase();
-        const eventName = String(
-          triggerConfig.eventName ||
-            (sourceType === 'wordpress'
-              ? 'wordpress.post.published'
-              : 'content.published'),
+        const eventName = recordText(
+          triggerConfig,
+          'eventName',
+          sourceType === 'wordpress'
+            ? 'wordpress.post.published'
+            : 'content.published',
         ).trim();
         const publicId =
           existingTrigger?.publicId ||

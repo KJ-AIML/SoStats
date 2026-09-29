@@ -49,6 +49,12 @@ function plain(value?: string, max = 12_000) {
   return normalized ? normalized.slice(0, max) : undefined;
 }
 
+function scalarId(value: unknown) {
+  if (typeof value === 'string') return text(value, 1024);
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
 function stableFallback(rawBody: Buffer) {
   return createHash('sha256').update(rawBody).digest('hex');
 }
@@ -94,7 +100,7 @@ export function normalizeWebhookPayload(input: {
     const externalId =
       text(input.eventId, 1024) ||
       (id !== undefined && id !== null
-        ? `wordpress:${String(id).slice(0, 255)}:${publishedAt || ''}`
+        ? `wordpress:${scalarId(id)?.slice(0, 255) || 'unknown'}:${publishedAt || ''}`
         : stableFallback(input.rawBody));
 
     return {
@@ -112,7 +118,7 @@ export function normalizeWebhookPayload(input: {
     text(input.eventId, 1024) ||
     text(root.externalId, 1024) ||
     text(root.eventId, 1024) ||
-    text(root.id === undefined ? undefined : String(root.id), 1024) ||
+    scalarId(root.id) ||
     stableFallback(input.rawBody);
 
   return {

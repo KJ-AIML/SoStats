@@ -74,20 +74,30 @@ type WebhookTriggerConfig = {
   eventName: string;
 };
 
+function configText(
+  config: Record<string, unknown>,
+  key: string,
+  fallback = '',
+) {
+  const value = config[key];
+  return typeof value === 'string' ? value : fallback;
+}
+
 function webhookConfig(value: unknown): WebhookTriggerConfig {
   const config =
     value && typeof value === 'object'
       ? (value as Record<string, unknown>)
       : {};
   const sourceType =
-    String(config.sourceType || 'generic').toLowerCase() === 'wordpress'
+    configText(config, 'sourceType', 'generic').toLowerCase() === 'wordpress'
       ? 'wordpress'
       : 'generic';
-  const eventName = String(
-    config.eventName ||
-      (sourceType === 'wordpress'
-        ? 'wordpress.post.published'
-        : 'content.published'),
+  const eventName = configText(
+    config,
+    'eventName',
+    sourceType === 'wordpress'
+      ? 'wordpress.post.published'
+      : 'content.published',
   ).trim();
 
   return { sourceType, eventName };
