@@ -67,6 +67,7 @@ describe('AuditLogService', () => {
         },
       } as never,
       access as never,
+      {} as never,
     );
 
     await expect(service.listForWorkspace(77, 10)).resolves.toEqual([]);
@@ -86,6 +87,7 @@ describe('AuditLogService', () => {
     const insert = vi.fn().mockReturnValue({ values });
     const service = new AuditLogService(
       { insert } as never,
+      {} as never,
       {} as never,
     );
 
