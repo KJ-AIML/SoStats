@@ -205,6 +205,20 @@ export type AutomationRunRecord = {
   version?: AutomationVersionRecord;
 };
 
+export type AutomationTriggerRecord = {
+  id: number;
+  automationId: number;
+  type: string;
+  config: Record<string, unknown>;
+  status: string;
+  nextPollAt?: string | null;
+  lastPolledAt?: string | null;
+  lastTriggeredAt?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AutomationRecord = {
   id: number;
   name: string;
@@ -213,6 +227,7 @@ export type AutomationRecord = {
   status: string;
   versions?: AutomationVersionRecord[];
   runs?: AutomationRunRecord[];
+  triggers?: AutomationTriggerRecord[];
 };
 
 export type AssetRecord = {

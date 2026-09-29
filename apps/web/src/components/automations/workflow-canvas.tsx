@@ -48,7 +48,11 @@ const defaultNodes: Node[] = [
       label: "Manual trigger",
       type: "trigger",
       description: "Start the workflow from SoStats.",
-      config: {},
+      config: {
+        mode: "manual",
+        pollMinutes: 15,
+        initialSync: "baseline",
+      },
     },
   },
   {
@@ -295,7 +299,7 @@ export function WorkflowCanvas({
             <p className="text-[9px] font-semibold">Trigger</p>
           </div>
           <p className="mt-1 text-[8px] leading-4 text-muted-foreground">
-            The trigger stays as the first node. Manual runs are live now; schedule and webhook triggers use the same versioned definition next.
+            The trigger stays as the first node. Manual and RSS sources both create the same immutable, versioned automation runs.
           </p>
         </div>
       </aside>
@@ -357,6 +361,86 @@ export function WorkflowCanvas({
                   className="w-full resize-none rounded-xl border border-black/[0.07] bg-neutral-50 p-3 text-[10px] leading-4 outline-none focus:border-[#ef2b2d]/30"
                 />
               </label>
+
+              {selectedType === "trigger" && (
+                <>
+                  <label>
+                    <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                      Trigger source
+                    </span>
+                    <select
+                      value={String(config.mode || "manual")}
+                      onChange={(event) => updateConfig("mode", event.target.value)}
+                      className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
+                    >
+                      <option value="manual">Manual / test run</option>
+                      <option value="rss">RSS / Atom feed</option>
+                    </select>
+                  </label>
+
+                  {String(config.mode || "manual") === "rss" && (
+                    <>
+                      <label>
+                        <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                          Feed URL
+                        </span>
+                        <input
+                          value={String(config.feedUrl || "")}
+                          onChange={(event) =>
+                            updateConfig("feedUrl", event.target.value)
+                          }
+                          placeholder="https://example.com/feed.xml"
+                          className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
+                        />
+                      </label>
+
+                      <label>
+                        <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                          Poll interval
+                        </span>
+                        <select
+                          value={String(config.pollMinutes ?? 15)}
+                          onChange={(event) =>
+                            updateConfig("pollMinutes", Number(event.target.value))
+                          }
+                          className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
+                        >
+                          <option value="5">Every 5 minutes</option>
+                          <option value="15">Every 15 minutes</option>
+                          <option value="30">Every 30 minutes</option>
+                          <option value="60">Every hour</option>
+                          <option value="360">Every 6 hours</option>
+                          <option value="1440">Daily</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                          First sync
+                        </span>
+                        <select
+                          value={String(config.initialSync || "baseline")}
+                          onChange={(event) =>
+                            updateConfig("initialSync", event.target.value)
+                          }
+                          className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
+                        >
+                          <option value="baseline">
+                            Baseline existing items, wait for the next new item
+                          </option>
+                          <option value="latest">
+                            Trigger the newest current item once
+                          </option>
+                        </select>
+                      </label>
+
+                      <p className="rounded-xl bg-emerald-50 p-3 text-[9px] leading-4 text-emerald-800">
+                        RSS URLs are fetched only from public HTTP/HTTPS network targets. Existing feed history is deduplicated before a run is created.
+                      </p>
+                    </>
+                  )}
+                </>
+              )}
 
               {selectedType === "generate" && (
                 <>
