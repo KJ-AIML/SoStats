@@ -847,24 +847,34 @@ export const publicationJobs = pgTable(
     ),
     publicationJobPhaseCheck: check(
       'publication_job_phase_check',
-      sql`${table.executionPhase} in ('idle', 'claimed', 'provider_request_started', 'terminal')`,
+      sql`${table.executionPhase} in ('idle', 'claimed', 'provider_request_started', 'provider_confirmed', 'terminal')`,
     ),
   }),
 );
 
 // publication_results
-export const publicationResults = pgTable('publication_results', {
-  id: serial('id').primaryKey(),
-  publicationJobId: integer('publication_job_id')
-    .notNull()
-    .references(() => publicationJobs.id, { onDelete: 'cascade' }),
-  platformPostId: varchar('platform_post_id', { length: 255 }),
-  platformPostUrl: varchar('platform_post_url', { length: 1024 }),
-  errorType: varchar('error_type', { length: 255 }),
-  errorMessage: text('error_message'),
-  rawResponse: text('raw_response'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-});
+export const publicationResults = pgTable(
+  'publication_results',
+  {
+    id: serial('id').primaryKey(),
+    publicationJobId: integer('publication_job_id')
+      .notNull()
+      .references(() => publicationJobs.id, { onDelete: 'cascade' }),
+    platformPostId: varchar('platform_post_id', { length: 255 }),
+    platformPostUrl: varchar('platform_post_url', { length: 1024 }),
+    errorType: varchar('error_type', { length: 255 }),
+    errorMessage: text('error_message'),
+    rawResponse: text('raw_response'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    publicationResultSuccessUnique: uniqueIndex(
+      'publication_result_success_job_unique',
+    )
+      .on(table.publicationJobId)
+      .where(sql`${table.platformPostId} is not null`),
+  }),
+);
 
 // automations
 export const automations = pgTable('automations', {
