@@ -58,19 +58,79 @@ export class MediaService {
       orderBy: (fields, { desc }) => [desc(fields.createdAt)],
     });
 
+    const usages = records.length
+      ? await this.db.query.contentAssets.findMany({
+          where: inArray(
+            schema.contentAssets.assetId,
+            records.map((asset) => asset.id),
+          ),
+          with: {
+            contentItem: true,
+            variant: true,
+          },
+        })
+      : [];
+
     return Promise.all(
-      records.map(async (asset) => ({
-        ...asset,
-        viewUrl:
-          asset.status === 'ready'
-            ? asset.publicUrl ||
-              (await this.storagePort.generateDownloadUrl(
-                asset.storageKey,
-                15 * 60,
-              ))
-            : null,
-      })),
+      records.map(async (asset) => {
+        const assetUsages = usages
+          .filter((usage) => usage.assetId === asset.id)
+          .map((usage) => ({
+            id: usage.id,
+            contentItemId: usage.contentItemId,
+            contentTitle: usage.contentItem?.title || null,
+            contentStatus: usage.contentItem?.status || null,
+            variantId: usage.variantId,
+            variantPlatform: usage.variant?.platform || null,
+          }));
+
+        return {
+          ...asset,
+          usageCount: assetUsages.length,
+          usages: assetUsages,
+          viewUrl:
+            asset.status === 'ready'
+              ? asset.publicUrl ||
+                (await this.storagePort.generateDownloadUrl(
+                  asset.storageKey,
+                  15 * 60,
+                ))
+              : null,
+        };
+      }),
     );
+  }
+
+  async getAsset(workspaceId: number, assetId: number) {
+    const asset = await this.requireAsset(workspaceId, assetId);
+    const usages = await this.db.query.contentAssets.findMany({
+      where: eq(schema.contentAssets.assetId, assetId),
+      with: {
+        contentItem: true,
+        variant: true,
+      },
+    });
+
+    return {
+      ...asset,
+      usageCount: usages.length,
+      usages: usages.map((usage) => ({
+        id: usage.id,
+        contentItemId: usage.contentItemId,
+        contentTitle: usage.contentItem?.title || null,
+        contentStatus: usage.contentItem?.status || null,
+        variantId: usage.variantId,
+        variantPlatform: usage.variant?.platform || null,
+      })),
+      viewUrl:
+        asset.status === 'ready'
+          ? asset.publicUrl ||
+            (await this.storagePort.generateDownloadUrl(
+              asset.storageKey,
+              15 * 60,
+            ))
+          : null,
+    };
   }
 
   async getUploadUrl(
@@ -221,6 +281,119 @@ export class MediaService {
       .returning();
 
     return updated;
+  }
+
+  async attachToContent(
+    workspaceId: number,
+    assetId: number,
+    contentItemId: number,
+    variantId?: number,
+  ) {
+    const asset = await this.requireAsset(workspaceId, assetId);
+    if (asset.status !== 'ready') {
+      throw new ConflictException(
+        'Only ready assets can be attached to content',
+      );
+    }
+
+    const contentItem = await this.db.query.contentItems.findFirst({
+      where: and(
+        eq(schema.contentItems.id, contentItemId),
+        eq(schema.contentItems.workspaceId, workspaceId),
+      ),
+    });
+    if (!contentItem) throw new NotFoundException('Content item not found');
+    if (['scheduled', 'published'].includes(contentItem.status)) {
+      throw new ConflictException(
+        'Media attachments cannot change after content is scheduled or published',
+      );
+    }
+
+    if (variantId) {
+      const variant = await this.db.query.contentVariants.findFirst({
+        where: and(
+          eq(schema.contentVariants.id, variantId),
+          eq(schema.contentVariants.contentItemId, contentItemId),
+        ),
+      });
+      if (!variant) {
+        throw new BadRequestException(
+          'Variant does not belong to the selected content item',
+        );
+      }
+    }
+
+    const existing = await this.db.query.contentAssets.findMany({
+      where: eq(schema.contentAssets.assetId, assetId),
+    });
+    const duplicate = existing.find(
+      (usage) =>
+        usage.contentItemId === contentItemId &&
+        (usage.variantId || null) === (variantId || null),
+    );
+    if (duplicate) {
+      return this.getAsset(workspaceId, assetId);
+    }
+
+    await this.db.transaction(async (tx) => {
+      await tx.insert(schema.contentAssets).values({
+        assetId,
+        contentItemId,
+        variantId,
+      });
+
+      if (['in_review', 'approved'].includes(contentItem.status)) {
+        await tx
+          .update(schema.contentItems)
+          .set({ status: 'draft', updatedAt: new Date() })
+          .where(eq(schema.contentItems.id, contentItemId));
+      }
+    });
+
+    return this.getAsset(workspaceId, assetId);
+  }
+
+  async detachFromContent(
+    workspaceId: number,
+    assetId: number,
+    contentAssetId: number,
+  ) {
+    await this.requireAsset(workspaceId, assetId);
+
+    const usage = await this.db.query.contentAssets.findFirst({
+      where: and(
+        eq(schema.contentAssets.id, contentAssetId),
+        eq(schema.contentAssets.assetId, assetId),
+      ),
+      with: { contentItem: true },
+    });
+    if (
+      !usage ||
+      !usage.contentItem ||
+      usage.contentItem.workspaceId !== workspaceId
+    ) {
+      throw new NotFoundException('Asset attachment not found');
+    }
+    if (['scheduled', 'published'].includes(usage.contentItem.status)) {
+      throw new ConflictException(
+        'Media attachments cannot change after content is scheduled or published',
+      );
+    }
+
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(schema.contentAssets)
+        .where(eq(schema.contentAssets.id, contentAssetId));
+
+      if (['in_review', 'approved'].includes(usage.contentItem!.status)) {
+        await tx
+          .update(schema.contentItems)
+          .set({ status: 'draft', updatedAt: new Date() })
+          .where(eq(schema.contentItems.id, usage.contentItemId!));
+      }
+    });
+
+    return this.getAsset(workspaceId, assetId);
   }
 
   async listDispatchable(limit = 250) {
@@ -406,6 +579,21 @@ export class MediaService {
 
   async deleteAsset(workspaceId: number, assetId: number) {
     const asset = await this.requireAsset(workspaceId, assetId);
+
+    const usage = await this.db.query.contentAssets.findFirst({
+      where: eq(schema.contentAssets.assetId, assetId),
+    });
+    if (usage) {
+      throw new ConflictException(
+        'Asset is attached to content. Detach it before deleting the object.',
+      );
+    }
+
+    if (['uploaded', 'processing'].includes(asset.status)) {
+      throw new ConflictException(
+        'Asset processing is active. Delete it after processing reaches a terminal state.',
+      );
+    }
 
     await this.storagePort.deleteFile(asset.storageKey);
 
