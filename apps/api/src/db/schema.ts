@@ -610,27 +610,36 @@ export const knowledgeChunks = pgTable(
 );
 
 // campaigns
-export const campaigns = pgTable('campaigns', {
-  id: serial('id').primaryKey(),
-  workspaceId: integer('workspace_id')
-    .notNull()
-    .references(() => workspaces.id, { onDelete: 'cascade' }),
-  brandId: integer('brand_id').references(() => brands.id, {
-    onDelete: 'set null',
+export const campaigns = pgTable(
+  'campaigns',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    brandId: integer('brand_id').references(() => brands.id, {
+      onDelete: 'set null',
+    }),
+    sourceKey: varchar('source_key', { length: 255 }),
+    name: varchar('name', { length: 255 }).notNull(),
+    description: text('description'),
+    goal: varchar('goal', { length: 255 }),
+    status: varchar('status', { length: 50 }).notNull().default('draft'), // draft, active, completed, archived
+    generationContext: jsonb('generation_context')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    startDate: timestamp('start_date'),
+    endDate: timestamp('end_date'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    campaignSourceKeyUnique: uniqueIndex('campaign_source_key_unique').on(
+      table.sourceKey,
+    ),
   }),
-  name: varchar('name', { length: 255 }).notNull(),
-  description: text('description'),
-  goal: varchar('goal', { length: 255 }),
-  status: varchar('status', { length: 50 }).notNull().default('draft'), // draft, active, completed, archived
-  generationContext: jsonb('generation_context')
-    .$type<Record<string, unknown>>()
-    .notNull()
-    .default({}),
-  startDate: timestamp('start_date'),
-  endDate: timestamp('end_date'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+);
 
 // campaign_channels
 export const campaignChannels = pgTable('campaign_channels', {
@@ -803,18 +812,41 @@ export const scheduledPublications = pgTable(
 );
 
 // publication_jobs
-export const publicationJobs = pgTable('publication_jobs', {
-  id: serial('id').primaryKey(),
-  scheduledPublicationId: integer('scheduled_publication_id')
-    .notNull()
-    .references(() => scheduledPublications.id, { onDelete: 'cascade' }),
-  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, processing, completed, failed
-  attempts: integer('attempts').notNull().default(0),
-  lastAttemptAt: timestamp('last_attempt_at'),
-  nextAttemptAt: timestamp('next_attempt_at'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+export const publicationJobs = pgTable(
+  'publication_jobs',
+  {
+    id: serial('id').primaryKey(),
+    scheduledPublicationId: integer('scheduled_publication_id')
+      .notNull()
+      .references(() => scheduledPublications.id, { onDelete: 'cascade' }),
+    status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, processing, completed, failed
+    executionPhase: varchar('execution_phase', { length: 40 })
+      .notNull()
+      .default('idle'),
+    executionToken: varchar('execution_token', { length: 64 }),
+    leaseExpiresAt: timestamp('lease_expires_at'),
+    providerRequestStartedAt: timestamp('provider_request_started_at'),
+    attempts: integer('attempts').notNull().default(0),
+    lastAttemptAt: timestamp('last_attempt_at'),
+    nextAttemptAt: timestamp('next_attempt_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    publicationJobScheduleIdx: index('publication_job_schedule_idx').on(
+      table.scheduledPublicationId,
+      table.createdAt,
+    ),
+    publicationJobLeaseIdx: index('publication_job_lease_idx').on(
+      table.status,
+      table.leaseExpiresAt,
+    ),
+    publicationJobPhaseCheck: check(
+      'publication_job_phase_check',
+      sql`${table.executionPhase} in ('idle', 'claimed', 'provider_request_started', 'terminal')`,
+    ),
+  }),
+);
 
 // publication_results
 export const publicationResults = pgTable('publication_results', {
@@ -873,19 +905,40 @@ export const automationRuns = pgTable('automation_runs', {
 });
 
 // automation_run_steps
-export const automationRunSteps = pgTable('automation_run_steps', {
-  id: serial('id').primaryKey(),
-  runId: integer('run_id')
-    .notNull()
-    .references(() => automationRuns.id, { onDelete: 'cascade' }),
-  stepId: varchar('step_id', { length: 255 }).notNull(), // from workflow definition
-  status: varchar('status', { length: 50 }).notNull().default('pending'), // 'pending', 'running', 'completed', 'failed'
-  startedAt: timestamp('started_at'),
-  completedAt: timestamp('completed_at'),
-  logs: text('logs'),
-  error: text('error'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-});
+export const automationRunSteps = pgTable(
+  'automation_run_steps',
+  {
+    id: serial('id').primaryKey(),
+    runId: integer('run_id')
+      .notNull()
+      .references(() => automationRuns.id, { onDelete: 'cascade' }),
+    stepId: varchar('step_id', { length: 255 }).notNull(), // from workflow definition
+    status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, running, waiting_approval, completed, failed
+    attempts: integer('attempts').notNull().default(0),
+    executionToken: varchar('execution_token', { length: 64 }),
+    leaseExpiresAt: timestamp('lease_expires_at'),
+    startedAt: timestamp('started_at'),
+    completedAt: timestamp('completed_at'),
+    logs: text('logs'),
+    error: text('error'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    automationRunStepUnique: uniqueIndex('automation_run_step_unique').on(
+      table.runId,
+      table.stepId,
+    ),
+    automationRunStepLeaseIdx: index('automation_run_step_lease_idx').on(
+      table.status,
+      table.leaseExpiresAt,
+    ),
+    automationRunStepAttemptsCheck: check(
+      'automation_run_step_attempts_check',
+      sql`${table.attempts} >= 0`,
+    ),
+  }),
+);
 
 // automation_triggers
 export const automationTriggers = pgTable(
@@ -1021,6 +1074,10 @@ export const aiInsights = pgTable(
     insightStatusIdx: index('ai_insight_status_idx').on(
       table.workspaceId,
       table.status,
+    ),
+    insightGenerationIdx: index('ai_insight_generation_idx').on(
+      table.workspaceId,
+      table.generationId,
     ),
   }),
 );
