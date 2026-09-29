@@ -10,8 +10,9 @@ import {
   jsonb,
   boolean,
   customType,
+  check,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 // users
 export const users = pgTable('users', {
@@ -91,6 +92,14 @@ export const workspaceInvitations = pgTable(
     workspaceInviteStatusIdx: index('workspace_invite_status_idx').on(
       table.workspaceId,
       table.status,
+    ),
+    workspaceInviteRoleCheck: check(
+      'workspace_invite_role_check',
+      sql`${table.role} in ('admin', 'member')`,
+    ),
+    workspaceInviteStatusCheck: check(
+      'workspace_invite_status_check',
+      sql`${table.status} in ('pending', 'accepted', 'rejected', 'revoked', 'expired')`,
     ),
   }),
 );
