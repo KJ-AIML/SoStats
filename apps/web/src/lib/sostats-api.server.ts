@@ -73,6 +73,28 @@ export type WorkspaceAuditEventRecord = {
   createdAt: string;
 };
 
+export type AuthSessionRecord = {
+  id: number;
+  authMethod: "jwt" | "development" | string;
+  userAgent?: string | null;
+  status: "active" | "expired" | "revoked" | string;
+  isCurrent: boolean;
+  expiresAt?: string | null;
+  lastSeenAt: string;
+  revokedAt?: string | null;
+  createdAt: string;
+};
+
+export type WorkspaceNotificationPreferencesRecord = {
+  workspaceId: number;
+  userId: number;
+  securityEvents: boolean;
+  publishingFailures: boolean;
+  automationFailures: boolean;
+  weeklyDigest: boolean;
+  updatedAt?: string | null;
+};
+
 export type WorkspaceSettingsRecord = {
   workspace: WorkspaceRecord & {
     createdAt?: string;
@@ -81,6 +103,8 @@ export type WorkspaceSettingsRecord = {
   invitations: WorkspaceInvitationRecord[];
   apiKeys: WorkspaceApiKeyRecord[];
   auditEvents: WorkspaceAuditEventRecord[];
+  sessions: AuthSessionRecord[];
+  notificationPreferences: WorkspaceNotificationPreferencesRecord;
   members: Array<{
     id: number;
     userId: number;
@@ -97,6 +121,8 @@ export type WorkspaceSettingsRecord = {
     canManageInvitations: boolean;
     canManageApiKeys: boolean;
     canViewAuditLog: boolean;
+    canManageOwnSessions: boolean;
+    canManageOwnNotifications: boolean;
     canTransferOwnership: boolean;
     canDeleteWorkspace: boolean;
   };
@@ -113,7 +139,9 @@ export type WorkspaceSettingsRecord = {
     invitations: boolean;
     invitationEmailDelivery: boolean;
     apiKeys: boolean;
+    sessionAdministration: boolean;
     notificationPreferences: boolean;
+    notificationDelivery: boolean;
     auditLog: boolean;
     ownershipTransfer: boolean;
     workspacePublishPolicy: boolean;
