@@ -97,6 +97,10 @@ export function KnowledgeLibrary({
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  useEffect(() => {
+    setSources(initialSources);
+  }, [initialSources]);
+
   const ready = useMemo(
     () => sources.filter((source) => source.activeVersion > 0),
     [sources],
