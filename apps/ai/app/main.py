@@ -1,14 +1,12 @@
 import uvicorn
 from fastapi import FastAPI
 
-from app.api.brand import router as brand_router
 from app.api.campaigns import router as campaigns_router
 from app.api.insights import router as insights_router
 from app.api.knowledge import router as knowledge_router
 
 app = FastAPI(title="AI Service")
 
-app.include_router(brand_router)
 app.include_router(campaigns_router)
 app.include_router(insights_router)
 app.include_router(knowledge_router)

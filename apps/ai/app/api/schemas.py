@@ -112,12 +112,31 @@ class AIInsightResponse(BaseModel):
     summary: str = Field(..., description="Overall summary of the evidence-backed insights")
 
 
-class KnowledgeSource(BaseModel):
-    source_type: str = Field(..., description="Type of source (e.g., url, document, text)")
-    content: str = Field(..., description="The actual content or URL")
-    metadata: dict = Field(default_factory=dict, description="Optional metadata")
+class KnowledgeProcessRequest(BaseModel):
+    media_type: str
+    content: str | None = None
+    content_base64: str | None = None
 
 
-class IngestRequest(BaseModel):
-    sources: list[KnowledgeSource]
-    brand_id: str | None = Field(None, description="Optional brand ID to associate with the knowledge")
+class KnowledgeChunkEmbedding(BaseModel):
+    index: int
+    content: str
+    embedding: list[float]
+
+
+class KnowledgeProcessResponse(BaseModel):
+    text_length: int
+    chunk_count: int
+    embedding_model: str
+    dimensions: int
+    chunks: list[KnowledgeChunkEmbedding]
+
+
+class KnowledgeQueryEmbeddingRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=4000)
+
+
+class KnowledgeQueryEmbeddingResponse(BaseModel):
+    embedding_model: str
+    dimensions: int
+    embedding: list[float]

@@ -2,3 +2,5 @@ fastapi
 uvicorn
 pydantic
 httpx
+
+pypdf>=6.0,<7

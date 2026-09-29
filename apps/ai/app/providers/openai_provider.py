@@ -19,6 +19,20 @@ class OpenAIProvider(StructuredGenerationProvider):
             "https://api.openai.com/v1",
         ).rstrip("/")
         self.model = os.getenv("AI_MODEL", "gpt-5.6-luna")
+        self.embedding_model = os.getenv(
+            "OPENAI_EMBEDDING_MODEL",
+            "text-embedding-3-small",
+        )
+        self.embedding_dimensions = int(
+            os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536")
+        )
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {
+            "authorization": f"Bearer {self.api_key}",
+            "content-type": "application/json",
+        }
 
     @staticmethod
     def _extract_output_text(body: dict[str, Any]) -> str:
@@ -64,10 +78,7 @@ class OpenAIProvider(StructuredGenerationProvider):
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(
                 f"{self.base_url}/responses",
-                headers={
-                    "authorization": f"Bearer {self.api_key}",
-                    "content-type": "application/json",
-                },
+                headers=self.headers,
                 json=payload,
             )
             response.raise_for_status()
@@ -80,3 +91,45 @@ class OpenAIProvider(StructuredGenerationProvider):
                 f"{schema_name} generation returned a non-object JSON value"
             )
         return parsed
+
+    async def embed_texts(
+        self,
+        texts: list[str],
+    ) -> list[list[float]]:
+        if not texts:
+            return []
+        if len(texts) > 100:
+            raise ValueError("Embedding batch cannot exceed 100 chunks")
+
+        payload = {
+            "model": self.embedding_model,
+            "input": texts,
+            "dimensions": self.embedding_dimensions,
+            "encoding_format": "float",
+        }
+
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(
+                f"{self.base_url}/embeddings",
+                headers=self.headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
+
+        rows = body.get("data")
+        if not isinstance(rows, list) or len(rows) != len(texts):
+            raise RuntimeError("Embedding response length did not match input")
+
+        ordered = sorted(rows, key=lambda row: int(row.get("index", 0)))
+        embeddings: list[list[float]] = []
+        for row in ordered:
+            embedding = row.get("embedding")
+            if (
+                not isinstance(embedding, list)
+                or len(embedding) != self.embedding_dimensions
+            ):
+                raise RuntimeError("Embedding response dimensions are invalid")
+            embeddings.append([float(value) for value in embedding])
+
+        return embeddings
