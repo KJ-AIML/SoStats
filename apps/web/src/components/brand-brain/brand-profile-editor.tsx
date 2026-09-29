@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
@@ -79,44 +79,6 @@ export function BrandProfileEditor({
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    setName(brand?.name || "");
-    setDescription(brand?.description || "");
-    setWebsiteUrl(brand?.websiteUrl || "");
-    setVoices(
-      (brand?.voiceProfiles || []).map((item) => ({
-        tone: item.tone || "",
-        style: item.style || "",
-        guidelines: item.guidelines || "",
-      })),
-    );
-    setAudiences(
-      (brand?.audiences || []).map((item) => ({
-        name: item.name || "",
-        demographics: item.demographics || "",
-        painPoints: item.painPoints || "",
-      })),
-    );
-    setProducts(
-      (brand?.products || []).map((item) => ({
-        name: item.name || "",
-        description: item.description || "",
-        features: item.features || "",
-      })),
-    );
-    setPillars(
-      (brand?.pillars || []).map((item) => ({
-        name: item.name || "",
-        description: item.description || "",
-      })),
-    );
-    setRules(
-      (brand?.rules || []).map((item) => ({
-        ruleType: item.ruleType || "",
-        description: item.description || "",
-      })),
-    );
-  }, [brand]);
 
   const create = async () => {
     if (!name.trim()) {
