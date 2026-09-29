@@ -5,14 +5,14 @@ import {
 } from "@/lib/sostats-api.server";
 
 export default async function SettingsRedirectPage() {
+  let workspaceSlug = "demo";
+
   try {
     const workspaces = await backendRequest<WorkspaceRecord[]>("/workspaces");
-    if (workspaces[0]) {
-      redirect(`/${workspaces[0].slug}/settings`);
-    }
+    if (workspaces[0]) workspaceSlug = workspaces[0].slug;
   } catch {
-    // Fall through to the workspace bootstrap/root surface.
+    // Keep the development-compatible fallback when workspace lookup is unavailable.
   }
 
-  redirect("/demo/settings");
+  redirect(`/${workspaceSlug}/settings`);
 }
