@@ -15,7 +15,8 @@ function decodeXml(value: string) {
 }
 
 function stripMarkup(value: string) {
-  return decodeXml(value.replace(/<[^>]+>/g, ' '))
+  return decodeXml(value)
+    .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   orderWorkflow,
   validateWorkflowDefinition,
+  workflowTriggerMode,
 } from './workflow-definition.js';
 
 function linearDefinition() {
@@ -30,6 +31,35 @@ describe('automation workflow definition', () => {
       'review',
       'schedule',
     ]);
+  });
+
+  it('defaults trigger mode to manual', () => {
+    const definition = validateWorkflowDefinition(linearDefinition());
+    expect(workflowTriggerMode(definition)).toBe('manual');
+  });
+
+  it('validates an RSS source configuration', () => {
+    const candidate = linearDefinition();
+    candidate.nodes[0].data.config = {
+      mode: 'rss',
+      feedUrl: 'https://example.com/feed.xml',
+      pollMinutes: 15,
+      initialSync: 'baseline',
+    };
+    const definition = validateWorkflowDefinition(candidate);
+    expect(workflowTriggerMode(definition)).toBe('rss');
+  });
+
+  it('rejects invalid RSS polling configuration', () => {
+    const candidate = linearDefinition();
+    candidate.nodes[0].data.config = {
+      mode: 'rss',
+      feedUrl: 'file:///etc/passwd',
+      pollMinutes: 1,
+    };
+
+    const definition = validateWorkflowDefinition(candidate);
+    expect(() => workflowTriggerMode(definition)).toThrow();
   });
 
   it('rejects branching in runtime v1', () => {

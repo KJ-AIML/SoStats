@@ -24,6 +24,7 @@ export function isPublicAddress(value: string) {
   if (
     normalized === '::' ||
     normalized === '::1' ||
+    normalized.startsWith('::ffff:') ||
     normalized.startsWith('fc') ||
     normalized.startsWith('fd') ||
     normalized.startsWith('fe8') ||
