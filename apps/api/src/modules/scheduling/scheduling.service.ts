@@ -119,6 +119,15 @@ export class SchedulingService {
     if (!contentItem) throw new NotFoundException('Content item not found');
 
     if (!['in_review', 'approved'].includes(contentItem.status)) {
+      // A concurrent identical create commits content=scheduled with its
+      // insert; surface that as the identity conflict, not a product 400.
+      const conflict = await this.identityConflict(
+        workspaceId,
+        data.contentItemId,
+        data.socialAccountId,
+        scheduledAt,
+      );
+      if (conflict.existingScheduleId !== null) throw conflict;
       throw new BadRequestException(
         'Content must be in review or approved before scheduling',
       );

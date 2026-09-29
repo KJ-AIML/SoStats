@@ -124,7 +124,7 @@ describe('schedule mutations under concurrency', () => {
       socialAccountId: seeded.socialAccountId,
       scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
     };
-    await Promise.allSettled([
+    const results = await Promise.allSettled([
       scheduling.createSchedule(seeded.workspaceId, input),
       scheduling.createSchedule(seeded.workspaceId, input),
     ]);
@@ -133,6 +133,72 @@ describe('schedule mutations under concurrency', () => {
       .from(sp)
       .where(eq(sp.contentItemId, seeded.contentItemId));
     expect(rows).toHaveLength(1);
+    const loser = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    expect(loser?.reason).toBeInstanceOf(ScheduleIdentityConflict);
+    expect((loser!.reason as ScheduleIdentityConflict).existingScheduleId).toBe(
+      rows[0].id,
+    );
+  });
+
+  it('returns the identity conflict when the winner already scheduled the content (D3)', async () => {
+    const seeded = await seedChannel(database.sql);
+    const input = {
+      contentItemId: seeded.contentItemId,
+      socialAccountId: seeded.socialAccountId,
+      scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    const first = await scheduling.createSchedule(seeded.workspaceId, input);
+    const conflict = await scheduling
+      .createSchedule(seeded.workspaceId, input)
+      .catch((error: unknown) => error);
+    expect(conflict).toBeInstanceOf(ScheduleIdentityConflict);
+    expect((conflict as ScheduleIdentityConflict).existingScheduleId).toBe(
+      first.id,
+    );
+  });
+
+  it('still rejects scheduling already-scheduled content at a different time', async () => {
+    const seeded = await seedChannel(database.sql);
+    await scheduling.createSchedule(seeded.workspaceId, {
+      contentItemId: seeded.contentItemId,
+      socialAccountId: seeded.socialAccountId,
+      scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    await expect(
+      scheduling.createSchedule(seeded.workspaceId, {
+        contentItemId: seeded.contentItemId,
+        socialAccountId: seeded.socialAccountId,
+        scheduledAt: new Date(Date.now() + 7_200_000).toISOString(),
+      }),
+    ).rejects.toThrow(/Content must be in review or approved/);
+  });
+
+  it('reports separate active and disconnect-blocking counts on the channel list', async () => {
+    const channels = new ChannelsService(
+      database.db,
+      {
+        describeProvider: () => ({
+          supported: true,
+          capabilities: { text: true },
+        }),
+      } as unknown as ProviderRegistry,
+      {} as OAuthStateService,
+      {} as ChannelCredentialService,
+    );
+    const seeded = await seedChannel(database.sql);
+    await createPublication(database.db, seeded, { status: 'needs_review' });
+    await createPublication(database.db, seeded, {
+      status: 'scheduled',
+      scheduledAt: new Date(Date.now() + 3_600_000),
+    });
+    const list = await channels.findAll(seeded.workspaceId);
+    const channel = list.find((item) => item.id === seeded.socialAccountId);
+    expect(channel).toMatchObject({
+      activeScheduleCount: 2,
+      disconnectBlockingScheduleCount: 1,
+    });
   });
 
   it.each(['unknown', 'needs_review'])(
