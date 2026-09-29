@@ -312,25 +312,13 @@ export class WorkspacesController {
     },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.workspacesService.transferOwnership(
+    return this.workspacesService.transferOwnership(
       id,
       user.id,
       Number(body.targetMemberId),
       body.previousOwnerRole || 'admin',
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'workspace.ownership_transferred',
-      targetType: 'workspace_member',
-      targetId: result.owner.id,
-      metadata: {
-        previousOwnerUserId: result.previousOwner.userId,
-        previousOwnerRole: result.previousOwner.role,
-        newOwnerUserId: result.owner.userId,
-      },
-    });
-    return result;
   }
 
   @Put(':id/members/:memberId/role')
