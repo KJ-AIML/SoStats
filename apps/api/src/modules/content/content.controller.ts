@@ -14,7 +14,9 @@ import { ContentService } from './content.service.js';
 import {
   CreateContentDto,
   RepurposeContentDto,
+  UpdateContentDto,
   UpdateContentStatusDto,
+  UpdateContentVariantDto,
 } from './content.dto.js';
 
 @WorkspaceScoped()
@@ -23,7 +25,10 @@ export class ContentController {
   constructor(private readonly contentService: ContentService) {}
 
   @Post()
-  create(@Body() data: CreateContentDto, @CurrentWorkspaceId() workspaceId: number) {
+  create(
+    @Body() data: CreateContentDto,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
     return this.contentService.create({ ...data, workspaceId });
   }
 
@@ -33,8 +38,20 @@ export class ContentController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @CurrentWorkspaceId() workspaceId: number) {
+  findOne(
+    @Param('id') id: string,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
     return this.contentService.findOne(workspaceId, +id);
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() data: UpdateContentDto,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.contentService.update(workspaceId, +id, data);
   }
 
   @Patch(':id/status')
@@ -44,6 +61,21 @@ export class ContentController {
     @CurrentWorkspaceId() workspaceId: number,
   ) {
     return this.contentService.updateStatus(workspaceId, +id, data);
+  }
+
+  @Patch(':id/variants/:variantId')
+  updateVariant(
+    @Param('id') id: string,
+    @Param('variantId') variantId: string,
+    @Body() data: UpdateContentVariantDto,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.contentService.updateVariant(
+      workspaceId,
+      +id,
+      +variantId,
+      data,
+    );
   }
 
   @Post(':id/repurpose')

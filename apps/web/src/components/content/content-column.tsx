@@ -17,14 +17,20 @@ const tone: Record<ContentStatus, string> = {
 export function ContentColumn({
   status,
   items,
+  onOpen,
+  onAdd,
 }: {
   status: ContentStatus;
   items: ContentItem[];
+  onOpen?: (item: ContentItem) => void;
+  onAdd?: (status: ContentStatus) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: status,
     data: { type: "Column", status },
+    disabled: status === "Published",
   });
+  const canAdd = ["Ideas", "Drafts"].includes(status);
 
   return (
     <section className="flex min-w-[265px] flex-1 flex-col rounded-2xl border border-black/[0.055] bg-black/[0.018] p-2.5 xl:min-w-0">
@@ -40,7 +46,7 @@ export function ContentColumn({
         ref={setNodeRef}
         className={cn(
           "flex min-h-[420px] flex-1 flex-col gap-2.5 rounded-xl transition",
-          isOver && "bg-[#fff0f0]/50 ring-1 ring-[#ef2b2d]/15",
+          isOver && status !== "Published" && "bg-[#fff0f0]/50 ring-1 ring-[#ef2b2d]/15",
         )}
       >
         <SortableContext
@@ -48,12 +54,19 @@ export function ContentColumn({
           strategy={verticalListSortingStrategy}
         >
           {items.map((item) => (
-            <ContentCard key={item.id} item={item} />
+            <ContentCard key={item.id} item={item} onOpen={onOpen} />
           ))}
         </SortableContext>
-        <button className="mt-auto rounded-xl border border-dashed border-black/[0.09] px-3 py-2.5 text-[9px] font-medium text-muted-foreground transition hover:border-[#ef2b2d]/25 hover:bg-white hover:text-[#d92023]">
-          + Add content
-        </button>
+
+        {canAdd && (
+          <button
+            type="button"
+            onClick={() => onAdd?.(status)}
+            className="mt-auto rounded-xl border border-dashed border-black/[0.09] px-3 py-2.5 text-[9px] font-medium text-muted-foreground transition hover:border-[#ef2b2d]/25 hover:bg-white hover:text-[#d92023]"
+          >
+            + Add {status === "Ideas" ? "idea" : "draft"}
+          </button>
+        )}
       </div>
     </section>
   );

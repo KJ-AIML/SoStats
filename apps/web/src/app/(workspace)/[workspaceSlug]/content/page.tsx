@@ -1,19 +1,14 @@
-import {
-  Filter,
-  LayoutGrid,
-  List,
-  Plus,
-  Search,
-  Sparkles,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { ContentBoard } from "@/components/content/content-board";
 import type { ContentItem, ContentStatus } from "@/components/content/data";
 import { PageHeading } from "@/components/sostats/page-heading";
 import { loadWorkspaceSnapshot } from "@/lib/sostats-api.server";
 
-function toBoardStatus(status: string): ContentStatus {
+function toBoardStatus(status: string): ContentStatus | null {
   switch (status) {
+    case "idea":
+      return "Ideas";
     case "in_review":
     case "approved":
       return "Review";
@@ -24,8 +19,17 @@ function toBoardStatus(status: string): ContentStatus {
     case "draft":
       return "Drafts";
     default:
-      return "Ideas";
+      return null;
   }
+}
+
+function providerLabel(value?: string | null) {
+  if (!value) return "Generic";
+  if (value.toLowerCase() === "x") return "X";
+  if (value.toLowerCase() === "linkedin") return "LinkedIn";
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 export default async function ContentPage({
@@ -40,10 +44,17 @@ export default async function ContentPage({
     provider: string;
     accountName?: string | null;
   }> = [];
+  let brands: Array<{ id: number; name: string }> = [];
   let connectionError = false;
 
   try {
     const snapshot = await loadWorkspaceSnapshot(workspaceSlug);
+
+    brands = snapshot.brands.map((brand) => ({
+      id: brand.id,
+      name: brand.name,
+    }));
+
     channels = snapshot.channels
       .filter(
         (channel) =>
@@ -56,27 +67,64 @@ export default async function ContentPage({
         provider: channel.provider,
         accountName: channel.accountName,
       }));
-    items = snapshot.content.map((item) => ({
-      id: String(item.id),
-      title: item.title,
-      description: item.description || undefined,
-      status: toBoardStatus(item.status),
-      channel:
-        item.variants
-          ?.map((variant) => variant.platform)
-          .filter(Boolean)
+
+    items = snapshot.content.flatMap((item) => {
+      const status = toBoardStatus(item.status);
+      if (!status) return [];
+
+      const variants =
+        item.variants?.map((variant) => ({
+          id: variant.id,
+          platform: variant.platform,
+          content: variant.content,
+          status: variant.status,
+        })) || [];
+
+      const schedules =
+        item.scheduledPublications?.map((schedule) => ({
+          id: schedule.id,
+          status: schedule.status,
+          scheduledAt: schedule.scheduledAt,
+          provider: schedule.socialAccount?.provider,
+          accountName: schedule.socialAccount?.accountName,
+        })) || [];
+
+      const activeSchedule = schedules
+        .filter((schedule) => schedule.status === "scheduled")
+        .sort(
+          (a, b) =>
+            new Date(a.scheduledAt).getTime() -
+            new Date(b.scheduledAt).getTime(),
+        )[0];
+
+      const channel =
+        variants
+          .map((variant) => variant.platform)
+          .filter((value): value is string => Boolean(value))
           .slice(0, 2)
-          .join(" + ") || "Generic",
-      campaign: item.campaign?.name || "Unassigned",
-      time:
-        item.scheduledPublications?.[0]?.scheduledAt
-          ? new Date(item.scheduledPublications[0].scheduledAt).toLocaleString()
-          : "Updated recently",
-      variantRefs: item.variants?.map((variant) => ({
-        id: variant.id,
-        platform: variant.platform,
-      })),
-    }));
+          .map(providerLabel)
+          .join(" + ") || "Canonical";
+
+      return [
+        {
+          id: String(item.id),
+          title: item.title,
+          description: item.description || undefined,
+          status,
+          rawStatus: item.status,
+          brandId: item.brandId,
+          campaignId: item.campaignId,
+          channel,
+          campaign: item.campaign?.name || "Unassigned",
+          time: activeSchedule
+            ? new Date(activeSchedule.scheduledAt).toLocaleString()
+            : new Date(item.updatedAt).toLocaleString(),
+          updatedAt: item.updatedAt,
+          variantRefs: variants,
+          schedules,
+        } satisfies ContentItem,
+      ];
+    });
   } catch {
     connectionError = true;
   }
@@ -85,19 +133,17 @@ export default async function ContentPage({
     <div className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-5 p-4 md:p-6 xl:p-8">
       <PageHeading
         eyebrow="Content"
-        title="Your content pipeline"
-        description="Move every idea through drafting, review, scheduling and publishing without losing the campaign context behind it."
+        title="Review, approve and schedule real content"
+        description="Manage canonical content and channel variants through the real lifecycle. Scheduling owns the queued state, and the publishing worker owns the published state."
         actions={
-          <>
-            <Button variant="outline" className="h-10 rounded-xl text-[10px]">
-              <Sparkles className="mr-2 h-3.5 w-3.5" />
-              AI generate
-            </Button>
-            <Button className="h-10 rounded-xl bg-[#ef2b2d] text-[10px] hover:bg-[#da2427]">
-              <Plus className="mr-2 h-3.5 w-3.5" />
-              New content
-            </Button>
-          </>
+          <Link
+            href={`/${workspaceSlug}/ai-studio`}
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-black/[0.07] bg-white px-4 text-[10px] font-semibold text-neutral-700 transition hover:bg-neutral-50"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-[#ef2b2d]" />
+            Generate in AI Studio
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
         }
       />
 
@@ -107,33 +153,9 @@ export default async function ContentPage({
         </div>
       )}
 
-      <div className="sostats-card flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
-        <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-xl bg-neutral-50 px-3">
-          <Search className="h-3.5 w-3.5 text-neutral-400" />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-[10px] outline-none placeholder:text-neutral-400"
-            placeholder="Search content, campaigns or channels..."
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="inline-flex h-9 items-center gap-2 rounded-xl border border-black/[0.06] bg-white px-3 text-[9px] font-semibold text-neutral-600">
-            <Filter className="h-3.5 w-3.5" />
-            Filter
-          </button>
-          <div className="flex h-9 items-center rounded-xl border border-black/[0.06] bg-neutral-50 p-1">
-            <button className="flex h-7 w-8 items-center justify-center rounded-lg bg-white shadow-sm">
-              <LayoutGrid className="h-3.5 w-3.5" />
-            </button>
-            <button className="flex h-7 w-8 items-center justify-center rounded-lg text-neutral-400">
-              <List className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {items.length === 0 && !connectionError && (
+      {!connectionError && items.length === 0 && (
         <div className="rounded-xl border border-dashed border-black/[0.1] bg-white/60 px-4 py-3 text-[10px] text-muted-foreground">
-          No content yet. Generate a campaign in AI Studio and its content will appear here automatically.
+          No content yet. Create a manual idea below or generate a grounded campaign in AI Studio.
         </div>
       )}
 
@@ -142,6 +164,7 @@ export default async function ContentPage({
           workspaceSlug={workspaceSlug}
           initialItems={items}
           channels={channels}
+          brands={brands}
         />
       </div>
     </div>
