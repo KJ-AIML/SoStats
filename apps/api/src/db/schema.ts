@@ -145,6 +145,14 @@ export const workspaceApiKeys = pgTable(
       table.workspaceId,
       table.revokedAt,
     ),
+    workspaceApiKeyNameCheck: check(
+      'workspace_api_key_name_check',
+      sql`length(trim(${table.name})) between 1 and 120`,
+    ),
+    workspaceApiKeyScopesArrayCheck: check(
+      'workspace_api_key_scopes_array_check',
+      sql`jsonb_typeof(${table.scopes}) = 'array'`,
+    ),
   }),
 );
 
