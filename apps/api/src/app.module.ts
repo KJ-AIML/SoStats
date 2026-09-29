@@ -18,6 +18,7 @@ import { PublishingModule } from './modules/publishing/publishing.module.js';
 import { AutomationsModule } from './modules/automations/automations.module.js';
 import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 import { IntegrationsModule } from './modules/integrations/integrations.module.js';
+import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module.j
     AutomationsModule,
     AnalyticsModule,
     IntegrationsModule,
+    KnowledgeModule,
   ],
   controllers: [AppController],
   providers: [

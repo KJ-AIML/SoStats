@@ -1,33 +1,81 @@
-from fastapi import APIRouter
+import os
 
-from app.api.schemas import IngestRequest
-from app.rag.embedder import create_embeddings, parse_and_chunk
+from fastapi import APIRouter, HTTPException
 
-router = APIRouter(prefix="/v1/embeddings", tags=["Knowledge"])
+from app.api.schemas import (
+    KnowledgeChunkEmbedding,
+    KnowledgeProcessRequest,
+    KnowledgeProcessResponse,
+    KnowledgeQueryEmbeddingRequest,
+    KnowledgeQueryEmbeddingResponse,
+)
+from app.providers.factory import get_provider
+from app.rag.embedder import chunk_text, extract_text
+
+router = APIRouter(prefix="/v1/knowledge", tags=["Knowledge"])
 
 
-@router.post("/index")
-async def index_knowledge(request: IngestRequest):
-    """
-    Endpoint to ingest knowledge sources, chunk them, create embeddings,
-    and simulate storing them in a vector database.
-    """
-    results = []
+@router.post("/process", response_model=KnowledgeProcessResponse)
+async def process_knowledge(request: KnowledgeProcessRequest):
+    try:
+        text = extract_text(
+            media_type=request.media_type,
+            content=request.content,
+            content_base64=request.content_base64,
+        )
+        chunks = chunk_text(text)
+        if not chunks:
+            raise ValueError("Knowledge source did not contain extractable text")
 
-    for source in request.sources:
-        # Mocking the processing of the source content
-        chunks = parse_and_chunk(source.content, chunk_size=50)
-        embeddings = create_embeddings(chunks)
+        provider = get_provider()
+        embeddings = await provider.embed_texts(chunks)
+        model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+        dimensions = int(os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536"))
 
-        # In a real scenario, we would store `chunks` and `embeddings` in a vector DB here
-        results.append({
-            "source_type": source.source_type,
-            "chunks_processed": len(chunks),
-            "embeddings_created": len(embeddings)
-        })
+        return KnowledgeProcessResponse(
+            text_length=len(text),
+            chunk_count=len(chunks),
+            embedding_model=model,
+            dimensions=dimensions,
+            chunks=[
+                KnowledgeChunkEmbedding(
+                    index=index,
+                    content=chunk,
+                    embedding=embedding,
+                )
+                for index, (chunk, embedding) in enumerate(
+                    zip(chunks, embeddings, strict=True)
+                )
+            ],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Knowledge processing unavailable: {type(exc).__name__}",
+        ) from exc
 
-    return {
-        "status": "success",
-        "brand_id": request.brand_id,
-        "processed_sources": results
-    }
+
+@router.post("/embed-query", response_model=KnowledgeQueryEmbeddingResponse)
+async def embed_query(request: KnowledgeQueryEmbeddingRequest):
+    try:
+        provider = get_provider()
+        embeddings = await provider.embed_texts([request.query.strip()])
+        if len(embeddings) != 1:
+            raise RuntimeError("Query embedding was not returned")
+        return KnowledgeQueryEmbeddingResponse(
+            embedding_model=os.getenv(
+                "OPENAI_EMBEDDING_MODEL",
+                "text-embedding-3-small",
+            ),
+            dimensions=int(
+                os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536")
+            ),
+            embedding=embeddings[0],
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Knowledge query embedding unavailable: {type(exc).__name__}",
+        ) from exc

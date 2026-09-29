@@ -9,6 +9,7 @@ import {
   index,
   jsonb,
   boolean,
+  customType,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -244,6 +245,108 @@ export const assetTags = pgTable('asset_tags', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+const embedding1536 = customType<{
+  data: number[];
+  driverData: string;
+}>({
+  dataType() {
+    return 'vector(1536)';
+  },
+  toDriver(value) {
+    if (
+      !Array.isArray(value) ||
+      value.length !== 1536 ||
+      value.some((item) => typeof item !== 'number' || !Number.isFinite(item))
+    ) {
+      throw new Error('Embedding must contain exactly 1536 finite numbers');
+    }
+    return `[${value.join(',')}]`;
+  },
+  fromDriver(value) {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some((item) => typeof item !== 'number')
+    ) {
+      throw new Error('Stored embedding has an invalid vector value');
+    }
+    return parsed;
+  },
+});
+
+// knowledge_sources
+export const knowledgeSources = pgTable(
+  'knowledge_sources',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    brandId: integer('brand_id')
+      .notNull()
+      .references(() => brands.id, { onDelete: 'cascade' }),
+    sourceType: varchar('source_type', { length: 30 }).notNull(),
+    title: varchar('title', { length: 255 }).notNull(),
+    sourceUrl: varchar('source_url', { length: 2048 }),
+    sourceText: text('source_text'),
+    mimeType: varchar('mime_type', { length: 150 }),
+    contentHash: varchar('content_hash', { length: 64 }),
+    status: varchar('status', { length: 30 }).notNull().default('processing'),
+    embeddingModel: varchar('embedding_model', { length: 100 }),
+    chunkCount: integer('chunk_count').notNull().default(0),
+    metadata: jsonb('metadata')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    lastError: text('last_error'),
+    processedAt: timestamp('processed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    knowledgeSourceWorkspaceBrandIdx: index(
+      'knowledge_source_workspace_brand_idx',
+    ).on(table.workspaceId, table.brandId, table.status, table.updatedAt),
+    knowledgeSourceHashIdx: index('knowledge_source_hash_idx').on(
+      table.brandId,
+      table.contentHash,
+    ),
+  }),
+);
+
+// knowledge_chunks
+export const knowledgeChunks = pgTable(
+  'knowledge_chunks',
+  {
+    id: serial('id').primaryKey(),
+    sourceId: integer('source_id')
+      .notNull()
+      .references(() => knowledgeSources.id, { onDelete: 'cascade' }),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    brandId: integer('brand_id')
+      .notNull()
+      .references(() => brands.id, { onDelete: 'cascade' }),
+    chunkIndex: integer('chunk_index').notNull(),
+    content: text('content').notNull(),
+    embedding: embedding1536('embedding').notNull(),
+    metadata: jsonb('metadata')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    knowledgeChunkSourceIndexUnique: uniqueIndex(
+      'knowledge_chunk_source_index_unique',
+    ).on(table.sourceId, table.chunkIndex),
+    knowledgeChunkWorkspaceBrandIdx: index(
+      'knowledge_chunk_workspace_brand_idx',
+    ).on(table.workspaceId, table.brandId, table.sourceId),
+  }),
+);
+
 // campaigns
 export const campaigns = pgTable('campaigns', {
   id: serial('id').primaryKey(),
@@ -257,6 +360,10 @@ export const campaigns = pgTable('campaigns', {
   description: text('description'),
   goal: varchar('goal', { length: 255 }),
   status: varchar('status', { length: 50 }).notNull().default('draft'), // draft, active, completed, archived
+  generationContext: jsonb('generation_context')
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   startDate: timestamp('start_date'),
   endDate: timestamp('end_date'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -713,6 +820,8 @@ export const workspacesRelations = relations(workspaces, ({ many }) => ({
   aiInsights: many(aiInsights),
   integrations: many(integrations),
   webhookEndpoints: many(webhookEndpoints),
+  knowledgeSources: many(knowledgeSources),
+  knowledgeChunks: many(knowledgeChunks),
 }));
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -747,6 +856,8 @@ export const brandsRelations = relations(brands, ({ one, many }) => ({
   assets: many(assets),
   campaigns: many(campaigns),
   aiInsights: many(aiInsights),
+  knowledgeSources: many(knowledgeSources),
+  knowledgeChunks: many(knowledgeChunks),
 }));
 
 export const brandVoiceProfilesRelations = relations(
@@ -786,6 +897,39 @@ export const brandRulesRelations = relations(brandRules, ({ one }) => ({
     references: [brands.id],
   }),
 }));
+
+export const knowledgeSourcesRelations = relations(
+  knowledgeSources,
+  ({ one, many }) => ({
+    workspace: one(workspaces, {
+      fields: [knowledgeSources.workspaceId],
+      references: [workspaces.id],
+    }),
+    brand: one(brands, {
+      fields: [knowledgeSources.brandId],
+      references: [brands.id],
+    }),
+    chunks: many(knowledgeChunks),
+  }),
+);
+
+export const knowledgeChunksRelations = relations(
+  knowledgeChunks,
+  ({ one }) => ({
+    source: one(knowledgeSources, {
+      fields: [knowledgeChunks.sourceId],
+      references: [knowledgeSources.id],
+    }),
+    workspace: one(workspaces, {
+      fields: [knowledgeChunks.workspaceId],
+      references: [workspaces.id],
+    }),
+    brand: one(brands, {
+      fields: [knowledgeChunks.brandId],
+      references: [brands.id],
+    }),
+  }),
+);
 
 export const socialAccountsRelations = relations(
   socialAccounts,

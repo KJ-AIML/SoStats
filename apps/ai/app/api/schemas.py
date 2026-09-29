@@ -3,19 +3,6 @@ from typing import Literal
 from pydantic import BaseModel, Field  # type: ignore
 
 
-class BrandProfile(BaseModel):
-    voice: str = Field(..., description="The tone and voice of the brand (e.g., professional, friendly)")
-    audience: str = Field(..., description="Target audience description")
-    products: list[str] = Field(default_factory=list, description="List of key products or services")
-    pillars: list[str] = Field(default_factory=list, description="Content pillars or core values")
-
-
-class BrandContextResponse(BaseModel):
-    brand_id: str = Field(..., description="Unique identifier for the brand")
-    profile: BrandProfile
-    assembled_context: str = Field(..., description="The fully assembled context string for LLM injection")
-
-
 class CampaignBrief(BaseModel):
     goal: str = Field(..., description="Campaign goal or objective")
     audience: str = Field(..., description="Target audience for the campaign")
@@ -112,12 +99,31 @@ class AIInsightResponse(BaseModel):
     summary: str = Field(..., description="Overall summary of the evidence-backed insights")
 
 
-class KnowledgeSource(BaseModel):
-    source_type: str = Field(..., description="Type of source (e.g., url, document, text)")
-    content: str = Field(..., description="The actual content or URL")
-    metadata: dict = Field(default_factory=dict, description="Optional metadata")
+class KnowledgeProcessRequest(BaseModel):
+    media_type: str
+    content: str | None = None
+    content_base64: str | None = None
 
 
-class IngestRequest(BaseModel):
-    sources: list[KnowledgeSource]
-    brand_id: str | None = Field(None, description="Optional brand ID to associate with the knowledge")
+class KnowledgeChunkEmbedding(BaseModel):
+    index: int
+    content: str
+    embedding: list[float]
+
+
+class KnowledgeProcessResponse(BaseModel):
+    text_length: int
+    chunk_count: int
+    embedding_model: str
+    dimensions: int
+    chunks: list[KnowledgeChunkEmbedding]
+
+
+class KnowledgeQueryEmbeddingRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=4000)
+
+
+class KnowledgeQueryEmbeddingResponse(BaseModel):
+    embedding_model: str
+    dimensions: int
+    embedding: list[float]

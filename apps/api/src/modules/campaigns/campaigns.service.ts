@@ -10,6 +10,7 @@ import * as schema from '../../db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { CreateCampaignDto, GenerateCampaignDto } from './campaigns.dto.js';
 import { BrandContextService } from '../brands/brand-context.service.js';
+import { KnowledgeService } from '../knowledge/knowledge.service.js';
 
 interface AiCampaignPlan {
   title: string;
@@ -29,6 +30,7 @@ export class CampaignsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly brandContext: BrandContextService,
+    private readonly knowledge: KnowledgeService,
   ) {}
 
   findAll(workspaceId: number) {
@@ -102,13 +104,46 @@ export class CampaignsService {
     workspaceId: number,
     campaign: Awaited<ReturnType<CampaignsService['findOne']>>,
     data: GenerateCampaignDto,
-  ): Promise<AiCampaignPlan> {
+  ): Promise<{
+    plan: AiCampaignPlan;
+    knowledgeEvidence: Array<{
+      chunkId: number;
+      sourceId: number;
+      sourceTitle: string;
+      sourceUrl: string | null;
+      content: string;
+      similarity: number;
+    }>;
+  }> {
     const baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
     const brand = await this.brandContext.get(workspaceId, campaign.brandId);
+    const retrievalQuery = [
+      campaign.goal,
+      campaign.name,
+      campaign.description,
+      data.topic,
+      data.instructions,
+    ]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .join('\n')
+      .slice(0, 4000);
+    const knowledgeEvidence =
+      campaign.brandId && retrievalQuery
+        ? await this.knowledge.search(workspaceId, {
+            brandId: campaign.brandId,
+            query: retrievalQuery,
+            limit: 6,
+          })
+        : [];
+
     const promptContext = this.brandContext.serialize(brand, {
       campaignDescription: campaign.description,
+      knowledgeEvidence: knowledgeEvidence.map((item) => ({
+        source: item.sourceTitle,
+        sourceUrl: item.sourceUrl,
+        similarity: Math.round(item.similarity * 1000) / 1000,
+        evidence: item.content,
+      })),
     });
 
     const audience =
@@ -117,6 +152,8 @@ export class CampaignsService {
       'Existing brand audience';
     const tone =
       brand?.voiceProfiles[0]?.tone || 'Use the configured brand voice';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
 
     try {
       const response = await fetch(baseUrl + '/v1/campaigns/plan', {
@@ -138,7 +175,10 @@ export class CampaignsService {
         );
       }
 
-      return (await response.json()) as AiCampaignPlan;
+      return {
+        plan: (await response.json()) as AiCampaignPlan,
+        knowledgeEvidence,
+      };
     } catch (error) {
       if (error instanceof BadGatewayException) throw error;
       throw new BadGatewayException('AI campaign planning service unavailable');
@@ -154,7 +194,11 @@ export class CampaignsService {
     options: { replaceExistingContent?: boolean } = {},
   ) {
     const campaign = await this.findOne(workspaceId, id);
-    const plan = await this.requestPlan(workspaceId, campaign, data);
+    const { plan, knowledgeEvidence } = await this.requestPlan(
+      workspaceId,
+      campaign,
+      data,
+    );
 
     await this.db.transaction(async (tx) => {
       await tx
@@ -211,6 +255,15 @@ export class CampaignsService {
         .set({
           description: campaign.description || plan.objective,
           status: 'active',
+          generationContext: {
+            knowledgeEvidence: knowledgeEvidence.map((item) => ({
+              chunkId: item.chunkId,
+              sourceId: item.sourceId,
+              sourceTitle: item.sourceTitle,
+              sourceUrl: item.sourceUrl,
+              similarity: Math.round(item.similarity * 1000) / 1000,
+            })),
+          },
           updatedAt: new Date(),
         })
         .where(

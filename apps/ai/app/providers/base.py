@@ -13,3 +13,10 @@ class StructuredGenerationProvider(ABC):
         schema: dict[str, Any],
     ) -> dict[str, Any]:
         raise NotImplementedError
+
+    @abstractmethod
+    async def embed_texts(
+        self,
+        texts: list[str],
+    ) -> list[list[float]]:
+        raise NotImplementedError
