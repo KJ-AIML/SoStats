@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -30,7 +31,7 @@ export class KnowledgeController {
   ) {
     const parsed = brandId ? Number.parseInt(brandId, 10) : undefined;
     if (brandId && (!Number.isInteger(parsed) || !parsed || parsed <= 0)) {
-      return [];
+      throw new BadRequestException('brandId must be a positive integer');
     }
     return this.knowledge.findAll(workspaceId, parsed);
   }

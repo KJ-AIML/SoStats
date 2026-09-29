@@ -64,15 +64,34 @@ export class KnowledgeService {
   ) {}
 
   async findAll(workspaceId: number, brandId?: number) {
-    return this.db.query.knowledgeSources.findMany({
-      where: brandId
-        ? and(
-            eq(schema.knowledgeSources.workspaceId, workspaceId),
-            eq(schema.knowledgeSources.brandId, brandId),
-          )
-        : eq(schema.knowledgeSources.workspaceId, workspaceId),
-      orderBy: (fields, { desc }) => [desc(fields.updatedAt)],
-    });
+    return this.db
+      .select({
+        id: schema.knowledgeSources.id,
+        workspaceId: schema.knowledgeSources.workspaceId,
+        brandId: schema.knowledgeSources.brandId,
+        sourceType: schema.knowledgeSources.sourceType,
+        title: schema.knowledgeSources.title,
+        sourceUrl: schema.knowledgeSources.sourceUrl,
+        mimeType: schema.knowledgeSources.mimeType,
+        status: schema.knowledgeSources.status,
+        embeddingModel: schema.knowledgeSources.embeddingModel,
+        chunkCount: schema.knowledgeSources.chunkCount,
+        metadata: schema.knowledgeSources.metadata,
+        lastError: schema.knowledgeSources.lastError,
+        processedAt: schema.knowledgeSources.processedAt,
+        createdAt: schema.knowledgeSources.createdAt,
+        updatedAt: schema.knowledgeSources.updatedAt,
+      })
+      .from(schema.knowledgeSources)
+      .where(
+        brandId
+          ? and(
+              eq(schema.knowledgeSources.workspaceId, workspaceId),
+              eq(schema.knowledgeSources.brandId, brandId),
+            )
+          : eq(schema.knowledgeSources.workspaceId, workspaceId),
+      )
+      .orderBy(sql`${schema.knowledgeSources.updatedAt} desc`);
   }
 
   async create(workspaceId: number, dto: CreateKnowledgeSourceDto) {
@@ -203,12 +222,32 @@ export class KnowledgeService {
   }
 
   async findOne(workspaceId: number, sourceId: number) {
-    const source = await this.db.query.knowledgeSources.findFirst({
-      where: and(
-        eq(schema.knowledgeSources.id, sourceId),
-        eq(schema.knowledgeSources.workspaceId, workspaceId),
-      ),
-    });
+    const [source] = await this.db
+      .select({
+        id: schema.knowledgeSources.id,
+        workspaceId: schema.knowledgeSources.workspaceId,
+        brandId: schema.knowledgeSources.brandId,
+        sourceType: schema.knowledgeSources.sourceType,
+        title: schema.knowledgeSources.title,
+        sourceUrl: schema.knowledgeSources.sourceUrl,
+        mimeType: schema.knowledgeSources.mimeType,
+        status: schema.knowledgeSources.status,
+        embeddingModel: schema.knowledgeSources.embeddingModel,
+        chunkCount: schema.knowledgeSources.chunkCount,
+        metadata: schema.knowledgeSources.metadata,
+        lastError: schema.knowledgeSources.lastError,
+        processedAt: schema.knowledgeSources.processedAt,
+        createdAt: schema.knowledgeSources.createdAt,
+        updatedAt: schema.knowledgeSources.updatedAt,
+      })
+      .from(schema.knowledgeSources)
+      .where(
+        and(
+          eq(schema.knowledgeSources.id, sourceId),
+          eq(schema.knowledgeSources.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
     if (!source) throw new NotFoundException('Knowledge source not found');
     return source;
   }
@@ -241,6 +280,16 @@ export class KnowledgeService {
       ),
     });
     if (!brand) throw new NotFoundException('Brand not found');
+
+    const readySource = await this.db.query.knowledgeSources.findFirst({
+      where: and(
+        eq(schema.knowledgeSources.workspaceId, workspaceId),
+        eq(schema.knowledgeSources.brandId, input.brandId),
+        eq(schema.knowledgeSources.status, 'ready'),
+      ),
+      columns: { id: true },
+    });
+    if (!readySource) return [];
 
     const embedded = await this.embedQuery(query.slice(0, 4000));
     const vector = assertEmbedding(embedded.embedding);
@@ -327,9 +376,12 @@ export class KnowledgeService {
       );
     }
 
+    const indexes = new Set<number>();
     for (const chunk of payload.chunks) {
       if (
         !Number.isInteger(chunk.index) ||
+        chunk.index < 0 ||
+        indexes.has(chunk.index) ||
         typeof chunk.content !== 'string' ||
         !chunk.content.trim()
       ) {
@@ -337,6 +389,7 @@ export class KnowledgeService {
           'AI knowledge processing returned an invalid chunk',
         );
       }
+      indexes.add(chunk.index);
       assertEmbedding(chunk.embedding);
     }
 
