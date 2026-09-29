@@ -14,6 +14,7 @@ import {
   UpdateScheduleDto,
 } from './scheduling.dto.js';
 import { ProviderRegistry } from '../channels/ProviderRegistry.js';
+import { MediaService } from '../media/media.service.js';
 
 function normalizeProvider(value?: string | null) {
   const normalized = (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -26,6 +27,7 @@ export class SchedulingService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly providerRegistry: ProviderRegistry,
+    private readonly mediaService: MediaService,
   ) {}
 
   getCalendar(workspaceId: number, query: GetCalendarDto) {
@@ -123,6 +125,42 @@ export class SchedulingService {
       ) {
         throw new BadRequestException(
           'Selected variant does not match the publishing channel',
+        );
+      }
+    }
+
+    if (
+      provider.capabilities?.requiresMedia ||
+      provider.capabilities?.mediaMimeTypes?.length
+    ) {
+      const media = await this.mediaService.listReadyContentMedia(
+        workspaceId,
+        data.contentItemId,
+        data.variantId,
+      );
+      const accepted = provider.capabilities.mediaMimeTypes || [];
+
+      if (provider.capabilities.requiresMedia && media.length === 0) {
+        throw new BadRequestException(
+          'This channel requires a ready media attachment before scheduling',
+        );
+      }
+
+      if (
+        provider.capabilities.maxMediaItems &&
+        media.length > provider.capabilities.maxMediaItems
+      ) {
+        throw new BadRequestException(
+          `This channel supports at most ${provider.capabilities.maxMediaItems} media attachment(s) per publication`,
+        );
+      }
+
+      const unsupported = media.find(
+        (asset) => accepted.length > 0 && !accepted.includes(asset.mimeType),
+      );
+      if (unsupported) {
+        throw new BadRequestException(
+          `This channel does not support attached media type ${unsupported.mimeType}. Accepted: ${accepted.join(', ')}`,
         );
       }
     }
