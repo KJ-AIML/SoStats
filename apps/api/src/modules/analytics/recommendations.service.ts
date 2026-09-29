@@ -9,6 +9,7 @@ import {
 import { randomUUID } from 'crypto';
 import {
   and,
+  asc,
   eq,
   gte,
   inArray,
