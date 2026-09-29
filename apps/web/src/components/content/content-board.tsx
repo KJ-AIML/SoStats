@@ -62,6 +62,9 @@ type ScheduleChannel = {
   id: number;
   provider: string;
   accountName?: string | null;
+  requiresMedia?: boolean;
+  mediaMimeTypes?: string[];
+  maxMediaItems?: number;
 };
 
 type BrandOption = {
@@ -1396,6 +1399,12 @@ export function ContentBoard({
               />
             </div>
 
+            {selectedChannelRequirement(channels, selectedChannelId) && (
+              <p className="rounded-xl bg-blue-50 p-3 text-[9px] leading-4 text-blue-800">
+                {selectedChannelRequirement(channels, selectedChannelId)}
+              </p>
+            )}
+
             {!itemHasCompatibleVariant(
               items,
               scheduleCandidate?.itemId,
@@ -1448,6 +1457,23 @@ function channelProvider(
 ) {
   return channels.find((entry) => entry.id === Number(selectedChannelId))
     ?.provider;
+}
+
+function selectedChannelRequirement(
+  channels: ScheduleChannel[],
+  selectedChannelId: string,
+) {
+  const channel = channels.find(
+    (entry) => entry.id === Number(selectedChannelId),
+  );
+  if (!channel?.requiresMedia) return null;
+
+  const types = channel.mediaMimeTypes?.join(", ");
+  const max = channel.maxMediaItems
+    ? ` Up to ${channel.maxMediaItems} attachment(s).`
+    : "";
+
+  return `${providerLabel(channel.provider)} requires ready media attached from the Media workspace before scheduling.${types ? ` Accepted: ${types}.` : ""}${max}`;
 }
 
 function itemHasCompatibleVariant(
