@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, gt, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
@@ -159,21 +159,7 @@ export class PublicationLedger {
   ): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
-      await tx
-        .update(pj)
-        .set({ status: 'completed', completedAt: now, updatedAt: now })
-        .where(
-          and(
-            eq(pj.id, claim.attemptId),
-            inArray(pj.status, ['processing', 'unknown']),
-          ),
-        );
-      await tx.insert(pr).values({
-        publicationJobId: claim.attemptId,
-        platformPostId: result.postId,
-        platformPostUrl: result.url ?? null,
-      });
-
+      // Lock order everywhere: publication row first, then the attempt row.
       const [published] = await tx
         .update(sp)
         .set({ status: 'published', leaseExpiresAt: null, updatedAt: now })
@@ -188,7 +174,25 @@ export class PublicationLedger {
           contentItemId: sp.contentItemId,
           variantId: sp.variantId,
         });
+
+      await tx.insert(pr).values({
+        publicationJobId: claim.attemptId,
+        platformPostId: result.postId,
+        platformPostUrl: result.url ?? null,
+      });
+      // Only the owning attempt may complete (spec 3.3); a non-owner keeps its
+      // status and only leaves the result row for operators.
       if (!published) return false;
+
+      await tx
+        .update(pj)
+        .set({ status: 'completed', completedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(pj.id, claim.attemptId),
+            inArray(pj.status, ['processing', 'unknown']),
+          ),
+        );
 
       if (published.variantId) {
         await tx
@@ -224,12 +228,6 @@ export class PublicationLedger {
   ): Promise<FailureRecord> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
-      await tx.insert(pr).values({
-        publicationJobId: claim.attemptId,
-        errorType: errorClass,
-        errorMessage: message.slice(0, 1500),
-      });
-
       const [current] = await tx
         .select({
           status: sp.status,
@@ -239,6 +237,12 @@ export class PublicationLedger {
         .from(sp)
         .where(eq(sp.id, claim.publicationId))
         .for('update');
+      await tx.insert(pr).values({
+        publicationJobId: claim.attemptId,
+        errorType: errorClass,
+        errorMessage: message.slice(0, 1500),
+      });
+
       if (
         !current ||
         current.status !== 'publishing' ||
@@ -307,10 +311,14 @@ export class PublicationLedger {
   /** Spec §5.1. Each row is re-checked under its lock before any write (I4). */
   async sweepExpiredLeases(limit = 50): Promise<SweepDecision[]> {
     const candidates = await this.db
-      .select({ id: sp.id })
+      .select({ id: sp.id, activeAttemptId: sp.activeAttemptId })
       .from(sp)
       .where(
-        and(eq(sp.status, 'publishing'), lte(sp.leaseExpiresAt, new Date())),
+        and(
+          eq(sp.status, 'publishing'),
+          isNotNull(sp.activeAttemptId),
+          lte(sp.leaseExpiresAt, new Date()),
+        ),
       )
       .limit(limit);
 
@@ -330,6 +338,7 @@ export class PublicationLedger {
               and(
                 eq(sp.id, candidate.id),
                 eq(sp.status, 'publishing'),
+                eq(sp.activeAttemptId, candidate.activeAttemptId!),
                 lte(sp.leaseExpiresAt, now),
               ),
             )
@@ -390,6 +399,13 @@ export class PublicationLedger {
           }
 
           if (row.attemptCount >= this.config.maxAttempts) {
+            if (attempt) {
+              await tx.insert(pr).values({
+                publicationJobId: attempt.id,
+                errorType: 'retry_exhausted',
+                errorMessage: `Stopped after ${row.attemptCount} attempt(s)`,
+              });
+            }
             await tx
               .update(sp)
               .set({ status: 'failed', leaseExpiresAt: null, updatedAt: now })

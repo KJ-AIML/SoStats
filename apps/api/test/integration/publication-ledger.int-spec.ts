@@ -37,6 +37,12 @@ describe('PublicationLedger', () => {
     const [row] = await database.db.select().from(pj).where(eq(pj.id, id));
     return row;
   }
+  async function results(attemptId: number) {
+    return database.db
+      .select()
+      .from(schema.publicationResults)
+      .where(eq(schema.publicationResults.publicationJobId, attemptId));
+  }
   async function expireLease(id: number) {
     await database.db
       .update(sp)
@@ -168,6 +174,9 @@ describe('PublicationLedger', () => {
     await expireLease(publication.id);
     await ledger.sweepExpiredLeases();
     expect((await reload(publication.id)).status).toBe('failed');
+    expect(
+      (await results(second.attemptId)).map((row) => row.errorType),
+    ).toContain('retry_exhausted');
   });
 
   it('moves an expired claim with a request marker to unknown and never re-arms it', async () => {
@@ -218,6 +227,8 @@ describe('PublicationLedger', () => {
       status: 'publishing',
       activeAttemptId: current.attemptId,
     });
+    expect((await attempt(stale.attemptId)).status).toBe('abandoned');
+    expect((await attempt(current.attemptId)).status).toBe('processing');
   });
 
   it('does not overwrite a publication that became published while the sweeper waited', async () => {
@@ -279,5 +290,197 @@ describe('PublicationLedger', () => {
       status: 'unknown',
       activeAttemptId: claim.attemptId,
     });
+    expect((await attempt(claim.attemptId)).status).toBe('unknown');
+  });
+
+  it('counts the retry cap by attempt_count, not by dispatch generation', async () => {
+    const publication = await createPublication(
+      database.db,
+      await seedChannel(database.sql),
+      { dispatchGeneration: 9 },
+    );
+    const claim = (await claimOf(publication))!;
+    expect(claim.attemptCount).toBe(1);
+    await expect(
+      ledger.recordFailure(claim, 'retry', 'rate_limit', 'HTTP 429'),
+    ).resolves.toBe('retry_scheduled');
+    expect((await reload(publication.id)).dispatchGeneration).toBe(10);
+  });
+
+  it('records a terminal failure from the owner', async () => {
+    const claim = (await claimOf(await scheduled()))!;
+    await expect(
+      ledger.recordFailure(claim, 'terminal', 'invalid_request', 'bad media'),
+    ).resolves.toBe('failed');
+    expect(await reload(claim.publicationId)).toMatchObject({
+      status: 'failed',
+      leaseExpiresAt: null,
+    });
+    expect(await attempt(claim.attemptId)).toMatchObject({
+      status: 'failed',
+      errorClass: 'invalid_request',
+    });
+    expect(await results(claim.attemptId)).toEqual([
+      expect.objectContaining({
+        errorType: 'invalid_request',
+        errorMessage: 'bad media',
+      }),
+    ]);
+  });
+
+  it('publishes from publishing and rolls up the variant and content item', async () => {
+    const seeded = await seedChannel(database.sql);
+    const [variant] = await database.db
+      .insert(schema.contentVariants)
+      .values({ contentItemId: seeded.contentItemId, content: 'Hello' })
+      .returning();
+    const publication = await createPublication(database.db, seeded, {
+      variantId: variant.id,
+    });
+    const claim = (await claimOf(publication))!;
+
+    await expect(
+      ledger.recordSuccess(claim, { postId: 'p-1', url: 'https://x.test/p-1' }),
+    ).resolves.toBe(true);
+
+    expect(await reload(publication.id)).toMatchObject({
+      status: 'published',
+      leaseExpiresAt: null,
+    });
+    expect((await attempt(claim.attemptId)).status).toBe('completed');
+    expect(await results(claim.attemptId)).toEqual([
+      expect.objectContaining({
+        platformPostId: 'p-1',
+        platformPostUrl: 'https://x.test/p-1',
+      }),
+    ]);
+    const [variantRow] = await database.db
+      .select()
+      .from(schema.contentVariants)
+      .where(eq(schema.contentVariants.id, variant.id));
+    expect(variantRow.status).toBe('published');
+    expect(variantRow.publishedAt).toBeInstanceOf(Date);
+    const [item] = await database.db
+      .select()
+      .from(schema.contentItems)
+      .where(eq(schema.contentItems.id, seeded.contentItemId));
+    expect(item.status).toBe('published');
+  });
+
+  it('does not publish the content item while a sibling publication is still scheduled', async () => {
+    const seeded = await seedChannel(database.sql);
+    const publication = await createPublication(database.db, seeded);
+    await createPublication(database.db, seeded, {
+      scheduledAt: new Date(Date.now() + 3_600_000),
+    });
+    const claim = (await claimOf(publication))!;
+
+    await expect(ledger.recordSuccess(claim, { postId: 'p-2' })).resolves.toBe(
+      true,
+    );
+
+    const [item] = await database.db
+      .select()
+      .from(schema.contentItems)
+      .where(eq(schema.contentItems.id, seeded.contentItemId));
+    expect(item.status).not.toBe('published');
+  });
+
+  it('does not complete an unknown attempt that no longer owns the publication', async () => {
+    const claim = (await claimOf(await scheduled()))!;
+    await ledger.markSideEffect(claim, { operationType: 'x_create_post' });
+    await expireLease(claim.publicationId);
+    await ledger.sweepExpiredLeases();
+    const [other] = await database.db
+      .insert(pj)
+      .values({
+        scheduledPublicationId: claim.publicationId,
+        status: 'processing',
+        attemptNumber: 2,
+      })
+      .returning();
+    await database.db
+      .update(sp)
+      .set({ activeAttemptId: other.id })
+      .where(eq(sp.id, claim.publicationId));
+
+    await expect(
+      ledger.recordSuccess(claim, { postId: 'orphan' }),
+    ).resolves.toBe(false);
+
+    expect((await attempt(claim.attemptId)).status).toBe('unknown');
+    expect(await results(claim.attemptId)).toContainEqual(
+      expect.objectContaining({ platformPostId: 'orphan' }),
+    );
+    expect(await reload(claim.publicationId)).toMatchObject({
+      status: 'unknown',
+      activeAttemptId: other.id,
+    });
+  });
+
+  it('takes the publication lock before the attempt lock in recordSuccess', async () => {
+    const claim = (await claimOf(await scheduled()))!;
+    let success: Promise<boolean> = Promise.resolve(false);
+
+    await database.sql.begin(async (tx) => {
+      await tx`select id from scheduled_publications where id = ${claim.publicationId} for update`;
+      success = ledger.recordSuccess(claim, { postId: 'lock-order' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // If recordSuccess had already locked the attempt row this would fail.
+      await database.sql.begin(async (probe) => {
+        await probe`select id from publication_jobs where id = ${claim.attemptId} for update nowait`;
+      });
+    });
+
+    await expect(success).resolves.toBe(true);
+  });
+
+  it('survives a sweeper and a late success crossing on an expired marked lease', async () => {
+    const claim = (await claimOf(await scheduled()))!;
+    await ledger.markSideEffect(claim, { operationType: 'x_create_post' });
+    await expireLease(claim.publicationId);
+    let sweep: Promise<unknown> = Promise.resolve();
+    let success: Promise<boolean> = Promise.resolve(false);
+
+    await database.sql.begin(async (tx) => {
+      await tx`select id from publication_jobs where id = ${claim.attemptId} for update`;
+      // The sweeper locks the publication, then waits for the attempt row.
+      sweep = ledger.sweepExpiredLeases();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // The late success then queues behind the sweeper's publication lock.
+      success = ledger.recordSuccess(claim, { postId: 'late' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    await sweep;
+    await expect(success).resolves.toBe(true);
+    expect(await reload(claim.publicationId)).toMatchObject({
+      status: 'published',
+      activeAttemptId: claim.attemptId,
+    });
+    expect((await attempt(claim.attemptId)).status).toBe('completed');
+  });
+
+  it('skips a sweep when the marker renewed the lease while the sweeper waited for the lock', async () => {
+    const claim = (await claimOf(await scheduled()))!;
+    await expireLease(claim.publicationId);
+    let sweep: Promise<{ publicationId: number }[]> = Promise.resolve([]);
+
+    await database.sql.begin(async (tx) => {
+      await tx`select id from scheduled_publications where id = ${claim.publicationId} for update`;
+      sweep = ledger.sweepExpiredLeases();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const renewed = new Date(Date.now() + 60_000).toISOString();
+      const started = new Date().toISOString();
+      await tx`update scheduled_publications set lease_expires_at = ${renewed} where id = ${claim.publicationId}`;
+      await tx`update publication_jobs set provider_request_started_at = ${started} where id = ${claim.attemptId}`;
+    });
+
+    const decisions = await sweep;
+    expect(
+      decisions.filter((row) => row.publicationId === claim.publicationId),
+    ).toEqual([]);
+    expect((await reload(claim.publicationId)).status).toBe('publishing');
+    expect((await attempt(claim.attemptId)).status).toBe('processing');
   });
 });
