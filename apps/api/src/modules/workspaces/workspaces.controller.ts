@@ -57,7 +57,74 @@ export class WorkspacesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.workspacesService.settings(id, user.id);
+    return this.workspacesService.settings(
+      id,
+      user.id,
+      user.session?.id || null,
+    );
+  }
+
+  @Delete(':id/sessions/:sessionId')
+  async revokeSession(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const result = await this.workspacesService.revokeOwnSession(
+      id,
+      user.id,
+      sessionId,
+      user.session?.id || null,
+    );
+
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'session.revoked',
+      targetType: 'auth_session',
+      targetId: sessionId,
+      metadata: {
+        currentSessionId: user.session?.id || null,
+      },
+    });
+
+    return result;
+  }
+
+  @Put(':id/notification-preferences')
+  async updateNotificationPreferences(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      securityEvents?: unknown;
+      publishingFailures?: unknown;
+      automationFailures?: unknown;
+      weeklyDigest?: unknown;
+    },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const result =
+      await this.workspacesService.updateOwnNotificationPreferences(
+        id,
+        user.id,
+        body,
+      );
+
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'notification.preferences_updated',
+      targetType: 'workspace_notification_preferences',
+      targetId: user.id,
+      metadata: {
+        securityEvents: result.securityEvents,
+        publishingFailures: result.publishingFailures,
+        automationFailures: result.automationFailures,
+        weeklyDigest: result.weeklyDigest,
+      },
+    });
+
+    return result;
   }
 
   @Put(':id/settings')
