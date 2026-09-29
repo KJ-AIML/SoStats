@@ -179,23 +179,21 @@ export class BrandsService {
     }));
 
     await this.db.transaction(async (tx) => {
-      await Promise.all([
-        tx
-          .delete(schema.brandVoiceProfiles)
-          .where(eq(schema.brandVoiceProfiles.brandId, id)),
-        tx
-          .delete(schema.brandAudiences)
-          .where(eq(schema.brandAudiences.brandId, id)),
-        tx
-          .delete(schema.brandProducts)
-          .where(eq(schema.brandProducts.brandId, id)),
-        tx
-          .delete(schema.contentPillars)
-          .where(eq(schema.contentPillars.brandId, id)),
-        tx
-          .delete(schema.brandRules)
-          .where(eq(schema.brandRules.brandId, id)),
-      ]);
+      await tx
+        .delete(schema.brandVoiceProfiles)
+        .where(eq(schema.brandVoiceProfiles.brandId, id));
+      await tx
+        .delete(schema.brandAudiences)
+        .where(eq(schema.brandAudiences.brandId, id));
+      await tx
+        .delete(schema.brandProducts)
+        .where(eq(schema.brandProducts.brandId, id));
+      await tx
+        .delete(schema.contentPillars)
+        .where(eq(schema.contentPillars.brandId, id));
+      await tx
+        .delete(schema.brandRules)
+        .where(eq(schema.brandRules.brandId, id));
 
       if (voiceProfiles.length) {
         await tx.insert(schema.brandVoiceProfiles).values(voiceProfiles);
