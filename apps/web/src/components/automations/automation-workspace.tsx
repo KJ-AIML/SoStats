@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   AlertCircle,
   Check,
   CheckCircle2,
   Clock3,
   Copy,
+  Eye,
   KeyRound,
   LoaderCircle,
+  Pause,
   Play,
   RefreshCw,
   Rocket,
@@ -19,9 +22,12 @@ import { Button } from "@/components/ui/button";
 import {
   defaultWorkflowDefinition,
   WorkflowCanvas,
+  type WorkflowBrand,
   type WorkflowChannel,
   type WorkflowDefinitionState,
+  type WorkflowProvider,
 } from "./workflow-canvas";
+import { AutomationRunInspector } from "./automation-run-inspector";
 import type {
   AutomationRecord,
   AutomationRunRecord,
@@ -31,6 +37,12 @@ function latestVersion(automation?: AutomationRecord) {
   return [...(automation?.versions || [])].sort(
     (a, b) => b.versionNumber - a.versionNumber,
   )[0];
+}
+
+function latestPublishedVersion(automation?: AutomationRecord) {
+  return [...(automation?.versions || [])]
+    .filter((version) => Boolean(version.publishedAt))
+    .sort((a, b) => b.versionNumber - a.versionNumber)[0];
 }
 
 function triggerTypeForDefinition(
@@ -67,10 +79,14 @@ export function AutomationWorkspace({
   workspaceSlug,
   initialAutomations,
   channels,
+  providers,
+  brands,
 }: {
   workspaceSlug: string;
   initialAutomations: AutomationRecord[];
   channels: WorkflowChannel[];
+  providers: WorkflowProvider[];
+  brands: WorkflowBrand[];
 }) {
   const [automations, setAutomations] = useState(initialAutomations);
   const [selectedId, setSelectedId] = useState<number | null>(
@@ -80,10 +96,13 @@ export function AutomationWorkspace({
   const initialVersion = latestVersion(selected);
 
   const [name, setName] = useState(selected?.name || "Weekly AI Content Plan");
+  const [description, setDescription] = useState(
+    selected?.description || "Generate, review and schedule content with the versioned SoStats runtime.",
+  );
   const [definition, setDefinition] = useState<WorkflowDefinitionState>(
     () =>
       (initialVersion?.workflowDefinition as WorkflowDefinitionState) ||
-      defaultWorkflowDefinition(channels),
+      defaultWorkflowDefinition(channels, providers, brands),
   );
   const [runs, setRuns] = useState<AutomationRunRecord[]>(
     selected?.runs || [],
@@ -92,9 +111,27 @@ export function AutomationWorkspace({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [webhookSecret, setWebhookSecret] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 
   const selectedVersion = useMemo(() => latestVersion(selected), [selected]);
+  const publishedVersion = useMemo(
+    () => latestPublishedVersion(selected),
+    [selected],
+  );
   const selectedTrigger = selected?.triggers?.[0];
+  const inspectedRun = runs.find((run) => run.id === selectedRunId) || null;
+
+  const workspaceRunCounts = useMemo(() => {
+    const allRuns = automations.flatMap((automation) => automation.runs || []);
+    return {
+      active: automations.filter((automation) => automation.status === "active").length,
+      waiting: allRuns.filter((run) => run.status === "waiting_approval").length,
+      failed: allRuns.filter((run) => run.status === "failed").length,
+      triggerErrors: automations.filter((automation) =>
+        automation.triggers?.some((trigger) => trigger.status === "error"),
+      ).length,
+    };
+  }, [automations]);
 
   const loadAutomations = useCallback(async () => {
     try {
@@ -118,6 +155,13 @@ export function AutomationWorkspace({
       if (!response.ok) return;
       const payload = (await response.json()) as AutomationRunRecord[];
       setRuns(payload);
+      setAutomations((current) =>
+        current.map((automation) =>
+          automation.id === selectedId
+            ? { ...automation, runs: payload.slice(0, 10) }
+            : automation,
+        ),
+      );
     } catch {
       // Polling is best-effort; page actions surface explicit errors.
     }
@@ -145,7 +189,7 @@ export function AutomationWorkspace({
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               name,
-              description: "Created from the SoStats automation builder",
+              description,
               triggerType: triggerTypeForDefinition(definition),
               workflowDefinition: definition,
             }),
@@ -166,7 +210,7 @@ export function AutomationWorkspace({
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name }),
+          body: JSON.stringify({ name, description }),
         },
       );
       if (!metadataResponse.ok) {
@@ -196,6 +240,7 @@ export function AutomationWorkspace({
             ? {
                 ...automation,
                 name,
+                description,
                 versions: [
                   ...(automation.versions || []),
                   {
@@ -275,6 +320,54 @@ export function AutomationWorkspace({
     } catch (actionError) {
       setError(
         actionError instanceof Error ? actionError.message : "Unable to publish workflow",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const pauseAutomation = async () => {
+    if (!selectedId || selected?.status !== "active") return;
+
+    setBusy("pause");
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/automations/${selectedId}/pause`,
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as {
+        status?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to pause automation");
+      }
+
+      setAutomations((current) =>
+        current.map((automation) =>
+          automation.id === selectedId
+            ? {
+                ...automation,
+                status: "paused",
+                triggers: automation.triggers?.map((trigger) => ({
+                  ...trigger,
+                  status: "paused",
+                  nextPollAt: null,
+                })),
+              }
+            : automation,
+        ),
+      );
+      setMessage(
+        "Automation paused. External RSS/webhook triggers are stopped; republish the latest workflow to resume.",
+      );
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Unable to pause automation",
       );
     } finally {
       setBusy(null);
@@ -442,8 +535,12 @@ export function AutomationWorkspace({
   const newAutomation = () => {
     setSelectedId(null);
     setName("New AI Content Automation");
-    setDefinition(defaultWorkflowDefinition(channels));
+    setDescription(
+      "Generate, review and schedule content with the versioned SoStats runtime.",
+    );
+    setDefinition(defaultWorkflowDefinition(channels, providers, brands));
     setRuns([]);
+    setSelectedRunId(null);
     setWebhookSecret(null);
     setMessage(null);
     setError(null);
@@ -451,7 +548,35 @@ export function AutomationWorkspace({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          ["Active workflows", workspaceRunCounts.active, "Published triggers live"],
+          ["Waiting approval", workspaceRunCounts.waiting, "Human decision required"],
+          ["Recent failures", workspaceRunCounts.failed, "Retryable from run history"],
+          ["Trigger errors", workspaceRunCounts.triggerErrors, "External source attention"],
+        ].map(([label, value, hint]) => (
+          <div key={String(label)} className="sostats-card p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[9px] font-medium text-muted-foreground">
+                  {String(label)}
+                </p>
+                <p className="mt-1 text-2xl font-semibold tracking-[-0.04em]">
+                  {String(value)}
+                </p>
+                <p className="mt-2 text-[8px] text-muted-foreground">
+                  {String(hint)}
+                </p>
+              </div>
+              <div className="sostats-icon h-8 w-8">
+                <Activity className="h-3.5 w-3.5 text-neutral-500" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="sostats-card self-start p-3">
           <div className="flex items-center justify-between px-2 py-2">
             <div>
@@ -474,12 +599,14 @@ export function AutomationWorkspace({
                 onClick={() => {
                   setSelectedId(automation.id);
                   setName(automation.name);
+                  setDescription(automation.description || "");
                   const version = latestVersion(automation);
                   setDefinition(
                     (version?.workflowDefinition as WorkflowDefinitionState) ||
-                      defaultWorkflowDefinition(channels),
+                      defaultWorkflowDefinition(channels, providers, brands),
                   );
                   setRuns(automation.runs || []);
+                  setSelectedRunId(null);
                   setWebhookSecret(null);
                   setMessage(null);
                   setError(null);
@@ -516,12 +643,35 @@ export function AutomationWorkspace({
         </aside>
 
         <main className="min-w-0 space-y-3">
-          <div className="sostats-card flex flex-col gap-3 p-3 sm:flex-row sm:items-center">
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              className="h-10 min-w-0 flex-1 rounded-xl bg-neutral-50 px-3 text-[11px] font-semibold outline-none"
-            />
+          <div className="sostats-card flex flex-col gap-3 p-3 lg:flex-row lg:items-center">
+            <div className="min-w-0 flex-1 space-y-2">
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="h-10 w-full rounded-xl bg-neutral-50 px-3 text-[11px] font-semibold outline-none"
+              />
+              <input
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Describe what this automation does..."
+                className="h-9 w-full rounded-xl border border-black/[0.05] bg-white px-3 text-[9px] text-neutral-600 outline-none"
+              />
+              <div className="flex flex-wrap items-center gap-2 text-[8px] text-muted-foreground">
+                <span>
+                  Latest saved {selectedVersion ? `v${selectedVersion.versionNumber}` : "draft"}
+                </span>
+                <span>·</span>
+                <span>
+                  Published {publishedVersion ? `v${publishedVersion.versionNumber}` : "none"}
+                </span>
+                {selected && (
+                  <>
+                    <span>·</span>
+                    <span className="capitalize">{selected.status}</span>
+                  </>
+                )}
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
@@ -549,6 +699,21 @@ export function AutomationWorkspace({
                 )}
                 Test run
               </Button>
+              {selected?.status === "active" && (
+                <Button
+                  variant="outline"
+                  onClick={() => void pauseAutomation()}
+                  disabled={Boolean(busy)}
+                  className="h-10 rounded-xl text-[9px]"
+                >
+                  {busy === "pause" ? (
+                    <LoaderCircle className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Pause className="mr-2 h-3.5 w-3.5" />
+                  )}
+                  Pause
+                </Button>
+              )}
               <Button
                 onClick={publish}
                 disabled={Boolean(busy)}
@@ -559,7 +724,7 @@ export function AutomationWorkspace({
                 ) : (
                   <Rocket className="mr-2 h-3.5 w-3.5" />
                 )}
-                Publish workflow
+                {selected?.status === "paused" ? "Republish & resume" : "Publish workflow"}
               </Button>
             </div>
           </div>
@@ -742,6 +907,8 @@ export function AutomationWorkspace({
             definition={definition}
             onDefinitionChange={setDefinition}
             channels={channels}
+            providers={providers}
+            brands={brands}
           />
         </main>
       </div>
@@ -794,6 +961,8 @@ export function AutomationWorkspace({
                           </span>
                         </div>
                         <p className="mt-1 truncate text-[8px] text-muted-foreground">
+                          v{run.version?.versionNumber || "?"} ·{" "}
+                          {new Date(run.createdAt).toLocaleString()} ·{" "}
                           {run.steps?.map((step) => `${step.stepId}: ${step.status}`).join(" · ")}
                         </p>
                         {run.error && (
@@ -828,18 +997,29 @@ export function AutomationWorkspace({
                       </div>
                     )}
 
-                    {failed && (
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={Boolean(busy)}
-                        onClick={() => void retry(run.id)}
+                        onClick={() => setSelectedRunId(run.id)}
                         className="h-8 rounded-lg text-[8px]"
                       >
-                        <RefreshCw className="mr-1.5 h-3 w-3" />
-                        Retry failed step
+                        <Eye className="mr-1.5 h-3 w-3" />
+                        Inspect
                       </Button>
-                    )}
+                      {failed && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={Boolean(busy)}
+                          onClick={() => void retry(run.id)}
+                          className="h-8 rounded-lg text-[8px]"
+                        >
+                          <RefreshCw className="mr-1.5 h-3 w-3" />
+                          Retry failed step
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -851,6 +1031,14 @@ export function AutomationWorkspace({
           )}
         </div>
       </section>
+
+      <AutomationRunInspector
+        run={inspectedRun}
+        open={Boolean(inspectedRun)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedRunId(null);
+        }}
+      />
     </div>
   );
 }
