@@ -39,10 +39,19 @@ describe('ApiKeyService', () => {
       updatedAt: new Date(),
     };
     const chain = insertChain(base);
-    const db = {
+    const tx = {
       insert: chain.insert,
     };
-    const service = new ApiKeyService(db as never, access as never);
+    const db = {
+      transaction: vi.fn(async (callback: (value: typeof tx) => unknown) =>
+        callback(tx),
+      ),
+    };
+    const service = new ApiKeyService(
+      db as never,
+      access as never,
+      {} as never,
+    );
 
     const result = await service.create(77, 10, {
       name: 'Reporting',
@@ -64,7 +73,11 @@ describe('ApiKeyService', () => {
   });
 
   it('rejects malformed API keys before persistence lookup', async () => {
-    const service = new ApiKeyService({} as never, {} as never);
+    const service = new ApiKeyService(
+      {} as never,
+      {} as never,
+      {} as never,
+    );
     await expect(service.authenticate('not-a-key')).rejects.toThrow(
       'Invalid API key',
     );
