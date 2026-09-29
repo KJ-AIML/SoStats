@@ -222,6 +222,39 @@ describe('schedule mutations under concurrency', () => {
     },
   );
 
+  it('makes a failed publication still pointing at its last attempt claimable after a user reschedule', async () => {
+    const seeded = await seedChannel(database.sql);
+    const publication = await createPublication(database.db, seeded);
+    const first = (await claimOf(publication))!;
+    await expect(
+      ledger.recordFailure(first, 'terminal', 'invalid_request', 'bad media'),
+    ).resolves.toBe('failed');
+    const failed = await reload(publication.id);
+    expect(failed).toMatchObject({
+      status: 'failed',
+      activeAttemptId: first.attemptId,
+    });
+
+    await scheduling.updateSchedule(seeded.workspaceId, publication.id, {
+      scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const rearmed = await reload(publication.id);
+    expect(rearmed).toMatchObject({
+      status: 'scheduled',
+      dispatchGeneration: failed.dispatchGeneration + 1,
+    });
+
+    const second = await claimOf(rearmed);
+    expect(second).toMatchObject({
+      attemptNumber: 2,
+      dispatchGeneration: publication.dispatchGeneration + 1,
+    });
+    expect(await reload(publication.id)).toMatchObject({
+      status: 'publishing',
+      activeAttemptId: second!.attemptId,
+    });
+  });
+
   it('refuses to re-arm a failed publication into an occupied identity', async () => {
     const seeded = await seedChannel(database.sql);
     const occupiedAt = new Date(Date.now() + 3_600_000);
