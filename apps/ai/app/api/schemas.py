@@ -3,19 +3,6 @@ from typing import Literal
 from pydantic import BaseModel, Field  # type: ignore
 
 
-class BrandProfile(BaseModel):
-    voice: str = Field(..., description="The tone and voice of the brand (e.g., professional, friendly)")
-    audience: str = Field(..., description="Target audience description")
-    products: list[str] = Field(default_factory=list, description="List of key products or services")
-    pillars: list[str] = Field(default_factory=list, description="Content pillars or core values")
-
-
-class BrandContextResponse(BaseModel):
-    brand_id: str = Field(..., description="Unique identifier for the brand")
-    profile: BrandProfile
-    assembled_context: str = Field(..., description="The fully assembled context string for LLM injection")
-
-
 class CampaignBrief(BaseModel):
     goal: str = Field(..., description="Campaign goal or objective")
     audience: str = Field(..., description="Target audience for the campaign")

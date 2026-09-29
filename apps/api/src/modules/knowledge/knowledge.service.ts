@@ -122,9 +122,9 @@ export class KnowledgeService {
         throw new BadRequestException('Text knowledge requires text content');
       }
       body = Buffer.from(sourceText, 'utf8');
-      if (body.length > 8 * 1024 * 1024) {
+      if (body.length > 750 * 1024) {
         throw new BadRequestException(
-          'Text knowledge exceeds the 8 MiB processing limit',
+          'Pasted text exceeds the 750 KiB request limit; use a public URL for larger documents',
         );
       }
     } else {
