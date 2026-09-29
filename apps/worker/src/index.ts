@@ -1,4 +1,11 @@
 import {
+  startRssTriggerDispatcher,
+  stopRssTriggerDispatcher,
+} from './triggers/rss-trigger.dispatcher';
+import {
+  stopRssTriggerWorker,
+} from './triggers/rss-trigger.processor';
+import {
   startMediaDispatcher,
   stopMediaDispatcher,
 } from './media/media.dispatcher';
@@ -31,6 +38,7 @@ startPublishingDispatcher();
 startAutomationDispatcher();
 startAnalyticsDispatcher();
 startMediaDispatcher();
+startRssTriggerDispatcher();
 
 let stopping = false;
 
@@ -48,6 +56,8 @@ async function shutdown(signal: string) {
     stopAnalyticsWorker(),
     stopMediaDispatcher(),
     stopMediaWorker(),
+    stopRssTriggerDispatcher(),
+    stopRssTriggerWorker(),
   ]);
   process.exit(0);
 }
