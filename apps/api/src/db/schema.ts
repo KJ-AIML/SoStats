@@ -111,6 +111,43 @@ export const workspaceInvitations = pgTable(
   }),
 );
 
+// workspace_api_keys
+export const workspaceApiKeys = pgTable(
+  'workspace_api_keys',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    createdByUserId: integer('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    publicId: varchar('public_id', { length: 32 }).notNull().unique(),
+    name: varchar('name', { length: 120 }).notNull(),
+    secretHash: varchar('secret_hash', { length: 64 }).notNull(),
+    scopes: jsonb('scopes')
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    expiresAt: timestamp('expires_at').notNull(),
+    lastUsedAt: timestamp('last_used_at'),
+    rotatedAt: timestamp('rotated_at'),
+    revokedAt: timestamp('revoked_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    workspaceApiKeyWorkspaceIdx: index('workspace_api_key_workspace_idx').on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    workspaceApiKeyActiveIdx: index('workspace_api_key_active_idx').on(
+      table.workspaceId,
+      table.revokedAt,
+    ),
+  }),
+);
+
 // brands
 export const brands = pgTable(
   'brands',
@@ -876,6 +913,7 @@ export const webhookDeliveries = pgTable('webhook_deliveries', {
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   members: many(workspaceMembers),
   invitations: many(workspaceInvitations),
+  apiKeys: many(workspaceApiKeys),
   brands: many(brands),
   socialAccounts: many(socialAccounts),
   assets: many(assets),
@@ -896,6 +934,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   invitationsAccepted: many(workspaceInvitations, {
     relationName: 'acceptedBy',
   }),
+  apiKeysCreated: many(workspaceApiKeys),
 }));
 
 export const workspaceMembersRelations = relations(
@@ -927,6 +966,20 @@ export const workspaceInvitationsRelations = relations(
     acceptedBy: one(users, {
       relationName: 'acceptedBy',
       fields: [workspaceInvitations.acceptedByUserId],
+      references: [users.id],
+    }),
+  }),
+);
+
+export const workspaceApiKeysRelations = relations(
+  workspaceApiKeys,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [workspaceApiKeys.workspaceId],
+      references: [workspaces.id],
+    }),
+    createdBy: one(users, {
+      fields: [workspaceApiKeys.createdByUserId],
       references: [users.id],
     }),
   }),
