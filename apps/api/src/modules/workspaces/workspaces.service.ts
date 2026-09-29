@@ -11,6 +11,7 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { WorkspaceAccessService } from '../../common/workspace/workspace-access.service.js';
+import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
 
 function slugify(name: string) {
   const base = name
@@ -45,6 +46,7 @@ export class WorkspacesService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly access: WorkspaceAccessService,
+    private readonly invitations: WorkspaceInvitationsService,
   ) {}
 
   async create(name: string, userId: number) {
@@ -102,6 +104,11 @@ export class WorkspacesService {
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
+    const invitations =
+      membership.role === 'owner'
+        ? await this.invitations.listForWorkspace(id, userId)
+        : [];
+
     return {
       workspace: {
         id: workspace.id,
@@ -122,9 +129,11 @@ export class WorkspacesService {
         updatedAt: member.updatedAt,
         isCurrentUser: member.userId === userId,
       })),
+      invitations,
       permissions: {
         canManageWorkspace: ['owner', 'admin'].includes(membership.role),
         canManageMembers: membership.role === 'owner',
+        canManageInvitations: membership.role === 'owner',
         canDeleteWorkspace: membership.role === 'owner',
       },
       security: {
@@ -143,7 +152,8 @@ export class WorkspacesService {
       productCapabilities: {
         teamRoles: true,
         workspaceTimezone: true,
-        invitations: false,
+        invitations: true,
+        invitationEmailDelivery: false,
         apiKeys: false,
         notificationPreferences: false,
         auditLog: false,
