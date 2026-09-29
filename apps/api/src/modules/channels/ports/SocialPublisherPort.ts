@@ -3,8 +3,17 @@ export type PublishResult = {
   url?: string;
 };
 
+export type PublishMedia = {
+  assetId: number;
+  fileType: "image" | "video" | string;
+  mimeType: string;
+  fileName: string;
+  url: string;
+};
+
 export type PublishContext = {
   providerAccountId?: string;
+  media?: PublishMedia[];
 };
 
 export type RefreshedToken = {
@@ -20,6 +29,17 @@ export type ProviderCapabilities = {
   carousel: boolean;
   analytics: boolean;
   nativeScheduling: boolean;
+  requiresMedia?: boolean;
+  mediaMimeTypes?: string[];
+  maxMediaItems?: number;
+};
+
+export type ProviderOAuthAccount = {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: Date;
+  providerAccountId: string;
+  accountName: string;
 };
 
 export class ProviderPublishError extends Error {
@@ -64,13 +84,13 @@ export interface SocialPublisherPort {
     code: string,
     redirectUri: string,
     codeVerifier?: string,
-  ): Promise<{
-    accessToken: string;
-    refreshToken?: string;
-    expiresAt?: Date;
-    providerAccountId: string;
-    accountName: string;
-  }>;
+  ): Promise<ProviderOAuthAccount>;
+
+  exchangeAccounts?(
+    code: string,
+    redirectUri: string,
+    codeVerifier?: string,
+  ): Promise<ProviderOAuthAccount[]>;
 
   refreshAccessToken(refreshToken: string): Promise<RefreshedToken>;
 }
