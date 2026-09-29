@@ -31,6 +31,19 @@ function latestVersion(automation?: AutomationRecord) {
   )[0];
 }
 
+function triggerTypeForDefinition(
+  definition: WorkflowDefinitionState,
+): "manual" | "rss" {
+  const trigger = definition.nodes.find(
+    (node) => String(node.data?.type || "") === "trigger",
+  );
+  const config =
+    trigger?.data?.config && typeof trigger.data.config === "object"
+      ? (trigger.data.config as Record<string, unknown>)
+      : {};
+  return config.mode === "rss" ? "rss" : "manual";
+}
+
 function statusTone(status: string) {
   switch (status) {
     case "completed":
@@ -76,6 +89,20 @@ export function AutomationWorkspace({
   const [error, setError] = useState<string | null>(null);
 
   const selectedVersion = useMemo(() => latestVersion(selected), [selected]);
+  const selectedTrigger = selected?.triggers?.[0];
+
+  const loadAutomations = useCallback(async () => {
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/automations`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return;
+      setAutomations((await response.json()) as AutomationRecord[]);
+    } catch {
+      // Best-effort refresh; explicit actions surface their own errors.
+    }
+  }, [workspaceSlug]);
 
   const loadRuns = useCallback(async () => {
     if (!selectedId) return;
@@ -114,7 +141,7 @@ export function AutomationWorkspace({
             body: JSON.stringify({
               name,
               description: "Created from the SoStats automation builder",
-              triggerType: "manual",
+              triggerType: triggerTypeForDefinition(definition),
               workflowDefinition: definition,
             }),
           },
@@ -205,17 +232,28 @@ export function AutomationWorkspace({
       );
       const payload = (await response.json()) as {
         status?: string;
+        triggerType?: string;
         error?: string;
       };
       if (!response.ok) throw new Error(payload.error || "Unable to publish workflow");
       setAutomations((current) =>
         current.map((automation) =>
           automation.id === id
-            ? { ...automation, status: "active" }
+            ? {
+                ...automation,
+                status: "active",
+                triggerType:
+                  payload.triggerType || triggerTypeForDefinition(definition),
+              }
             : automation,
         ),
       );
-      setMessage("Workflow published. New runs will use the latest published version.");
+      await loadAutomations();
+      setMessage(
+        payload.triggerType === "rss"
+          ? "Workflow published. RSS polling is active and new feed items create versioned runs."
+          : "Workflow published. New runs will use the latest published version.",
+      );
     } catch (actionError) {
       setError(
         actionError instanceof Error ? actionError.message : "Unable to publish workflow",
@@ -315,6 +353,32 @@ export function AutomationWorkspace({
     }
   };
 
+  const retryExternalTrigger = async () => {
+    if (!selectedId) return;
+    setBusy("retry-trigger");
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/automations/${selectedId}/trigger/retry`,
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to retry RSS source");
+      }
+      setMessage("RSS source reactivated and queued for polling.");
+      await loadAutomations();
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Unable to retry RSS source",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const newAutomation = () => {
     setSelectedId(null);
     setName("New AI Content Automation");
@@ -377,7 +441,7 @@ export function AutomationWorkspace({
                   </p>
                 </div>
                 <p className="mt-1 text-[8px] capitalize text-muted-foreground">
-                  {automation.status} · {automation.versions?.length || 0} versions
+                  {automation.status} · {automation.triggerType || "manual"} · {automation.versions?.length || 0} versions
                 </p>
               </button>
             ))}
@@ -448,6 +512,66 @@ export function AutomationWorkspace({
             <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[9px] text-red-700">
               <AlertCircle className="h-3.5 w-3.5" />
               {error}
+            </div>
+          )}
+
+          {selected?.triggerType === "rss" && selectedTrigger && (
+            <div
+              className={
+                selectedTrigger.status === "error"
+                  ? "sostats-card border-red-200 bg-red-50/50 p-4"
+                  : "sostats-card p-4"
+              }
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={
+                        selectedTrigger.status === "active"
+                          ? "h-2 w-2 rounded-full bg-emerald-500"
+                          : selectedTrigger.status === "error"
+                            ? "h-2 w-2 rounded-full bg-red-500"
+                            : "h-2 w-2 rounded-full bg-neutral-300"
+                      }
+                    />
+                    <p className="text-[10px] font-semibold">
+                      RSS source · {selectedTrigger.status}
+                    </p>
+                  </div>
+                  <p className="mt-1 truncate text-[8px] text-muted-foreground">
+                    {String(selectedTrigger.config?.feedUrl || "Feed URL unavailable")}
+                  </p>
+                  <p className="mt-1 text-[8px] text-muted-foreground">
+                    {selectedTrigger.lastPolledAt
+                      ? `Last poll ${new Date(selectedTrigger.lastPolledAt).toLocaleString()}`
+                      : "Waiting for first poll"}
+                    {selectedTrigger.lastTriggeredAt
+                      ? ` · Last trigger ${new Date(selectedTrigger.lastTriggeredAt).toLocaleString()}`
+                      : ""}
+                  </p>
+                  {selectedTrigger.lastError && (
+                    <p className="mt-2 line-clamp-2 text-[8px] text-red-700">
+                      {selectedTrigger.lastError}
+                    </p>
+                  )}
+                </div>
+                {selectedTrigger.status === "error" && (
+                  <Button
+                    variant="outline"
+                    onClick={() => void retryExternalTrigger()}
+                    disabled={Boolean(busy)}
+                    className="h-9 rounded-xl text-[8px]"
+                  >
+                    {busy === "retry-trigger" ? (
+                      <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-1.5 h-3 w-3" />
+                    )}
+                    Retry source
+                  </Button>
+                )}
+              </div>
             </div>
           )}
 
