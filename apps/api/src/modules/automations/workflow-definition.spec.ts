@@ -40,7 +40,10 @@ describe('automation workflow definition', () => {
 
   it('validates an RSS source configuration', () => {
     const candidate = linearDefinition();
-    candidate.nodes[0].data.config = {
+    (candidate.nodes[0].data as {
+      type: string;
+      config?: Record<string, unknown>;
+    }).config = {
       mode: 'rss',
       feedUrl: 'https://example.com/feed.xml',
       pollMinutes: 15,
@@ -52,7 +55,10 @@ describe('automation workflow definition', () => {
 
   it('rejects invalid RSS polling configuration', () => {
     const candidate = linearDefinition();
-    candidate.nodes[0].data.config = {
+    (candidate.nodes[0].data as {
+      type: string;
+      config?: Record<string, unknown>;
+    }).config = {
       mode: 'rss',
       feedUrl: 'file:///etc/passwd',
       pollMinutes: 1,
