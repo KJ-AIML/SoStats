@@ -36,10 +36,11 @@ describe('migration 007', () => {
     publicationId: number,
     status: string,
     createdAt: string,
+    attempts = 1,
   ) {
     const [row] = await sql<{ id: number }[]>`
       insert into publication_jobs (scheduled_publication_id, status, attempts, last_attempt_at, created_at)
-      values (${publicationId}, ${status}, 1, ${at(createdAt)}, ${at(createdAt)})
+      values (${publicationId}, ${status}, ${attempts}, ${at(createdAt)}, ${at(createdAt)})
       returning id`;
     return row.id;
   }
@@ -114,6 +115,89 @@ describe('migration 007', () => {
     expect(attempt.marker).not.toBeNull();
   });
 
+  it('marks a scheduled publication that owns an in-flight attempt unknown with the opt-in', async () => {
+    const { sql, applyPostBaselineMigrations } = await legacyDatabase();
+    const seeded = await seedChannel(sql);
+    const id = await publication(sql, seeded, 'scheduled');
+    const jobId = await job(sql, id, 'processing', '2026-09-30T00:00:00Z');
+
+    await applyPostBaselineMigrations({ inflightPublications: 'mark_unknown' });
+
+    const [pub] = await sql<{ status: string; active_attempt_id: number }[]>`
+      select status, active_attempt_id from scheduled_publications where id = ${id}`;
+    expect(pub).toEqual({ status: 'unknown', active_attempt_id: jobId });
+    const [attempt] = await sql<{ status: string; marker: string | null }[]>`
+      select status, provider_request_started_at as marker from publication_jobs where id = ${jobId}`;
+    expect(attempt.status).toBe('unknown');
+    expect(attempt.marker).not.toBeNull();
+  });
+
+  it('keeps a published publication published but marks its orphan in-flight attempt unknown', async () => {
+    const { sql, applyPostBaselineMigrations } = await legacyDatabase();
+    const seeded = await seedChannel(sql);
+    const id = await publication(sql, seeded, 'published');
+    const jobId = await job(sql, id, 'processing', '2026-09-30T00:00:00Z');
+
+    await applyPostBaselineMigrations({ inflightPublications: 'mark_unknown' });
+
+    const [pub] = await sql<{ status: string }[]>`
+      select status from scheduled_publications where id = ${id}`;
+    expect(pub.status).toBe('published');
+    const [attempt] = await sql<{ status: string }[]>`
+      select status from publication_jobs where id = ${jobId}`;
+    expect(attempt.status).toBe('unknown');
+  });
+
+  it.each(['pending', 'processing'])(
+    'refuses to run for a lone %s attempt under a failed publication',
+    async (attemptStatus) => {
+      const { sql, applyPostBaselineMigrations } = await legacyDatabase();
+      const seeded = await seedChannel(sql);
+      const id = await publication(sql, seeded, 'failed');
+      await job(sql, id, attemptStatus, '2026-09-30T00:00:00Z');
+
+      await expect(applyPostBaselineMigrations()).rejects.toThrow(
+        /not drained/,
+      );
+      expect(
+        await hasColumn(sql, 'scheduled_publications', 'active_attempt_id'),
+      ).toBe(false);
+      const [row] = await sql<{ status: string }[]>`
+        select status from publication_jobs where scheduled_publication_id = ${id}`;
+      expect(row.status).toBe(attemptStatus);
+    },
+  );
+
+  it('backfills attempt_count from the latest legacy job for scheduled publications only', async () => {
+    const { sql, applyPostBaselineMigrations } = await legacyDatabase();
+    const seeded = await seedChannel(sql);
+    const scheduled = await publication(
+      sql,
+      seeded,
+      'scheduled',
+      '2026-10-01T09:00:00Z',
+    );
+    await job(sql, scheduled, 'failed', '2026-09-30T00:01:00Z', 3);
+    await job(sql, scheduled, 'failed', '2026-09-30T00:00:00Z', 1);
+    const published = await publication(
+      sql,
+      seeded,
+      'published',
+      '2026-10-02T09:00:00Z',
+    );
+    await job(sql, published, 'completed', '2026-09-30T00:00:00Z', 2);
+
+    await applyPostBaselineMigrations();
+
+    const rows = await sql<{ id: number; attempt_count: number }[]>`
+      select id, attempt_count from scheduled_publications
+      where id in (${scheduled}, ${published}) order by id`;
+    expect(rows).toEqual([
+      { id: scheduled, attempt_count: 3 },
+      { id: published, attempt_count: 0 },
+    ]);
+  });
+
   it('fails loudly on duplicate active identities and lists them', async () => {
     const { sql, applyPostBaselineMigrations } = await legacyDatabase();
     const seeded = await seedChannel(sql);
@@ -122,9 +206,13 @@ describe('migration 007', () => {
 
     const error = (await applyPostBaselineMigrations().catch(
       (caught: unknown) => caught,
-    )) as { message: string; detail?: string };
+    )) as { message: string; detail?: string; hint?: string };
     expect(error.message).toMatch(/duplicate active publication identity/);
     expect(error.detail).toContain(`ids=[${a},${b}]`);
+    const query = error.hint?.split(String.fromCharCode(10)).pop() ?? '';
+    const groups = await sql.unsafe(query);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].ids).toEqual([a, b]);
     const rows =
       await sql`select id from scheduled_publications where id in (${a}, ${b})`;
     expect(rows).toHaveLength(2);

@@ -78,7 +78,8 @@ begin
   if duplicate_groups > 0 then
     raise exception '007: % duplicate active publication identity group(s); no rows were changed', duplicate_groups
       using detail = duplicate_detail,
-            hint = 'Cancel or reschedule all but one row per group, then re-run 007. The future_active query in this file lists them.';
+            hint = E'Cancel or reschedule all but one row per group, then re-run 007. List the groups with:
+select workspace_id, content_item_id, social_account_id, scheduled_at, array_agg(id order by id) as ids from scheduled_publications sp where status in (''scheduled'', ''publishing'') or (status = ''failed'' and (select r.error_type from publication_results r join publication_jobs j on j.id = r.publication_job_id where j.scheduled_publication_id = sp.id order by r.created_at desc, r.id desc limit 1) = ''unknown_outcome'') group by workspace_id, content_item_id, social_account_id, scheduled_at having count(*) > 1;';
   end if;
 end $$;
 
@@ -120,24 +121,44 @@ set attempt_count = coalesce((
 where sp.status = 'scheduled';
 
 -- Undrained rows exist here only with the explicit mark_unknown opt-in.
+-- Publications first, while in-flight attempts are still identifiable by status.
+-- Any non-published publication owning an in-flight attempt becomes unknown so
+-- nothing can automatically re-arm it after the request marker (spec I2).
+update scheduled_publications sp
+set status = 'unknown',
+    active_attempt_id = coalesce(
+      (
+        select j.id from publication_jobs j
+        where j.scheduled_publication_id = sp.id
+          and j.status in ('processing', 'pending')
+        order by j.created_at desc, j.id desc
+        limit 1
+      ),
+      (
+        select j.id from publication_jobs j
+        where j.scheduled_publication_id = sp.id
+        order by j.created_at desc, j.id desc
+        limit 1
+      )
+    ),
+    lease_expires_at = null
+where sp.status = 'publishing'
+   or (
+     sp.status <> 'published'
+     and exists (
+       select 1 from publication_jobs j
+       where j.scheduled_publication_id = sp.id
+         and j.status in ('processing', 'pending')
+     )
+   );
+
 update publication_jobs
 set status = 'unknown',
-    provider_request_started_at = coalesce(last_attempt_at, updated_at),
+    provider_request_started_at = coalesce(last_attempt_at, now() at time zone 'utc'),
     completed_at = now() at time zone 'utc',
     error_class = 'unknown_outcome',
     updated_at = now() at time zone 'utc'
 where status in ('processing', 'pending');
-
-update scheduled_publications sp
-set status = 'unknown',
-    active_attempt_id = (
-      select j.id from publication_jobs j
-      where j.scheduled_publication_id = sp.id
-      order by j.created_at desc, j.id desc
-      limit 1
-    ),
-    lease_expires_at = null
-where sp.status = 'publishing';
 
 update scheduled_publications sp
 set status = 'needs_review'
