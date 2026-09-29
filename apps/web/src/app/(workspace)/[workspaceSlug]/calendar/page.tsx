@@ -1,5 +1,5 @@
-import { CalendarPlus, Filter } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { ArrowRight, CalendarPlus } from "lucide-react";
 import { PageHeading } from "@/components/sostats/page-heading";
 import { loadWorkspaceSnapshot } from "@/lib/sostats-api.server";
 import { CalendarView } from "./calendar-view";
@@ -12,38 +12,66 @@ export default async function CalendarPage({
   const { workspaceSlug } = await params;
   let schedules: Array<{
     id: number;
+    contentItemId: number;
     title: string;
+    campaign: string;
     channel: string;
+    accountName: string;
+    variantLabel: string;
+    variantCopy?: string;
     scheduledAt: string;
     status: string;
+    attempts: number;
+    failureType?: string;
     failureReason?: string;
     postUrl?: string;
+    platformPostId?: string;
+    resultAt?: string;
   }> = [];
+  let timezone = "UTC";
   let connectionError = false;
 
   try {
     const snapshot = await loadWorkspaceSnapshot(workspaceSlug);
+    timezone = snapshot.workspace.timezone || "UTC";
+
     schedules = snapshot.calendar.map((schedule) => {
-      const results =
-        schedule.jobs
-          ?.flatMap((job) => job.results || [])
-          .sort(
-            (a, b) =>
-              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-          ) || [];
+      const jobs = [...(schedule.jobs || [])].sort(
+        (a, b) =>
+          new Date(b.lastAttemptAt || 0).getTime() -
+          new Date(a.lastAttemptAt || 0).getTime(),
+      );
+      const results = jobs
+        .flatMap((job) => job.results || [])
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
       const latest = results[0];
 
       return {
         id: schedule.id,
+        contentItemId: schedule.contentItemId,
         title:
           schedule.contentItem?.title ||
           schedule.variant?.content?.slice(0, 90) ||
           "Scheduled content",
+        campaign: schedule.contentItem?.campaign?.name || "Unassigned",
         channel: schedule.socialAccount?.provider || "Channel",
+        accountName:
+          schedule.socialAccount?.accountName ||
+          schedule.socialAccount?.provider ||
+          "Channel",
+        variantLabel: schedule.variant?.platform || "Canonical",
+        variantCopy: schedule.variant?.content || undefined,
         scheduledAt: schedule.scheduledAt,
         status: schedule.status,
+        attempts: jobs.reduce((total, job) => total + (job.attempts || 0), 0),
+        failureType: latest?.errorType || undefined,
         failureReason: latest?.errorMessage || undefined,
         postUrl: latest?.platformPostUrl || undefined,
+        platformPostId: latest?.platformPostId || undefined,
+        resultAt: latest?.createdAt || undefined,
       };
     });
   } catch {
@@ -54,27 +82,31 @@ export default async function CalendarPage({
     <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6 xl:p-8">
       <PageHeading
         eyebrow="Calendar"
-        title="Plan every channel in one view"
-        description="Review coverage, spot gaps and monitor publication state from queue to confirmed provider result."
+        title="Control the publishing lifecycle"
+        description="Plan by month, week or day, filter real provider schedules, reschedule safely and inspect provider outcomes without leaving the publishing command center."
         actions={
-          <>
-            <Button variant="outline" className="h-10 rounded-xl text-[10px]">
-              <Filter className="mr-2 h-3.5 w-3.5" />
-              Channels
-            </Button>
-            <Button className="h-10 rounded-xl bg-[#ef2b2d] text-[10px] hover:bg-[#da2427]">
-              <CalendarPlus className="mr-2 h-3.5 w-3.5" />
-              Schedule content
-            </Button>
-          </>
+          <Link
+            href={`/${workspaceSlug}/content`}
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#ef2b2d] px-4 text-[10px] font-semibold text-white transition hover:bg-[#da2427]"
+          >
+            <CalendarPlus className="h-3.5 w-3.5" />
+            Schedule from Content
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
         }
       />
+
       {connectionError && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[10px] text-amber-800">
           Calendar data is unavailable until the API/database stack is running.
         </div>
       )}
-      <CalendarView workspaceSlug={workspaceSlug} initialSchedules={schedules} />
+
+      <CalendarView
+        workspaceSlug={workspaceSlug}
+        timezone={timezone}
+        initialSchedules={schedules}
+      />
     </div>
   );
 }
