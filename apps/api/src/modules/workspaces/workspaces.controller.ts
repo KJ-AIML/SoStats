@@ -10,6 +10,10 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../common/auth/auth.types.js';
+import {
+  AuditLogService,
+  actorFromUser,
+} from '../../common/audit/audit-log.service.js';
 import { WorkspacesService } from './workspaces.service.js';
 import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
 import { ApiKeyService } from '../../common/auth/api-key.service.js';
@@ -20,11 +24,27 @@ export class WorkspacesController {
     private readonly workspacesService: WorkspacesService,
     private readonly invitationsService: WorkspaceInvitationsService,
     private readonly apiKeys: ApiKeyService,
+    private readonly audit: AuditLogService,
   ) {}
 
   @Post()
-  create(@Body('name') name: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.workspacesService.create(name, user.id);
+  async create(
+    @Body('name') name: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const workspace = await this.workspacesService.create(name, user.id);
+    await this.audit.record({
+      workspaceId: workspace.id,
+      actor: actorFromUser(user),
+      action: 'workspace.created',
+      targetType: 'workspace',
+      targetId: workspace.id,
+      metadata: {
+        name: workspace.name,
+        slug: workspace.slug,
+      },
+    });
+    return workspace;
   }
 
   @Get()
@@ -41,47 +61,108 @@ export class WorkspacesController {
   }
 
   @Put(':id/settings')
-  updateSettings(
+  async updateSettings(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { name?: string; timezone?: string },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.workspacesService.updateSettings(id, user.id, body);
+    const workspace = await this.workspacesService.updateSettings(
+      id,
+      user.id,
+      body,
+    );
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'workspace.settings_updated',
+      targetType: 'workspace',
+      targetId: id,
+      metadata: {
+        changedFields: Object.keys(body).filter(
+          (field) => body[field as keyof typeof body] !== undefined,
+        ),
+        name: body.name,
+        timezone: body.timezone,
+      },
+    });
+    return workspace;
   }
 
   @Post(':id/invitations')
-  createInvitation(
+  async createInvitation(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { email?: string; role?: string },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.invitationsService.create(id, user.id, body);
+    const result = await this.invitationsService.create(id, user.id, body);
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'invitation.created',
+      targetType: 'workspace_invitation',
+      targetId: result.invitation.id,
+      metadata: {
+        email: result.invitation.email,
+        role: result.invitation.role,
+        expiresAt: result.invitation.expiresAt,
+      },
+    });
+    return result;
   }
 
   @Post(':id/invitations/:invitationId/regenerate')
-  regenerateInvitation(
+  async regenerateInvitation(
     @Param('id', ParseIntPipe) id: number,
     @Param('invitationId', ParseIntPipe) invitationId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.invitationsService.regenerate(
+    const result = await this.invitationsService.regenerate(
       id,
       user.id,
       invitationId,
     );
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'invitation.regenerated',
+      targetType: 'workspace_invitation',
+      targetId: invitationId,
+      metadata: {
+        email: result.invitation.email,
+        role: result.invitation.role,
+        expiresAt: result.invitation.expiresAt,
+      },
+    });
+    return result;
   }
 
   @Delete(':id/invitations/:invitationId')
-  revokeInvitation(
+  async revokeInvitation(
     @Param('id', ParseIntPipe) id: number,
     @Param('invitationId', ParseIntPipe) invitationId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.invitationsService.revoke(id, user.id, invitationId);
+    const result = await this.invitationsService.revoke(
+      id,
+      user.id,
+      invitationId,
+    );
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'invitation.revoked',
+      targetType: 'workspace_invitation',
+      targetId: invitationId,
+      metadata: {
+        email: result.email,
+        role: result.role,
+      },
+    });
+    return result;
   }
 
   @Post(':id/api-keys')
-  createApiKey(
+  async createApiKey(
     @Param('id', ParseIntPipe) id: number,
     @Body()
     body: {
@@ -91,30 +172,71 @@ export class WorkspacesController {
     },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.apiKeys.create(id, user.id, body);
+    const result = await this.apiKeys.create(id, user.id, body);
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'api_key.created',
+      targetType: 'workspace_api_key',
+      targetId: result.apiKey.id,
+      metadata: {
+        name: result.apiKey.name,
+        publicId: result.apiKey.publicId,
+        scopes: result.apiKey.scopes,
+        expiresAt: result.apiKey.expiresAt,
+      },
+    });
+    return result;
   }
 
   @Post(':id/api-keys/:keyId/rotate')
-  rotateApiKey(
+  async rotateApiKey(
     @Param('id', ParseIntPipe) id: number,
     @Param('keyId', ParseIntPipe) keyId: number,
     @Body() body: { expiresInDays?: unknown },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.apiKeys.rotate(id, user.id, keyId, body);
+    const result = await this.apiKeys.rotate(id, user.id, keyId, body);
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'api_key.rotated',
+      targetType: 'workspace_api_key',
+      targetId: keyId,
+      metadata: {
+        name: result.apiKey.name,
+        publicId: result.apiKey.publicId,
+        scopes: result.apiKey.scopes,
+        expiresAt: result.apiKey.expiresAt,
+      },
+    });
+    return result;
   }
 
   @Delete(':id/api-keys/:keyId')
-  revokeApiKey(
+  async revokeApiKey(
     @Param('id', ParseIntPipe) id: number,
     @Param('keyId', ParseIntPipe) keyId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.apiKeys.revoke(id, user.id, keyId);
+    const result = await this.apiKeys.revoke(id, user.id, keyId);
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'api_key.revoked',
+      targetType: 'workspace_api_key',
+      targetId: keyId,
+      metadata: {
+        name: result.name,
+        publicId: result.publicId,
+        scopes: result.scopes,
+      },
+    });
+    return result;
   }
 
   @Post(':id/ownership-transfer')
-  transferOwnership(
+  async transferOwnership(
     @Param('id', ParseIntPipe) id: number,
     @Body()
     body: {
@@ -123,36 +245,76 @@ export class WorkspacesController {
     },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.workspacesService.transferOwnership(
+    const result = await this.workspacesService.transferOwnership(
       id,
       user.id,
       Number(body.targetMemberId),
       body.previousOwnerRole || 'admin',
     );
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'workspace.ownership_transferred',
+      targetType: 'workspace_member',
+      targetId: result.owner.id,
+      metadata: {
+        previousOwnerUserId: result.previousOwner.userId,
+        previousOwnerRole: result.previousOwner.role,
+        newOwnerUserId: result.owner.userId,
+      },
+    });
+    return result;
   }
 
   @Put(':id/members/:memberId/role')
-  updateMemberRole(
+  async updateMemberRole(
     @Param('id', ParseIntPipe) id: number,
     @Param('memberId', ParseIntPipe) memberId: number,
     @Body('role') role: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.workspacesService.updateMemberRole(
+    const result = await this.workspacesService.updateMemberRole(
       id,
       user.id,
       memberId,
       role,
     );
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'member.role_updated',
+      targetType: 'workspace_member',
+      targetId: memberId,
+      metadata: {
+        userId: result.userId,
+        role: result.role,
+      },
+    });
+    return result;
   }
 
   @Delete(':id/members/:memberId')
-  removeMember(
+  async removeMember(
     @Param('id', ParseIntPipe) id: number,
     @Param('memberId', ParseIntPipe) memberId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.workspacesService.removeMember(id, user.id, memberId);
+    const result = await this.workspacesService.removeMember(
+      id,
+      user.id,
+      memberId,
+    );
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'member.removed',
+      targetType: 'workspace_member',
+      targetId: memberId,
+      metadata: {
+        removed: true,
+      },
+    });
+    return result;
   }
 
   @Get(':id')
@@ -164,19 +326,40 @@ export class WorkspacesController {
   }
 
   @Put(':id')
-  update(
+  async update(
     @Param('id', ParseIntPipe) id: number,
     @Body('name') name: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.workspacesService.update(id, user.id, name);
+    const workspace = await this.workspacesService.update(id, user.id, name);
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'workspace.name_updated',
+      targetType: 'workspace',
+      targetId: id,
+      metadata: { name: workspace.name },
+    });
+    return workspace;
   }
 
   @Delete(':id')
-  remove(
+  async remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.workspacesService.remove(id, user.id);
+    const workspace = await this.workspacesService.remove(id, user.id);
+    await this.audit.record({
+      workspaceId: id,
+      actor: actorFromUser(user),
+      action: 'workspace.deleted',
+      targetType: 'workspace',
+      targetId: id,
+      metadata: {
+        name: workspace.name,
+        slug: workspace.slug,
+      },
+    });
+    return workspace;
   }
 }
