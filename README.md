@@ -53,6 +53,7 @@ Architecture notes:
 - [Stage 10 Brand Brain knowledge RAG](docs/architecture/STAGE_10_BRAND_BRAIN_RAG.md)
 - [Stage 11 private document knowledge pipeline](docs/architecture/STAGE_11_PRIVATE_KNOWLEDGE_DOCUMENTS.md)
 - [Stage 12 product UI completion: real Home dashboard](docs/architecture/STAGE_12_PRODUCT_UI_HOME.md)
+- [Stage 12 product UI completion: AI Studio](docs/architecture/STAGE_12_PRODUCT_UI_AI_STUDIO.md)
 
 ## Repository layout
 
