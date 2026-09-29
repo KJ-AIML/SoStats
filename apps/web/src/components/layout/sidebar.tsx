@@ -147,10 +147,10 @@ export function Sidebar() {
 
       <div className="border-t border-black/[0.055] p-3">
         <Link
-          href="/settings"
+          href={`${base}/settings`}
           className={cn(
             "mb-2 flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition",
-            pathname.startsWith("/settings")
+            pathname.startsWith(`${base}/settings`)
               ? "bg-[#fff0f0] text-[#d92023]"
               : "text-neutral-600 hover:bg-black/[0.035] hover:text-neutral-950",
           )}
