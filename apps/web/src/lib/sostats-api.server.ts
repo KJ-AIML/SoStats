@@ -130,6 +130,19 @@ export type SocialAccountRecord = {
   } | null;
 };
 
+export type SocialProviderRecord = {
+  provider: string;
+  capabilities: {
+    text: boolean;
+    images: boolean;
+    video: boolean;
+    carousel: boolean;
+    analytics: boolean;
+    nativeScheduling: boolean;
+  };
+};
+
+
 export type PublicationResultRecord = {
   id: number;
   platformPostId?: string | null;
@@ -303,6 +316,7 @@ export type WorkspaceSnapshot = {
   analytics: AnalyticsOverview;
   insights: AiInsightRecord[];
   channels: SocialAccountRecord[];
+  providers: SocialProviderRecord[];
   automations: AutomationRecord[];
   assets: AssetRecord[];
   knowledge: KnowledgeSourceRecord[];
@@ -435,6 +449,7 @@ export async function loadWorkspaceSnapshot(
     analytics,
     insights,
     channels,
+    providers,
     automations,
     assets,
     knowledge,
@@ -464,6 +479,12 @@ export async function loadWorkspaceSnapshot(
       errors,
     ),
     safe("channels", workspaceRequest<SocialAccountRecord[]>(workspaceSlug, "/v1/channels"), [], errors),
+    safe(
+      "providers",
+      workspaceRequest<SocialProviderRecord[]>(workspaceSlug, "/v1/channels/providers"),
+      [],
+      errors,
+    ),
     safe("automations", workspaceRequest<AutomationRecord[]>(workspaceSlug, "/v1/automations"), [], errors),
     safe("assets", workspaceRequest<AssetRecord[]>(workspaceSlug, "/v1/assets"), [], errors),
     safe(
@@ -494,6 +515,7 @@ export async function loadWorkspaceSnapshot(
     analytics,
     insights,
     channels,
+    providers,
     automations,
     assets,
     knowledge,
