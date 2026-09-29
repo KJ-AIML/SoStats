@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -59,24 +59,26 @@ export function MediaLibrary({
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const response = await fetch(
       `/api/workspaces/${encodeURIComponent(workspaceSlug)}/assets`,
       { cache: "no-store" },
     );
     if (!response.ok) return;
     setAssets((await response.json()) as AssetRecord[]);
-  };
+  }, [workspaceSlug]);
+
+  const hasProcessingAssets = assets.some((asset) =>
+    ["uploaded", "processing"].includes(asset.status),
+  );
 
   useEffect(() => {
-    if (!assets.some((asset) => ["uploaded", "processing"].includes(asset.status))) {
-      return;
-    }
+    if (!hasProcessingAssets) return;
     const timer = window.setInterval(() => {
       void reload();
     }, 2500);
     return () => window.clearInterval(timer);
-  });
+  }, [hasProcessingAssets, reload]);
 
   const visible = useMemo(() => {
     const normalized = query.trim().toLowerCase();

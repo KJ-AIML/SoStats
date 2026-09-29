@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { S3ObjectStorageAdapter } from './s3-storage.adapter.js';
 
 describe('S3ObjectStorageAdapter', () => {
@@ -19,6 +19,7 @@ describe('S3ObjectStorageAdapter', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     const restore = (name: string, value: string | undefined) => {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
@@ -50,6 +51,34 @@ describe('S3ObjectStorageAdapter', () => {
       /^[a-f0-9]{64}$/,
     );
     expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
+  });
+
+  it('uses an authenticated HEAD request to verify stored objects', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      expect(init?.method).toBe('HEAD');
+      const headers = new Headers(init?.headers);
+      expect(headers.get('authorization')).toContain('AWS4-HMAC-SHA256');
+      return new Response(null, {
+        status: 200,
+        headers: {
+          'content-length': '4096',
+          'content-type': 'image/png',
+          etag: '"test-etag"',
+        },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const adapter = new S3ObjectStorageAdapter();
+    await expect(
+      adapter.statFile('workspaces/1/assets/example.png'),
+    ).resolves.toEqual({
+      size: 4096,
+      contentType: 'image/png',
+      etag: '"test-etag"',
+    });
+
+    vi.unstubAllGlobals();
   });
 
   it('does not pretend private object storage is public', () => {
