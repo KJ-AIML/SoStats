@@ -65,6 +65,7 @@ Architecture notes:
 - [Stage 12 product UI completion: Settings](docs/architecture/STAGE_12_PRODUCT_UI_SETTINGS.md)
 - [Stage 13 Meta / Instagram provider expansion](docs/architecture/STAGE_13_META_INSTAGRAM_PROVIDER.md)
 - [Stage 14 Identity/Admin: workspace invitations](docs/architecture/STAGE_14_WORKSPACE_INVITATIONS.md)
+- [Stage 14 Identity/Admin: ownership transfer + RBAC](docs/architecture/STAGE_14_OWNERSHIP_RBAC.md)
 
 ## Repository layout
 
