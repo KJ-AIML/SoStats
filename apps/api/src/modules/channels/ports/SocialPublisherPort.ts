@@ -30,7 +30,7 @@ export type ProviderCapabilities = {
   analytics: boolean;
   nativeScheduling: boolean;
   requiresMedia?: boolean;
-  mediaMimeTypes?: string[];
+  mediaMimeTypes?: readonly string[];
   maxMediaItems?: number;
 };
 
