@@ -3,6 +3,12 @@ export interface AuthenticatedUser {
   subject: string;
   email: string;
   name: string | null;
+  authMethod?: 'jwt' | 'development' | 'api_key';
+  apiKey?: {
+    id: number;
+    workspaceId: number;
+    scopes: Array<'workspace:read' | 'workspace:write'>;
+  };
 }
 
 export interface JwtClaims {
