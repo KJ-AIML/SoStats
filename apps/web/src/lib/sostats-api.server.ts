@@ -148,6 +148,18 @@ export type ContentRecord = {
   scheduledPublications?: ScheduleRecord[];
 };
 
+export type ProviderCapabilitiesRecord = {
+  text: boolean;
+  images: boolean;
+  video: boolean;
+  carousel: boolean;
+  analytics: boolean;
+  nativeScheduling: boolean;
+  requiresMedia?: boolean;
+  mediaMimeTypes?: string[];
+  maxMediaItems?: number;
+};
+
 export type SocialAccountRecord = {
   id: number;
   workspaceId: number;
@@ -159,14 +171,7 @@ export type SocialAccountRecord = {
   expiresAt?: string | null;
   status: string;
   supported?: boolean;
-  capabilities?: {
-    text: boolean;
-    images: boolean;
-    video: boolean;
-    carousel: boolean;
-    analytics: boolean;
-    nativeScheduling: boolean;
-  } | null;
+  capabilities?: ProviderCapabilitiesRecord | null;
   credentialState?:
     | "active"
     | "no_expiry"
@@ -188,14 +193,7 @@ export type SocialAccountRecord = {
 
 export type SocialProviderRecord = {
   provider: string;
-  capabilities: {
-    text: boolean;
-    images: boolean;
-    video: boolean;
-    carousel: boolean;
-    analytics: boolean;
-    nativeScheduling: boolean;
-  };
+  capabilities: ProviderCapabilitiesRecord;
   oauth?: {
     pkce: boolean;
   };

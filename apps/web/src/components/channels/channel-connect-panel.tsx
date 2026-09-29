@@ -25,6 +25,7 @@ function capabilitySummary(provider: SocialProviderRecord) {
   if (provider.capabilities.video) parts.push("video");
   if (provider.capabilities.carousel) parts.push("carousel");
   if (provider.capabilities.analytics) parts.push("analytics");
+  if (provider.capabilities.requiresMedia) parts.push("media required");
   return parts.length ? parts.join(" + ") : "No exposed capabilities";
 }
 
@@ -168,6 +169,18 @@ export function ChannelConnectPanel({
                   }
                 />
               </div>
+
+              {provider.capabilities.requiresMedia && (
+                <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[8px] leading-4 text-amber-800">
+                  Publishing requires media
+                  {provider.capabilities.mediaMimeTypes?.length
+                    ? ` · ${provider.capabilities.mediaMimeTypes.join(", ")}`
+                    : ""}
+                  {provider.capabilities.maxMediaItems
+                    ? ` · max ${provider.capabilities.maxMediaItems}`
+                    : ""}
+                </p>
+              )}
 
               <Button
                 variant={connected ? "outline" : "default"}

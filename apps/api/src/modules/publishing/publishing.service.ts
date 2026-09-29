@@ -12,6 +12,7 @@ import * as schema from '../../db/schema.js';
 import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 import { ProviderPublishError } from '../channels/ports/SocialPublisherPort.js';
 import { ChannelCredentialService } from '../channels/channel-credential.service.js';
+import { MediaService } from '../media/media.service.js';
 
 type DispatchablePublication = {
   id: number;
@@ -42,6 +43,7 @@ export class PublishingService {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly providerRegistry: ProviderRegistry,
     private readonly credentials: ChannelCredentialService,
+    private readonly mediaService: MediaService,
   ) {}
 
   private async reconcileStaleClaims() {
@@ -315,11 +317,19 @@ export class PublishingService {
         publication.variant?.content ||
         publication.contentItem.description ||
         publication.contentItem.title;
+      const media = await this.mediaService.getProviderPublishMedia(
+        publication.workspaceId,
+        publication.contentItemId,
+        publication.variantId || undefined,
+      );
 
       const result = await adapter.publishPost(
         content,
         accessToken,
-        { providerAccountId: account.providerAccountId },
+        {
+          providerAccountId: account.providerAccountId,
+          media,
+        },
       );
 
       await this.db.transaction(async (tx) => {

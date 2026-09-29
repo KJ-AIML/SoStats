@@ -133,6 +133,75 @@ export class MediaService {
     };
   }
 
+  async listReadyContentMedia(
+    workspaceId: number,
+    contentItemId: number,
+    variantId?: number,
+  ) {
+    const content = await this.db.query.contentItems.findFirst({
+      where: and(
+        eq(schema.contentItems.id, contentItemId),
+        eq(schema.contentItems.workspaceId, workspaceId),
+      ),
+    });
+    if (!content) throw new NotFoundException('Content item not found');
+
+    const usages = await this.db.query.contentAssets.findMany({
+      where: eq(schema.contentAssets.contentItemId, contentItemId),
+      with: { asset: true },
+      orderBy: (fields, { asc }) => [asc(fields.id)],
+    });
+
+    const canonical = usages.filter((usage) => usage.variantId === null);
+    const selected = variantId
+      ? usages.filter((usage) => usage.variantId === variantId)
+      : canonical;
+    const effective = variantId && selected.length === 0 ? canonical : selected;
+
+    return effective
+      .filter(
+        (usage) =>
+          usage.asset &&
+          usage.asset.workspaceId === workspaceId &&
+          usage.asset.status === 'ready',
+      )
+      .map((usage) => ({
+        assetId: usage.asset!.id,
+        fileType: usage.asset!.fileType,
+        mimeType: usage.asset!.mimeType,
+        fileName: usage.asset!.fileName,
+        storageKey: usage.asset!.storageKey,
+        publicUrl: usage.asset!.publicUrl,
+      }));
+  }
+
+  async getProviderPublishMedia(
+    workspaceId: number,
+    contentItemId: number,
+    variantId?: number,
+  ) {
+    const records = await this.listReadyContentMedia(
+      workspaceId,
+      contentItemId,
+      variantId,
+    );
+
+    return Promise.all(
+      records.map(async (asset) => ({
+        assetId: asset.assetId,
+        fileType: asset.fileType,
+        mimeType: asset.mimeType,
+        fileName: asset.fileName,
+        url:
+          asset.publicUrl ||
+          (await this.storagePort.generateDownloadUrl(
+            asset.storageKey,
+            30 * 60,
+          )),
+      })),
+    );
+  }
+
   async getUploadUrl(
     workspaceId: number,
     fileName: string,

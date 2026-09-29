@@ -3,6 +3,8 @@ import { SocialPublisherPort } from './ports/SocialPublisherPort.js';
 import { SocialAnalyticsPort } from './ports/SocialAnalyticsPort.js';
 import { LinkedInPublisherAdapter } from './adapters/LinkedInPublisherAdapter.js';
 import { XPublisherAdapter } from './adapters/XPublisherAdapter.js';
+import { FacebookPublisherAdapter } from './adapters/FacebookPublisherAdapter.js';
+import { InstagramPublisherAdapter } from './adapters/InstagramPublisherAdapter.js';
 
 type SocialProviderAdapter = SocialPublisherPort & Partial<SocialAnalyticsPort>;
 
@@ -18,9 +20,13 @@ export class ProviderRegistry {
   constructor(
     linkedIn: LinkedInPublisherAdapter,
     x: XPublisherAdapter,
+    facebook: FacebookPublisherAdapter,
+    instagram: InstagramPublisherAdapter,
   ) {
     this.registerProvider(linkedIn);
     this.registerProvider(x);
+    this.registerProvider(facebook);
+    this.registerProvider(instagram);
   }
 
   registerProvider(provider: SocialProviderAdapter) {

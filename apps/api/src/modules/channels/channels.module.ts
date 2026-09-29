@@ -7,6 +7,9 @@ import { OAuthStateService } from './oauth-state.service.js';
 import { ProviderRegistry } from './ProviderRegistry.js';
 import { LinkedInPublisherAdapter } from './adapters/LinkedInPublisherAdapter.js';
 import { XPublisherAdapter } from './adapters/XPublisherAdapter.js';
+import { MetaGraphClient } from './adapters/MetaGraphClient.js';
+import { FacebookPublisherAdapter } from './adapters/FacebookPublisherAdapter.js';
+import { InstagramPublisherAdapter } from './adapters/InstagramPublisherAdapter.js';
 import { DbModule } from '../../db/db.module.js';
 
 @Module({
@@ -18,6 +21,9 @@ import { DbModule } from '../../db/db.module.js';
     OAuthStateService,
     LinkedInPublisherAdapter,
     XPublisherAdapter,
+    MetaGraphClient,
+    FacebookPublisherAdapter,
+    InstagramPublisherAdapter,
     ProviderRegistry,
   ],
   exports: [

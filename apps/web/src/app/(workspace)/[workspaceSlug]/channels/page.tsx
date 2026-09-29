@@ -28,6 +28,7 @@ export default async function ChannelsPage({
     connected?: string;
     channelError?: string;
     provider?: string;
+    connectedCount?: string;
   }>;
 }) {
   const { workspaceSlug } = await params;
@@ -86,7 +87,11 @@ export default async function ChannelsPage({
       {query.connected && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[10px] text-emerald-700">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          {providerLabel(query.connected)} connected successfully.
+          {providerLabel(query.connected)} connected successfully
+          {query.connectedCount &&
+          Number.parseInt(query.connectedCount, 10) > 1
+            ? ` · ${query.connectedCount} accounts discovered`
+            : ""}.
         </div>
       )}
 
@@ -114,7 +119,7 @@ export default async function ChannelsPage({
           {
             label: "Publishing ready",
             value: publishingReady,
-            hint: "Usable credential + text adapter",
+            hint: "Usable credential + publishing adapter",
             Icon: Send,
           },
           {
