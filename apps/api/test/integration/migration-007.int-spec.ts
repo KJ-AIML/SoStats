@@ -48,12 +48,13 @@ describe('migration 007', () => {
   async function result(
     sql: postgres.Sql,
     jobId: number,
-    errorType: string,
+    errorType: string | null,
     createdAt: string,
+    platformPostId: string | null = null,
   ) {
     await sql`
-      insert into publication_results (publication_job_id, error_type, created_at)
-      values (${jobId}, ${errorType}, ${at(createdAt)})`;
+      insert into publication_results (publication_job_id, error_type, platform_post_id, created_at)
+      values (${jobId}, ${errorType}, ${platformPostId}, ${at(createdAt)})`;
   }
 
   async function hasColumn(sql: postgres.Sql, table: string, column: string) {
@@ -266,6 +267,110 @@ describe('migration 007', () => {
       { id: laterRejected, status: 'failed' },
       { id: laterUnknown, status: 'needs_review' },
     ]);
+  });
+
+  // Each outcome is written by its own job, in order, so "latest" and
+  // "any platform post id" are checked across the publication's jobs.
+  async function failedWithOutcomes(
+    sql: postgres.Sql,
+    seeded: SeededChannel,
+    outcomes: [errorType: string | null, platformPostId: string | null][],
+  ) {
+    const id = await publication(sql, seeded, 'failed');
+    for (const [index, [errorType, platformPostId]] of outcomes.entries()) {
+      const jobId = await job(sql, id, 'failed', `2026-09-30T00:0${index}:00Z`);
+      await result(
+        sql,
+        jobId,
+        errorType,
+        `2026-09-30T00:0${index}:30Z`,
+        platformPostId,
+      );
+    }
+    return id;
+  }
+
+  it.each([
+    [
+      'a platform post id followed by a later unexpected_error',
+      [
+        [null, 'post-1'],
+        ['unexpected_error', null],
+      ],
+    ],
+    [
+      'a platform post id followed by a later known rejection',
+      [
+        [null, 'post-1'],
+        ['provider_rejected', null],
+      ],
+    ],
+    [
+      'a latest unexpected_error',
+      [
+        ['provider_rejected', null],
+        ['unexpected_error', null],
+      ],
+    ],
+    [
+      'a latest retry_exhausted',
+      [
+        ['provider_rejected', null],
+        ['retry_exhausted', null],
+      ],
+    ],
+  ] as [string, [string | null, string | null][]][])(
+    'moves a failed publication with %s to needs_review',
+    async (_label, outcomes) => {
+      const { sql, applyPostBaselineMigrations } = await legacyDatabase();
+      const id = await failedWithOutcomes(
+        sql,
+        await seedChannel(sql),
+        outcomes,
+      );
+
+      await applyPostBaselineMigrations();
+
+      const [row] = await sql<{ status: string }[]>`
+        select status from scheduled_publications where id = ${id}`;
+      expect(row.status).toBe('needs_review');
+    },
+  );
+
+  it('keeps a failed publication failed when its latest outcome is a known rejection and no post id exists', async () => {
+    const { sql, applyPostBaselineMigrations } = await legacyDatabase();
+    const id = await failedWithOutcomes(sql, await seedChannel(sql), [
+      ['unexpected_error', null],
+      ['provider_rejected', null],
+    ]);
+
+    await applyPostBaselineMigrations();
+
+    const [row] = await sql<{ status: string }[]>`
+      select status from scheduled_publications where id = ${id}`;
+    expect(row.status).toBe('failed');
+  });
+
+  it('counts a failed publication that qualifies only by its platform post id when checking duplicates', async () => {
+    const { sql, applyPostBaselineMigrations } = await legacyDatabase();
+    const seeded = await seedChannel(sql);
+    const failed = await failedWithOutcomes(sql, seeded, [
+      [null, 'post-1'],
+      ['provider_rejected', null],
+    ]);
+    const active = await publication(sql, seeded, 'scheduled');
+
+    const error = (await applyPostBaselineMigrations().catch(
+      (caught: unknown) => caught,
+    )) as { message: string; hint?: string };
+    expect(error.message).toMatch(/duplicate active publication identity/);
+    const query = error.hint?.split(String.fromCharCode(10)).pop() ?? '';
+    const groups = await sql.unsafe(query);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].ids).toEqual([failed, active]);
+    const [row] = await sql<{ status: string }[]>`
+      select status from scheduled_publications where id = ${failed}`;
+    expect(row.status).toBe('failed');
   });
 
   it('leaves existing safe rows unchanged', async () => {

@@ -15,6 +15,27 @@ declare
   unexpected text;
   duplicate_groups integer;
   duplicate_detail text;
+  -- A legacy `failed` publication (alias sp) that may be live (spec §4.3, I3):
+  -- a result with a platform post id exists, or its latest result is
+  -- ambiguous. The only definition: the duplicate pre-check, the HINT query and
+  -- the reclassification below all use it.
+  possibly_live constant text := $predicate$(
+    exists (
+      select 1
+      from publication_results r
+      join publication_jobs j on j.id = r.publication_job_id
+      where j.scheduled_publication_id = sp.id
+        and r.platform_post_id is not null
+    )
+    or (
+      select r.error_type
+      from publication_results r
+      join publication_jobs j on j.id = r.publication_job_id
+      where j.scheduled_publication_id = sp.id
+      order by r.created_at desc, r.id desc
+      limit 1
+    ) in ('unknown_outcome', 'unexpected_error', 'retry_exhausted')
+  )$predicate$;
 begin
   select count(*) into inflight_publications
     from scheduled_publications where status = 'publishing';
@@ -42,19 +63,18 @@ begin
     raise exception '007: unexpected publication_jobs.status value(s): %', unexpected;
   end if;
 
-  with latest_result as (
-    select distinct on (j.scheduled_publication_id)
-      j.scheduled_publication_id, r.error_type
-    from publication_results r
-    join publication_jobs j on j.id = r.publication_job_id
-    order by j.scheduled_publication_id, r.created_at desc, r.id desc
-  ),
-  future_active as (
+  -- Evaluated once, before any change, so the pre-check and the
+  -- reclassification act on exactly the same rows. Dropped at commit.
+  execute format(
+    'create temporary table m007_possibly_live_failed on commit drop as
+       select sp.id from scheduled_publications sp where sp.status = ''failed'' and %s',
+    possibly_live);
+
+  with future_active as (
     select sp.id, sp.workspace_id, sp.content_item_id, sp.social_account_id, sp.scheduled_at
     from scheduled_publications sp
-    left join latest_result lr on lr.scheduled_publication_id = sp.id
     where sp.status in ('scheduled', 'publishing')
-       or (sp.status = 'failed' and lr.error_type = 'unknown_outcome')
+       or sp.id in (select id from m007_possibly_live_failed)
   ),
   groups as (
     select workspace_id, content_item_id, social_account_id, scheduled_at,
@@ -78,8 +98,10 @@ begin
   if duplicate_groups > 0 then
     raise exception '007: % duplicate active publication identity group(s); no rows were changed', duplicate_groups
       using detail = duplicate_detail,
-            hint = E'Cancel or reschedule all but one row per group, then re-run 007. List the groups with:
-select workspace_id, content_item_id, social_account_id, scheduled_at, array_agg(id order by id) as ids from scheduled_publications sp where status in (''scheduled'', ''publishing'') or (status = ''failed'' and (select r.error_type from publication_results r join publication_jobs j on j.id = r.publication_job_id where j.scheduled_publication_id = sp.id order by r.created_at desc, r.id desc limit 1) = ''unknown_outcome'') group by workspace_id, content_item_id, social_account_id, scheduled_at having count(*) > 1;';
+            hint = E'Cancel or reschedule all but one row per group, then re-run 007. List the groups with:\n'
+              || format(
+                   'select workspace_id, content_item_id, social_account_id, scheduled_at, array_agg(id order by id) as ids from scheduled_publications sp where sp.status in (''scheduled'', ''publishing'') or (sp.status = ''failed'' and %s) group by workspace_id, content_item_id, social_account_id, scheduled_at having count(*) > 1;',
+                   regexp_replace(possibly_live, '[[:space:]]+', ' ', 'g'));
   end if;
 end $$;
 
@@ -160,17 +182,12 @@ set status = 'unknown',
     updated_at = now() at time zone 'utc'
 where status in ('processing', 'pending');
 
+-- I3 "failed means known": a legacy failed row that may be live must not stay
+-- reschedulable. Same rows the duplicate pre-check counted (possibly_live above).
 update scheduled_publications sp
 set status = 'needs_review'
 where sp.status = 'failed'
-  and (
-    select r.error_type
-    from publication_results r
-    join publication_jobs j on j.id = r.publication_job_id
-    where j.scheduled_publication_id = sp.id
-    order by r.created_at desc, r.id desc
-    limit 1
-  ) = 'unknown_outcome';
+  and sp.id in (select id from m007_possibly_live_failed);
 
 alter table scheduled_publications
   add constraint scheduled_publications_status_check
