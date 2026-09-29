@@ -52,7 +52,7 @@ export class SchedulingService {
     return this.db.query.scheduledPublications.findMany({
       where: and(...conditions),
       with: {
-        contentItem: true,
+        contentItem: { with: { campaign: true } },
         variant: true,
         socialAccount: true,
         jobs: { with: { results: true } },
