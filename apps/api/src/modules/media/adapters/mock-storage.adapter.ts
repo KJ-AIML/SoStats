@@ -26,6 +26,14 @@ export class MockObjectStorageAdapter implements ObjectStoragePort {
     return `${this.baseUrl}/download/${key}?expires=${expiresInSeconds}`;
   }
 
+  async statFile(_key: string) {
+    return {
+      size: 1024,
+      contentType: 'application/octet-stream',
+      etag: '"mock-etag"',
+    };
+  }
+
   async deleteFile(key: string): Promise<void> {
     this.logger.debug(`Mock deleting file: ${key}`);
     // No-op for mock

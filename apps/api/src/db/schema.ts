@@ -174,23 +174,41 @@ export const channelRules = pgTable('channel_rules', {
 });
 
 // assets
-export const assets = pgTable('assets', {
-  id: serial('id').primaryKey(),
-  workspaceId: integer('workspace_id')
-    .notNull()
-    .references(() => workspaces.id, { onDelete: 'cascade' }),
-  brandId: integer('brand_id').references(() => brands.id, {
-    onDelete: 'set null',
+export const assets = pgTable(
+  'assets',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    brandId: integer('brand_id').references(() => brands.id, {
+      onDelete: 'set null',
+    }),
+    fileName: varchar('file_name', { length: 255 }).notNull(),
+    fileType: varchar('file_type', { length: 50 }).notNull(), // image, video
+    mimeType: varchar('mime_type', { length: 100 }).notNull(),
+    size: integer('size').notNull(),
+    storageKey: varchar('storage_key', { length: 255 }).notNull(),
+    publicUrl: varchar('public_url', { length: 1024 }),
+    status: varchar('status', { length: 30 }).notNull().default('ready'),
+    width: integer('width'),
+    height: integer('height'),
+    durationMs: integer('duration_ms'),
+    processingToken: varchar('processing_token', { length: 64 }),
+    processingError: text('processing_error'),
+    uploadCompletedAt: timestamp('upload_completed_at'),
+    processedAt: timestamp('processed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    assetWorkspaceStatusIdx: index('asset_workspace_status_idx').on(
+      table.workspaceId,
+      table.status,
+      table.updatedAt,
+    ),
   }),
-  fileName: varchar('file_name', { length: 255 }).notNull(),
-  fileType: varchar('file_type', { length: 50 }).notNull(), // image, video, document
-  mimeType: varchar('mime_type', { length: 100 }).notNull(),
-  size: integer('size').notNull(),
-  storageKey: varchar('storage_key', { length: 255 }).notNull(),
-  publicUrl: varchar('public_url', { length: 1024 }),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+);
 
 // asset_collections
 export const assetCollections = pgTable('asset_collections', {
