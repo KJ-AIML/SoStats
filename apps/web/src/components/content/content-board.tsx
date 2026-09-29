@@ -28,11 +28,7 @@ import {
   Search,
   Send,
 } from "lucide-react";
-import type {
-  ContentItem,
-  ContentStatus,
-  ContentVariantRef,
-} from "./data";
+import type { ContentItem, ContentStatus } from "./data";
 import { ContentColumn } from "./content-column";
 import { ContentCard } from "./content-card";
 import { Button } from "@/components/ui/button";
