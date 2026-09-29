@@ -426,7 +426,7 @@ export const contentItems = pgTable(
     }),
     title: varchar('title', { length: 255 }).notNull(),
     description: text('description'),
-    status: varchar('status', { length: 50 }).notNull().default('draft'), // draft, in_review, approved, scheduled, published, archived
+    status: varchar('status', { length: 50 }).notNull().default('draft'), // idea, draft, in_review, approved, scheduled, published, archived
     campaignId: integer('campaign_id').references(() => campaigns.id, {
       onDelete: 'set null',
     }),
