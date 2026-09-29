@@ -43,6 +43,9 @@ export default async function ContentPage({
     id: number;
     provider: string;
     accountName?: string | null;
+    requiresMedia?: boolean;
+    mediaMimeTypes?: string[];
+    maxMediaItems?: number;
   }> = [];
   let brands: Array<{ id: number; name: string }> = [];
   let connectionError = false;
@@ -66,6 +69,9 @@ export default async function ContentPage({
         id: channel.id,
         provider: channel.provider,
         accountName: channel.accountName,
+        requiresMedia: channel.capabilities?.requiresMedia,
+        mediaMimeTypes: channel.capabilities?.mediaMimeTypes,
+        maxMediaItems: channel.capabilities?.maxMediaItems,
       }));
 
     items = snapshot.content.flatMap((item) => {
