@@ -45,6 +45,37 @@ function formatBytes(size?: number | null) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function uploadPrivateDocument(
+  uploadUrl: string,
+  file: File,
+  mimeType: string,
+  onProgress: (value: number) => void,
+) {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("content-type", mimeType);
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onerror = () => reject(new Error("Private document upload failed"));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(100);
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `Private document upload failed with HTTP ${xhr.status}`,
+        ),
+      );
+    };
+    xhr.send(file);
+  });
+}
+
 export function KnowledgeLibrary({
   workspaceSlug,
   brandId,
@@ -63,6 +94,7 @@ export function KnowledgeLibrary({
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const ready = useMemo(
@@ -92,7 +124,7 @@ export function KnowledgeLibrary({
       }
     }, 3500);
     return () => window.clearInterval(timer);
-  }, [hasPending, workspaceSlug]);
+  }, [brandId, hasPending, workspaceSlug]);
 
   const resetForm = () => {
     setTitle("");
@@ -159,16 +191,13 @@ export function KnowledgeLibrary({
     setSources((current) => [initialized.source!, ...current]);
 
     try {
-      const upload = await fetch(initialized.uploadUrl, {
-        method: "PUT",
-        headers: { "content-type": mimeType },
-        body: file,
-      });
-      if (!upload.ok) {
-        throw new Error(
-          `Private document upload failed with HTTP ${upload.status}`,
-        );
-      }
+      setUploadProgress(0);
+      await uploadPrivateDocument(
+        initialized.uploadUrl,
+        file,
+        mimeType,
+        setUploadProgress,
+      );
 
       const complete = await fetch(
         `/api/workspaces/${encodeURIComponent(workspaceSlug)}/knowledge/${initialized.source.id}/complete-upload`,
@@ -233,6 +262,7 @@ export function KnowledgeLibrary({
       );
     } finally {
       setBusy(null);
+      setUploadProgress(null);
     }
   };
 
@@ -450,6 +480,23 @@ export function KnowledgeLibrary({
                 </Button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {uploadProgress !== null && (
+        <div className="border-b border-black/[0.055] px-5 py-3">
+          <div className="flex items-center justify-between text-[8px] text-muted-foreground">
+            <span>Uploading private document directly to object storage</span>
+            <span className="font-semibold text-neutral-700">
+              {uploadProgress}%
+            </span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-neutral-100">
+            <div
+              className="h-full rounded-full bg-[#ef2b2d] transition-[width]"
+              style={{ width: `${uploadProgress}%` }}
+            />
           </div>
         </div>
       )}
