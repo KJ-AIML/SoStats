@@ -269,6 +269,7 @@ export class AutomationsService {
               lastTriggeredAt: feedChanged
                 ? null
                 : existingTrigger.lastTriggeredAt,
+              lastReceivedAt: null,
               lastError: null,
               updatedAt: new Date(),
             })
@@ -345,6 +346,7 @@ export class AutomationsService {
             publicId: null,
             secret: null,
             leaseToken: null,
+            lastReceivedAt: null,
             leaseExpiresAt: null,
             nextPollAt: null,
             lastError: null,

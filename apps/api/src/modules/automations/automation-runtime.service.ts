@@ -597,6 +597,10 @@ export class AutomationRuntimeService {
         payload.feed && typeof payload.feed === 'object'
           ? (payload.feed as Record<string, unknown>)
           : {};
+      const event =
+        payload.event && typeof payload.event === 'object'
+          ? (payload.event as Record<string, unknown>)
+          : {};
 
       const title =
         typeof item.title === 'string' ? item.title.trim() : undefined;
@@ -610,10 +614,19 @@ export class AutomationRuntimeService {
           : undefined;
       const feedTitle =
         typeof feed.title === 'string' ? feed.title.trim() : undefined;
+      const eventName =
+        typeof event.name === 'string' ? event.name.trim() : undefined;
+      const postType =
+        typeof item.postType === 'string' ? item.postType.trim() : undefined;
+      const status =
+        typeof item.status === 'string' ? item.status.trim() : undefined;
 
       const lines = [
         `External trigger source: ${source}`,
+        eventName ? `Event: ${eventName}` : undefined,
         feedTitle ? `Feed: ${feedTitle}` : undefined,
+        postType ? `Content type: ${postType}` : undefined,
+        status ? `Source status: ${status}` : undefined,
         title ? `Source title: ${title}` : undefined,
         publishedAt ? `Published at: ${publishedAt}` : undefined,
         link ? `Source URL: ${link}` : undefined,

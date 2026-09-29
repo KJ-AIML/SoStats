@@ -26,11 +26,17 @@ export class AutomationHooksController {
     @Param('publicId') publicId: string,
     @Req() request: RawRequest,
     @Body() body: unknown,
+    @Headers('content-type') contentType?: string,
     @Headers('x-sostats-timestamp') timestamp?: string,
     @Headers('x-sostats-signature') signature?: string,
     @Headers('x-sostats-event-id') eventId?: string,
     @Headers('x-sostats-event') eventName?: string,
   ) {
+    if (!String(contentType || '').toLowerCase().startsWith('application/json')) {
+      throw new BadRequestException(
+        'Webhook content type must be application/json',
+      );
+    }
     if (!request.rawBody) {
       throw new BadRequestException(
         'Raw webhook body is unavailable for signature verification',
