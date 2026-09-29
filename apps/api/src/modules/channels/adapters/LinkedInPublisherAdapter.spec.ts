@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testPublishContext } from '../../../../test/support/publish-context.js';
 import { ProviderPublishError } from '../ports/SocialPublisherPort.js';
 import { LinkedInPublisherAdapter } from './LinkedInPublisherAdapter.js';
@@ -45,6 +45,42 @@ describe('LinkedInPublisherAdapter.publishPost', () => {
     });
   });
 
+  it('resolves the member via a bounded userinfo call before the marker', async () => {
+    const order: string[] = [];
+    const context = testPublishContext({
+      beforeSideEffect: vi.fn(async () => {
+        order.push('marker');
+      }),
+    });
+    let userinfoSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        if (String(url).endsWith('/v2/userinfo')) {
+          order.push('userinfo');
+          userinfoSignal = init?.signal ?? undefined;
+          return new Response('{"sub":"member-9"}', { status: 200 });
+        }
+        order.push('post');
+        return new Response(null, {
+          status: 201,
+          headers: { 'x-restli-id': 'urn:li:share:2' },
+        });
+      }),
+    );
+
+    await expect(
+      new LinkedInPublisherAdapter().publishPost(
+        'Launch day',
+        'token',
+        context,
+      ),
+    ).resolves.toEqual({ postId: 'urn:li:share:2' });
+    expect(order).toEqual(['userinfo', 'marker', 'post']);
+    expect(context.beforeSideEffect).toHaveBeenCalledTimes(1);
+    expect(userinfoSignal).toBeInstanceOf(AbortSignal);
+  });
+
   it.each([
     [
       '429',
@@ -87,45 +123,164 @@ describe('LinkedInPublisherAdapter.publishPost', () => {
     expect(error).toMatchObject(expected);
   });
 
-  it('classifies a network failure after the marker as unknown', async () => {
+  it('classifies a network failure as unknown, after the marker', async () => {
+    const context = testPublishContext();
     const error = await publish(
       vi.fn(async () => {
         throw new TypeError('fetch failed');
       }),
+      context,
     ).catch((caught: unknown) => caught);
     expect(error).toMatchObject({
+      retryable: false,
       outcomeUnknown: true,
       errorClass: 'network_transient',
     });
+    expect(context.beforeSideEffect).toHaveBeenCalledTimes(1);
   });
 
-  it('sends nothing when the marker is refused', async () => {
+  it('sends nothing and rethrows the identical error when the marker is refused', async () => {
+    const hookError = new Error('lease lost');
     const fetchMock = vi.fn();
     const context = testPublishContext({
       beforeSideEffect: vi.fn(async () => {
-        throw new Error('lease lost');
+        throw hookError;
       }),
     });
-    await expect(publish(fetchMock, context)).rejects.toThrow('lease lost');
+    await expect(publish(fetchMock, context)).rejects.toBe(hookError);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('classifies a refresh network failure as retryable, not unknown', async () => {
-    process.env.LINKEDIN_CLIENT_ID = 'id';
-    process.env.LINKEDIN_CLIENT_SECRET = 'secret';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new TypeError('fetch failed');
-      }),
+  it('fails retryably without marking or sending when the budget is already exhausted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const context = testPublishContext({ signal: controller.signal });
+    const fetchMock = vi.fn();
+    const error = await publish(fetchMock, context).catch(
+      (caught: unknown) => caught,
     );
-    const error = await new LinkedInPublisherAdapter()
-      .refreshAccessToken('refresh')
-      .catch((caught: unknown) => caught);
     expect(error).toMatchObject({
       retryable: true,
       outcomeUnknown: false,
       errorClass: 'network_transient',
     });
+    expect(context.beforeSideEffect).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('bounds the publish request by the parent budget signal', async () => {
+    const controller = new AbortController();
+    let sent: AbortSignal | undefined;
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      sent = init?.signal ?? undefined;
+      return new Response(null, {
+        status: 201,
+        headers: { 'x-restli-id': 'urn:li:share:1' },
+      });
+    });
+    await publish(fetchMock, testPublishContext({ signal: controller.signal }));
+    expect(sent).toBeInstanceOf(AbortSignal);
+    expect(sent?.aborted).toBe(false);
+    controller.abort();
+    expect(sent?.aborted).toBe(true);
+  });
+});
+
+describe('LinkedInPublisherAdapter.refreshAccessToken', () => {
+  const original = {
+    id: process.env.LINKEDIN_CLIENT_ID,
+    secret: process.env.LINKEDIN_CLIENT_SECRET,
+  };
+
+  beforeEach(() => {
+    process.env.LINKEDIN_CLIENT_ID = 'id';
+    process.env.LINKEDIN_CLIENT_SECRET = 'secret';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    const restore = (name: string, value: string | undefined) => {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    };
+    restore('LINKEDIN_CLIENT_ID', original.id);
+    restore('LINKEDIN_CLIENT_SECRET', original.secret);
+  });
+
+  function refresh(respond: () => Response | Promise<Response>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => respond()),
+    );
+    return new LinkedInPublisherAdapter()
+      .refreshAccessToken('refresh')
+      .catch((caught: unknown) => caught);
+  }
+
+  it.each([
+    [
+      '429',
+      () => new Response('{}', { status: 429 }),
+      { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
+    ],
+    [
+      '503',
+      () => new Response('{}', { status: 503 }),
+      {
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'transient_provider',
+      },
+    ],
+    [
+      '401',
+      () => new Response('{}', { status: 401 }),
+      { retryable: false, outcomeUnknown: false, errorClass: 'authentication' },
+    ],
+    [
+      'malformed 2xx',
+      () => new Response('not json', { status: 200 }),
+      {
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'transient_provider',
+      },
+    ],
+    [
+      'token-less 2xx',
+      () => new Response('{}', { status: 200 }),
+      {
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'transient_provider',
+      },
+    ],
+  ])('classifies %s', async (_label, respond, expected) => {
+    expect(await refresh(respond)).toMatchObject(expected);
+  });
+
+  it('classifies a network failure as retryable, not unknown', async () => {
+    const error = await refresh(() => {
+      throw new TypeError('fetch failed');
+    });
+    expect(error).toMatchObject({
+      retryable: true,
+      outcomeUnknown: false,
+      errorClass: 'network_transient',
+    });
+  });
+
+  it('bounds the request with a per-request timeout signal', async () => {
+    let sent: AbortSignal | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        sent = init?.signal ?? undefined;
+        return new Response('{"access_token":"a"}', { status: 200 });
+      }),
+    );
+    await new LinkedInPublisherAdapter().refreshAccessToken('refresh');
+    expect(sent).toBeInstanceOf(AbortSignal);
+    expect(sent?.aborted).toBe(false);
   });
 });

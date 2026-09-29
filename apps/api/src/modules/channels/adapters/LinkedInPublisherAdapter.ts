@@ -96,8 +96,16 @@ export class LinkedInPublisherAdapter
     context: PublishContext,
   ): Promise<PublishResult> {
     const providerAccountId =
-      context.providerAccountId || (await this.getUserInfo(accessToken)).sub;
+      context.providerAccountId ||
+      (await this.getUserInfo(accessToken, providerSignal(context.signal)))
+        .sub;
 
+    if (context.signal.aborted) {
+      throw new ProviderPublishError(
+        'LinkedIn publish budget was exhausted before the request was sent',
+        { retryable: true, errorClass: 'network_transient' },
+      );
+    }
     await context.beforeSideEffect({ operationType: 'linkedin_create_post' });
 
     let response: Response;
@@ -364,9 +372,13 @@ export class LinkedInPublisherAdapter
     );
   }
 
-  private async getUserInfo(accessToken: string): Promise<LinkedInUserInfo> {
+  private async getUserInfo(
+    accessToken: string,
+    signal?: AbortSignal,
+  ): Promise<LinkedInUserInfo> {
     const response = await fetch('https://api.linkedin.com/v2/userinfo', {
       headers: { authorization: `Bearer ${accessToken}` },
+      signal,
     });
 
     if (!response.ok) {

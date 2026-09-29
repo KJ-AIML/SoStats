@@ -247,6 +247,12 @@ export class XPublisherAdapter
     accessToken: string,
     context: PublishContext,
   ): Promise<PublishResult> {
+    if (context.signal.aborted) {
+      throw new ProviderPublishError(
+        'X publish budget was exhausted before the request was sent',
+        { retryable: true, errorClass: 'network_transient' },
+      );
+    }
     await context.beforeSideEffect({ operationType: 'x_create_post' });
 
     let response: Response;
