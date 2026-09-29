@@ -19,6 +19,24 @@ export type WorkspaceRecord = {
   role?: string;
 };
 
+export type KnowledgeSourceRecord = {
+  id: number;
+  workspaceId: number;
+  brandId: number;
+  sourceType: "text" | "url" | string;
+  title: string;
+  sourceUrl?: string | null;
+  mimeType?: string | null;
+  status: "processing" | "ready" | "failed" | string;
+  embeddingModel?: string | null;
+  chunkCount: number;
+  metadata?: Record<string, unknown>;
+  lastError?: string | null;
+  processedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type BrandRecord = {
   id: number;
   workspaceId: number;
@@ -266,6 +284,7 @@ export type WorkspaceSnapshot = {
   channels: SocialAccountRecord[];
   automations: AutomationRecord[];
   assets: AssetRecord[];
+  knowledge: KnowledgeSourceRecord[];
   errors: string[];
 };
 
@@ -397,6 +416,7 @@ export async function loadWorkspaceSnapshot(
     channels,
     automations,
     assets,
+    knowledge,
   ] = await Promise.all([
     safe("brands", workspaceRequest<BrandRecord[]>(workspaceSlug, "/brands"), [], errors),
     safe("campaigns", workspaceRequest<CampaignRecord[]>(workspaceSlug, "/v1/campaigns"), [], errors),
@@ -425,6 +445,12 @@ export async function loadWorkspaceSnapshot(
     safe("channels", workspaceRequest<SocialAccountRecord[]>(workspaceSlug, "/v1/channels"), [], errors),
     safe("automations", workspaceRequest<AutomationRecord[]>(workspaceSlug, "/v1/automations"), [], errors),
     safe("assets", workspaceRequest<AssetRecord[]>(workspaceSlug, "/v1/assets"), [], errors),
+    safe(
+      "knowledge",
+      workspaceRequest<KnowledgeSourceRecord[]>(workspaceSlug, "/v1/knowledge"),
+      [],
+      errors,
+    ),
   ]);
 
   const firstBrand = brands[0] || null;
@@ -449,6 +475,7 @@ export async function loadWorkspaceSnapshot(
     channels,
     automations,
     assets,
+    knowledge,
     errors,
   };
 }

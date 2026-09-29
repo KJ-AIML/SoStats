@@ -2,14 +2,13 @@ import {
   BrainCircuit,
   CheckCircle2,
   MessageSquareText,
-  Plus,
   ShieldCheck,
   Sparkles,
   Target,
   Package,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { PageHeading } from "@/components/sostats/page-heading";
+import { KnowledgeLibrary } from "@/components/brand-brain/knowledge-library";
 import { loadWorkspaceSnapshot } from "@/lib/sostats-api.server";
 
 export default async function BrandBrainPage({
@@ -65,12 +64,6 @@ export default async function BrandBrainPage({
         eyebrow="Brand Brain"
         title={brand ? `Teach SoStats how ${brand.name} thinks` : "Teach SoStats how your brand thinks"}
         description="A shared intelligence layer for every campaign, automation and AI recommendation in your workspace."
-        actions={
-          <Button className="h-10 rounded-xl bg-[#ef2b2d] text-[10px] hover:bg-[#da2427]">
-            <Plus className="mr-2 h-3.5 w-3.5" />
-            Add knowledge
-          </Button>
-        }
       />
 
       {!snapshot && (
@@ -91,7 +84,7 @@ export default async function BrandBrainPage({
               AI should sound like your brand before it sounds like AI.
             </h2>
             <p className="mt-2 max-w-xl text-[10px] leading-5 text-white/55">
-              Campaign generation now retrieves voice, audience, product, pillar and rule records from this Brand Brain before calling the AI service.
+              Generation combines structured brand rules with semantic retrieval from your indexed websites, PDFs and source-of-truth text before calling the AI service.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -109,6 +102,14 @@ export default async function BrandBrainPage({
           </div>
         </div>
       </section>
+
+      <KnowledgeLibrary
+        workspaceSlug={workspaceSlug}
+        brandId={brand?.id}
+        initialSources={(snapshot?.knowledge || []).filter(
+          (source) => !brand || source.brandId === brand.id,
+        )}
+      />
 
       <div className="grid gap-4 xl:grid-cols-12">
         <section className="sostats-card xl:col-span-7">
