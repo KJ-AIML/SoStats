@@ -36,6 +36,8 @@ function sanitizeValue(value: unknown, depth = 0): unknown {
   if (depth > 5) return '[TRUNCATED]';
   if (value === null || value === undefined) return value;
 
+  if (value instanceof Date) return value.toISOString();
+
   if (typeof value === 'string') {
     return value.length > 1000 ? `${value.slice(0, 1000)}…` : value;
   }
@@ -88,6 +90,10 @@ export class AuditLogService {
   async record(input: AuditEventInput) {
     const action = input.action.trim().slice(0, 120);
     const targetType = input.targetType.trim().slice(0, 80);
+    if (!action || !targetType) {
+      throw new Error('Audit action and target type are required');
+    }
+
     const targetId =
       input.targetId === null || input.targetId === undefined
         ? null
