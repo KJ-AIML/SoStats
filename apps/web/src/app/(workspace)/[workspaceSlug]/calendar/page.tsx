@@ -67,11 +67,24 @@ export default async function CalendarPage({
         scheduledAt: schedule.scheduledAt,
         status: schedule.status,
         attempts: jobs.reduce((total, job) => total + (job.attempts || 0), 0),
-        failureType: latest?.errorType || undefined,
-        failureReason: latest?.errorMessage || undefined,
-        postUrl: latest?.platformPostUrl || undefined,
-        platformPostId: latest?.platformPostId || undefined,
-        resultAt: latest?.createdAt || undefined,
+        failureType:
+          schedule.status === "failed" ? latest?.errorType || undefined : undefined,
+        failureReason:
+          schedule.status === "failed"
+            ? latest?.errorMessage || undefined
+            : undefined,
+        postUrl:
+          schedule.status === "published"
+            ? latest?.platformPostUrl || undefined
+            : undefined,
+        platformPostId:
+          schedule.status === "published"
+            ? latest?.platformPostId || undefined
+            : undefined,
+        resultAt:
+          schedule.status === "published"
+            ? latest?.createdAt || undefined
+            : undefined,
       };
     });
   } catch {
