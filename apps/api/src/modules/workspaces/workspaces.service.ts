@@ -17,7 +17,10 @@ import {
 } from '../../common/workspace/workspace-access.service.js';
 import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
 import { ApiKeyService } from '../../common/auth/api-key.service.js';
-import { AuditLogService } from '../../common/audit/audit-log.service.js';
+import {
+  AuditLogService,
+  type AuditActor,
+} from '../../common/audit/audit-log.service.js';
 import { SessionService } from '../../common/auth/session.service.js';
 import { NotificationPreferencesService } from '../../common/notifications/notification-preferences.service.js';
 
@@ -294,6 +297,7 @@ export class WorkspacesService {
     actorUserId: number,
     targetMemberId: number,
     previousOwnerRole: WorkspaceRole = 'admin',
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
@@ -372,6 +376,32 @@ export class WorkspacesService {
 
       if (!newOwner) {
         throw new ConflictException('Ownership transfer target changed');
+      }
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'workspace.ownership_transferred',
+            targetType: 'workspace_member',
+            targetId: newOwner.id,
+            metadata: {
+              previousOwnerUserId: previousOwner.userId,
+              previousOwnerRole: previousOwner.role,
+              newOwnerUserId: newOwner.userId,
+            },
+          },
+          [
+            'audit',
+            'workspace.ownership_transferred',
+            workspaceId,
+            previousOwner.id,
+            newOwner.id,
+            now.toISOString(),
+          ].join(':'),
+        );
       }
 
       return {
