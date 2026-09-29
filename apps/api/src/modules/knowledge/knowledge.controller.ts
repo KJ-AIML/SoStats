@@ -14,6 +14,7 @@ import {
   WorkspaceScoped,
 } from '../../common/workspace/workspace.decorator.js';
 import {
+  CreateKnowledgeDocumentUploadDto,
   CreateKnowledgeSourceDto,
   SearchKnowledgeDto,
 } from './knowledge.dto.js';
@@ -44,12 +45,44 @@ export class KnowledgeController {
     return this.knowledge.create(workspaceId, body);
   }
 
+  @Post('upload-url')
+  createDocumentUpload(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Body() body: CreateKnowledgeDocumentUploadDto,
+  ) {
+    return this.knowledge.createDocumentUpload(workspaceId, body);
+  }
+
   @Post('search')
   search(
     @CurrentWorkspaceId() workspaceId: number,
     @Body() body: SearchKnowledgeDto,
   ) {
     return this.knowledge.search(workspaceId, body);
+  }
+
+  @Post(':id/complete-upload')
+  completeUpload(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.knowledge.completeDocumentUpload(workspaceId, id);
+  }
+
+  @Post(':id/retry')
+  retry(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.knowledge.retryDocument(workspaceId, id);
+  }
+
+  @Post(':id/reindex')
+  reindex(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.knowledge.reindexDocument(workspaceId, id);
   }
 
   @Delete(':id')

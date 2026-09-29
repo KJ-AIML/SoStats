@@ -16,6 +16,6 @@ import { WorkerTokenGuard } from '../../common/internal/worker-token.guard.js';
       useClass: S3ObjectStorageAdapter,
     },
   ],
-  exports: [MediaService],
+  exports: [MediaService, OBJECT_STORAGE_PORT],
 })
 export class MediaModule {}
