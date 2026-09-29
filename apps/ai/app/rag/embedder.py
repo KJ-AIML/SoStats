@@ -2,11 +2,13 @@ import base64
 import io
 import re
 from html.parser import HTMLParser
+from zipfile import BadZipFile, ZipFile
 
+from docx import Document
 from pypdf import PdfReader
 
 
-MAX_SOURCE_BYTES = 8 * 1024 * 1024
+MAX_SOURCE_BYTES = 15 * 1024 * 1024
 MAX_TEXT_CHARS = 500_000
 MAX_CHUNKS = 100
 
@@ -78,6 +80,43 @@ def extract_text(
         for page in reader.pages:
             pages.append(page.extract_text() or "")
         return normalize_text("\n\n".join(pages))
+
+    if (
+        normalized_type
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ):
+        try:
+            with ZipFile(io.BytesIO(raw)) as archive:
+                entries = archive.infolist()
+                if len(entries) > 2000:
+                    raise ValueError("DOCX archive contains too many entries")
+                total_uncompressed = sum(entry.file_size for entry in entries)
+                if total_uncompressed > 50 * 1024 * 1024:
+                    raise ValueError(
+                        "DOCX archive exceeds the 50 MiB expanded-size limit"
+                    )
+                if any(entry.file_size > 25 * 1024 * 1024 for entry in entries):
+                    raise ValueError("DOCX archive contains an oversized entry")
+                names = {entry.filename for entry in entries}
+                if (
+                    "[Content_Types].xml" not in names
+                    or "word/document.xml" not in names
+                ):
+                    raise ValueError("DOCX archive is missing required document parts")
+        except BadZipFile as exc:
+            raise ValueError("DOCX source is not a valid ZIP container") from exc
+
+        document = Document(io.BytesIO(raw))
+        parts: list[str] = []
+        for paragraph in document.paragraphs:
+            if paragraph.text.strip():
+                parts.append(paragraph.text)
+        for table in document.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+        return normalize_text("\n".join(parts))
 
     if normalized_type.startswith("text/"):
         return normalize_text(raw.decode("utf-8", errors="replace"))

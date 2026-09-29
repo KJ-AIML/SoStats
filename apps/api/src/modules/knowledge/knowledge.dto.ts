@@ -6,6 +6,14 @@ export class CreateKnowledgeSourceDto {
   text?: string;
 }
 
+export class CreateKnowledgeDocumentUploadDto {
+  brandId!: number;
+  title!: string;
+  fileName!: string;
+  mimeType!: string;
+  size!: number;
+}
+
 export class SearchKnowledgeDto {
   brandId!: number;
   query!: string;

@@ -290,8 +290,14 @@ export const knowledgeSources = pgTable(
     sourceUrl: varchar('source_url', { length: 2048 }),
     sourceText: text('source_text'),
     mimeType: varchar('mime_type', { length: 150 }),
+    fileName: varchar('file_name', { length: 255 }),
+    fileSize: integer('file_size'),
+    storageKey: varchar('storage_key', { length: 1024 }),
     contentHash: varchar('content_hash', { length: 64 }),
     status: varchar('status', { length: 30 }).notNull().default('processing'),
+    activeVersion: integer('active_version').notNull().default(1),
+    processingVersion: integer('processing_version'),
+    processingToken: varchar('processing_token', { length: 64 }),
     embeddingModel: varchar('embedding_model', { length: 100 }),
     chunkCount: integer('chunk_count').notNull().default(0),
     metadata: jsonb('metadata')
@@ -299,6 +305,7 @@ export const knowledgeSources = pgTable(
       .notNull()
       .default({}),
     lastError: text('last_error'),
+    uploadCompletedAt: timestamp('upload_completed_at'),
     processedAt: timestamp('processed_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -310,6 +317,10 @@ export const knowledgeSources = pgTable(
     knowledgeSourceHashIdx: index('knowledge_source_hash_idx').on(
       table.brandId,
       table.contentHash,
+    ),
+    knowledgeSourceDispatchIdx: index('knowledge_source_dispatch_idx').on(
+      table.status,
+      table.updatedAt,
     ),
   }),
 );
@@ -328,6 +339,7 @@ export const knowledgeChunks = pgTable(
     brandId: integer('brand_id')
       .notNull()
       .references(() => brands.id, { onDelete: 'cascade' }),
+    versionNumber: integer('version_number').notNull().default(1),
     chunkIndex: integer('chunk_index').notNull(),
     content: text('content').notNull(),
     embedding: embedding1536('embedding').notNull(),
@@ -338,9 +350,9 @@ export const knowledgeChunks = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({
-    knowledgeChunkSourceIndexUnique: uniqueIndex(
-      'knowledge_chunk_source_index_unique',
-    ).on(table.sourceId, table.chunkIndex),
+    knowledgeChunkSourceVersionIndexUnique: uniqueIndex(
+      'knowledge_chunk_source_version_index_unique',
+    ).on(table.sourceId, table.versionNumber, table.chunkIndex),
     knowledgeChunkWorkspaceBrandIdx: index(
       'knowledge_chunk_workspace_brand_idx',
     ).on(table.workspaceId, table.brandId, table.sourceId),

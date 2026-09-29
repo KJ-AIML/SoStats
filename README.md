@@ -51,6 +51,7 @@ Architecture notes:
 - [Stage 8 external RSS automation trigger](docs/architecture/STAGE_8_RSS_TRIGGER.md)
 - [Stage 9 signed webhook / WordPress trigger](docs/architecture/STAGE_9_SIGNED_WEBHOOK_TRIGGER.md)
 - [Stage 10 Brand Brain knowledge RAG](docs/architecture/STAGE_10_BRAND_BRAIN_RAG.md)
+- [Stage 11 private document knowledge pipeline](docs/architecture/STAGE_11_PRIVATE_KNOWLEDGE_DOCUMENTS.md)
 
 ## Repository layout
 

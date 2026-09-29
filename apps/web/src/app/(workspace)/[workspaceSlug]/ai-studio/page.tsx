@@ -32,6 +32,7 @@ type Campaign = {
       sourceId: number;
       sourceTitle: string;
       sourceUrl?: string | null;
+      versionNumber?: number;
       similarity: number;
     }>;
   };
@@ -403,6 +404,9 @@ export default function AiStudioPage() {
                               {item.sourceTitle}
                             </p>
                             <p className="mt-0.5 text-[8px] text-muted-foreground">
+                              {item.versionNumber
+                                ? `v${item.versionNumber} · `
+                                : ""}
                               Semantic match {Math.round(item.similarity * 100)}%
                             </p>
                           </div>

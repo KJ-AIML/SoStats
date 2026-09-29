@@ -23,15 +23,26 @@ export type KnowledgeSourceRecord = {
   id: number;
   workspaceId: number;
   brandId: number;
-  sourceType: "text" | "url" | string;
+  sourceType: "text" | "url" | "file" | string;
   title: string;
   sourceUrl?: string | null;
   mimeType?: string | null;
-  status: "processing" | "ready" | "failed" | string;
+  fileName?: string | null;
+  fileSize?: number | null;
+  status:
+    | "uploading"
+    | "uploaded"
+    | "processing"
+    | "ready"
+    | "failed"
+    | string;
+  activeVersion: number;
+  processingVersion?: number | null;
   embeddingModel?: string | null;
   chunkCount: number;
   metadata?: Record<string, unknown>;
   lastError?: string | null;
+  uploadCompletedAt?: string | null;
   processedAt?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -64,6 +75,7 @@ export type CampaignRecord = {
       sourceId: number;
       sourceTitle: string;
       sourceUrl?: string | null;
+      versionNumber?: number;
       similarity: number;
     }>;
   } | Record<string, unknown>;
