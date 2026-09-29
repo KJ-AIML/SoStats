@@ -58,6 +58,43 @@ export const workspaceMembers = pgTable(
   },
 );
 
+// workspace_invitations
+export const workspaceInvitations = pgTable(
+  'workspace_invitations',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    email: varchar('email', { length: 255 }).notNull(),
+    role: varchar('role', { length: 50 }).notNull().default('member'),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+    status: varchar('status', { length: 30 }).notNull().default('pending'),
+    invitedByUserId: integer('invited_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    acceptedByUserId: integer('accepted_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    expiresAt: timestamp('expires_at').notNull(),
+    acceptedAt: timestamp('accepted_at'),
+    rejectedAt: timestamp('rejected_at'),
+    revokedAt: timestamp('revoked_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    workspaceInviteEmailIdx: index('workspace_invite_email_idx').on(
+      table.workspaceId,
+      table.email,
+    ),
+    workspaceInviteStatusIdx: index('workspace_invite_status_idx').on(
+      table.workspaceId,
+      table.status,
+    ),
+  }),
+);
+
 // brands
 export const brands = pgTable(
   'brands',
@@ -822,6 +859,7 @@ export const webhookDeliveries = pgTable('webhook_deliveries', {
 // Relations
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   members: many(workspaceMembers),
+  invitations: many(workspaceInvitations),
   brands: many(brands),
   socialAccounts: many(socialAccounts),
   assets: many(assets),
@@ -838,6 +876,10 @@ export const workspacesRelations = relations(workspaces, ({ many }) => ({
 
 export const usersRelations = relations(users, ({ many }) => ({
   workspaceMembers: many(workspaceMembers),
+  invitationsSent: many(workspaceInvitations, { relationName: 'invitedBy' }),
+  invitationsAccepted: many(workspaceInvitations, {
+    relationName: 'acceptedBy',
+  }),
 }));
 
 export const workspaceMembersRelations = relations(
@@ -849,6 +891,26 @@ export const workspaceMembersRelations = relations(
     }),
     user: one(users, {
       fields: [workspaceMembers.userId],
+      references: [users.id],
+    }),
+  }),
+);
+
+export const workspaceInvitationsRelations = relations(
+  workspaceInvitations,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [workspaceInvitations.workspaceId],
+      references: [workspaces.id],
+    }),
+    invitedBy: one(users, {
+      relationName: 'invitedBy',
+      fields: [workspaceInvitations.invitedByUserId],
+      references: [users.id],
+    }),
+    acceptedBy: one(users, {
+      relationName: 'acceptedBy',
+      fields: [workspaceInvitations.acceptedByUserId],
       references: [users.id],
     }),
   }),
