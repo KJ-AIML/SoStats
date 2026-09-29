@@ -88,8 +88,12 @@ describe('migration 007', () => {
     await job(sql, id, 'processing', '2026-09-30T00:00:00Z');
 
     await expect(applyPostBaselineMigrations()).rejects.toThrow(/not drained/);
-    expect(await hasColumn(sql, 'scheduled_publications', 'active_attempt_id')).toBe(false);
-    const [row] = await sql<{ status: string }[]>`select status from scheduled_publications where id = ${id}`;
+    expect(
+      await hasColumn(sql, 'scheduled_publications', 'active_attempt_id'),
+    ).toBe(false);
+    const [row] = await sql<
+      { status: string }[]
+    >`select status from scheduled_publications where id = ${id}`;
     expect(row.status).toBe('publishing');
   });
 
@@ -121,7 +125,8 @@ describe('migration 007', () => {
     )) as { message: string; detail?: string };
     expect(error.message).toMatch(/duplicate active publication identity/);
     expect(error.detail).toContain(`ids=[${a},${b}]`);
-    const rows = await sql`select id from scheduled_publications where id in (${a}, ${b})`;
+    const rows =
+      await sql`select id from scheduled_publications where id in (${a}, ${b})`;
     expect(rows).toHaveLength(2);
   });
 
@@ -141,11 +146,26 @@ describe('migration 007', () => {
   it('reclassifies failed publications by their latest outcome only', async () => {
     const { sql, applyPostBaselineMigrations } = await legacyDatabase();
     const seeded = await seedChannel(sql);
-    const laterRejected = await publication(sql, seeded, 'failed', '2026-10-01T09:00:00Z');
-    const jobA = await job(sql, laterRejected, 'failed', '2026-09-30T00:00:00Z');
+    const laterRejected = await publication(
+      sql,
+      seeded,
+      'failed',
+      '2026-10-01T09:00:00Z',
+    );
+    const jobA = await job(
+      sql,
+      laterRejected,
+      'failed',
+      '2026-09-30T00:00:00Z',
+    );
     await result(sql, jobA, 'unknown_outcome', '2026-09-30T00:01:00Z');
     await result(sql, jobA, 'provider_rejected', '2026-09-30T00:02:00Z');
-    const laterUnknown = await publication(sql, seeded, 'failed', '2026-10-02T09:00:00Z');
+    const laterUnknown = await publication(
+      sql,
+      seeded,
+      'failed',
+      '2026-10-02T09:00:00Z',
+    );
     const jobB = await job(sql, laterUnknown, 'failed', '2026-09-30T00:00:00Z');
     await result(sql, jobB, 'provider_rejected', '2026-09-30T00:01:00Z');
     await result(sql, jobB, 'unknown_outcome', '2026-09-30T00:02:00Z');
@@ -164,15 +184,42 @@ describe('migration 007', () => {
     const { sql, applyPostBaselineMigrations } = await legacyDatabase();
     const seeded = await seedChannel(sql);
     const kept = {
-      scheduled: await publication(sql, seeded, 'scheduled', '2026-10-01T09:00:00Z'),
-      published: await publication(sql, seeded, 'published', '2026-10-02T09:00:00Z'),
-      cancelled: await publication(sql, seeded, 'cancelled', '2026-10-03T09:00:00Z'),
+      scheduled: await publication(
+        sql,
+        seeded,
+        'scheduled',
+        '2026-10-01T09:00:00Z',
+      ),
+      published: await publication(
+        sql,
+        seeded,
+        'published',
+        '2026-10-02T09:00:00Z',
+      ),
+      cancelled: await publication(
+        sql,
+        seeded,
+        'cancelled',
+        '2026-10-03T09:00:00Z',
+      ),
       failed: await publication(sql, seeded, 'failed', '2026-10-04T09:00:00Z'),
     };
-    const failedJob = await job(sql, kept.failed, 'failed', '2026-09-30T00:00:00Z');
+    const failedJob = await job(
+      sql,
+      kept.failed,
+      'failed',
+      '2026-09-30T00:00:00Z',
+    );
     await result(sql, failedJob, 'provider_rejected', '2026-09-30T00:01:00Z');
     const snapshot = () =>
-      sql<{ id: number; status: string; scheduled_at: string; updated_at: string }[]>`
+      sql<
+        {
+          id: number;
+          status: string;
+          scheduled_at: string;
+          updated_at: string;
+        }[]
+      >`
         select id, status, scheduled_at::text, updated_at::text
         from scheduled_publications order by id`;
     const before = await snapshot();
