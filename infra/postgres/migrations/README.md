@@ -17,6 +17,7 @@ Current chain:
 004_stage14_immutable_audit_log.sql
 005_stage14_sessions_notifications.sql
 006_stage15_transactional_outbox.sql
+007_stage15_side_effect_recovery.sql
 ```
 
 ## Important baseline note
