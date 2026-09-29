@@ -46,6 +46,7 @@ export class ProviderPublishError extends Error {
 export interface SocialPublisherPort {
   readonly providerName: string;
   readonly capabilities: ProviderCapabilities;
+  readonly oauthPkce?: boolean;
 
   publishPost(
     content: string,
@@ -53,11 +54,16 @@ export interface SocialPublisherPort {
     context?: PublishContext,
   ): Promise<PublishResult>;
 
-  getAuthUrl(redirectUri: string): string;
+  getAuthUrl(
+    redirectUri: string,
+    state: string,
+    codeChallenge?: string,
+  ): string;
 
   exchangeToken(
     code: string,
     redirectUri: string,
+    codeVerifier?: string,
   ): Promise<{
     accessToken: string;
     refreshToken?: string;

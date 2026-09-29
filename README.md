@@ -47,6 +47,7 @@ Architecture notes:
 - [Stage 4 real analytics ingestion](docs/architecture/STAGE_4_REAL_ANALYTICS.md)
 - [Stage 5 closed AI learning loop](docs/architecture/STAGE_5_CLOSED_AI_LOOP.md)
 - [Stage 6 real media processing](docs/architecture/STAGE_6_REAL_MEDIA.md)
+- [Stage 7 X provider + secure OAuth](docs/architecture/STAGE_7_X_PROVIDER.md)
 
 ## Repository layout
 

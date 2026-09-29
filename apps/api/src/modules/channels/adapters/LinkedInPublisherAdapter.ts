@@ -212,12 +212,16 @@ export class LinkedInPublisherAdapter
     return metrics;
   }
 
-  getAuthUrl(redirectUri: string): string {
+  getAuthUrl(
+    redirectUri: string,
+    state: string,
+    _codeChallenge?: string,
+  ): string {
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.clientId(),
       redirect_uri: redirectUri,
-      state: crypto.randomUUID(),
+      state,
       scope: this.scopes(),
     });
 
@@ -227,6 +231,7 @@ export class LinkedInPublisherAdapter
   async exchangeToken(
     code: string,
     redirectUri: string,
+    _codeVerifier?: string,
   ): Promise<{
     accessToken: string;
     refreshToken?: string;

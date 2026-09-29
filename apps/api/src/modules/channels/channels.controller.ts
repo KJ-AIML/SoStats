@@ -1,14 +1,19 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+} from '@nestjs/common';
 import {
   CurrentWorkspaceId,
   WorkspaceScoped,
 } from '../../common/workspace/workspace.decorator.js';
 import { ChannelsService } from './channels.service.js';
 
-export class ConnectDto {
+export class StartOAuthDto {
   brandId!: number;
-  code!: string;
-  redirectUri!: string;
+  returnTo!: string;
 }
 
 @WorkspaceScoped()
@@ -21,18 +26,22 @@ export class ChannelsController {
     return this.channelsService.findAll(workspaceId);
   }
 
-  @Post(':provider/connect')
-  connect(
+  @Get('providers')
+  providers() {
+    return this.channelsService.providers();
+  }
+
+  @Post(':provider/oauth/start')
+  startOAuth(
     @Param('provider') provider: string,
-    @Body() body: ConnectDto,
+    @Body() body: StartOAuthDto,
     @CurrentWorkspaceId() workspaceId: number,
   ) {
-    return this.channelsService.connectProvider(
+    return this.channelsService.startOAuth(
       provider,
       workspaceId,
       body.brandId,
-      body.code,
-      body.redirectUri,
+      body.returnTo,
     );
   }
 }
