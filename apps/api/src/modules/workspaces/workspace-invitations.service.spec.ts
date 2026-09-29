@@ -10,6 +10,7 @@ function service() {
     invitations: new WorkspaceInvitationsService(
       {} as never,
       access as never,
+      {} as never,
     ),
   };
 }
