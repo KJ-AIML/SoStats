@@ -1,5 +1,5 @@
-import { sql } from 'drizzle-orm';
-import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
+import { sql, type SQL } from 'drizzle-orm';
+import type { AnyPgColumn, PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import * as schema from '../../db/schema.js';
 
 export const ACTIVE_PUBLICATION_STATUSES = [
@@ -41,4 +41,12 @@ export function rearmSet(
     nextAttemptAt,
     updatedAt: now,
   };
+}
+
+/**
+ * Optimistic-lock predicate. Versions travel as JS Dates/ISO strings (ms
+ * precision) while column defaults carry microseconds, so compare truncated.
+ */
+export function sameVersion(column: AnyPgColumn, version: Date | string): SQL {
+  return sql`date_trunc('milliseconds', ${column}) = ${new Date(version).toISOString()}::timestamp`;
 }

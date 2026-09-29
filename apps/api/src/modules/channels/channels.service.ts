@@ -14,6 +14,11 @@ import { encrypt } from '../../utils/encryption.util.js';
 import { OAuthStateService } from './oauth-state.service.js';
 import { ProviderRegistry } from './ProviderRegistry.js';
 import { ChannelCredentialService } from './channel-credential.service.js';
+import {
+  ACTIVE_PUBLICATION_STATUSES,
+  CREDENTIAL_DEPENDENT_PUBLICATION_STATUSES,
+  isStatusIn,
+} from '../publishing/publication-state.js';
 
 @Injectable()
 export class ChannelsService {
@@ -93,7 +98,7 @@ export class ChannelsService {
         (schedule) => schedule.status === 'published',
       );
       const activeSchedules = accountSchedules.filter((schedule) =>
-        ['scheduled', 'publishing'].includes(schedule.status),
+        isStatusIn(schedule.status, ACTIVE_PUBLICATION_STATUSES),
       );
       const latestSnapshot = snapshots.find(
         (snapshot) => snapshot.socialAccountId === record.id,
@@ -202,8 +207,7 @@ export class ChannelsService {
         eq(schema.scheduledPublications.workspaceId, workspaceId),
         eq(schema.scheduledPublications.socialAccountId, accountId),
         inArray(schema.scheduledPublications.status, [
-          'scheduled',
-          'publishing',
+          ...CREDENTIAL_DEPENDENT_PUBLICATION_STATUSES,
         ]),
       ),
     });

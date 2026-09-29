@@ -9,7 +9,7 @@ import type {
   PublishResult,
 } from '../channels/ports/SocialPublisherPort.js';
 import { LeaseLostError } from './publication-outcome.js';
-import { rearmSet } from './publication-state.js';
+import { rearmSet, sameVersion } from './publication-state.js';
 import {
   PUBLISHING_CONFIG,
   retryDelayMs,
@@ -79,9 +79,7 @@ export class PublicationLedger {
             eq(sp.status, 'scheduled'),
             isNull(sp.activeAttemptId),
             request.expectedDispatchGeneration === undefined
-              ? // Versions travel as ISO strings (ms precision); rows written by
-                // the column default carry microseconds, so compare truncated.
-                sql`date_trunc('milliseconds', ${sp.updatedAt}) = ${new Date(request.expectedVersion).toISOString()}::timestamp`
+              ? sameVersion(sp.updatedAt, request.expectedVersion)
               : eq(sp.dispatchGeneration, request.expectedDispatchGeneration),
           ),
         )
