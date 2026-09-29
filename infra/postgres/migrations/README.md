@@ -52,8 +52,91 @@ by the corresponding architecture stage.
       (If a row cannot drain: verify it on the provider, or run 007 with
       `set sostats.inflight_publications = 'mark_unknown';` in the same session. Never make it retryable.)
 - [ ] Apply `007_stage15_publication_safety.sql` (it re-checks the drain and fails loudly).
-- [ ] Deploy the API.
+- [ ] Deploy the API immediately after 007. Until it is live, the old API and
+      web app can still reschedule rows that 007 just moved to `needs_review`.
 - [ ] Deploy the worker (this resumes dispatch).
 - [ ] Deploy the web app.
 - [ ] Smoke test: one post to a sandbox channel reaches `published`; its attempt row has a request marker and is `completed`.
 - [ ] On smoke failure: stop the worker and roll back the code (worker, then API); keep the schema.
+
+## Roll forward after a rollback (hard sequence — do not reorder)
+
+While the pre-32A code runs against the 007 schema:
+
+- it writes new ambiguous outcomes as `failed`;
+- it can reschedule `unknown` / `needs_review` rows back to `scheduled` with a
+  stale `active_attempt_id`;
+- it re-arms rows without bumping `dispatch_generation`, so a retained queue job
+  for that generation can block re-dispatch;
+- it leaves in-flight rows in `publishing` without a request marker.
+
+Redeploying the 32A code is therefore not enough. Run every step below, in order.
+
+- [ ] Pause publication dispatch: stop every worker process.
+- [ ] Drain exactly as in the 007 rollout: wait for in-flight API executions,
+      then assert both counts are 0:
+      `select count(*) from scheduled_publications where status = 'publishing';` → 0
+      `select count(*) from publication_jobs where status in ('processing', 'pending');` → 0
+- [ ] If a `publishing` row cannot drain, handle it exactly like the 007 drain
+      rule: verify it on the provider, or mark it `unknown` with the SQL below.
+      Never make it retryable. The SQL marks every remaining in-flight row, so
+      resolve the rows you verified first.
+
+      ```sql
+      begin;
+      update scheduled_publications sp
+      set status = 'unknown',
+          active_attempt_id = coalesce(
+            (select j.id from publication_jobs j
+             where j.scheduled_publication_id = sp.id and j.status = 'processing'
+             order by j.created_at desc, j.id desc limit 1),
+            (select j.id from publication_jobs j
+             where j.scheduled_publication_id = sp.id
+             order by j.created_at desc, j.id desc limit 1)),
+          lease_expires_at = null
+      where sp.status = 'publishing'
+         or (sp.status <> 'published' and exists (
+               select 1 from publication_jobs j
+               where j.scheduled_publication_id = sp.id and j.status = 'processing'));
+      update publication_jobs
+      set status = 'unknown',
+          provider_request_started_at = coalesce(provider_request_started_at, last_attempt_at, now() at time zone 'utc'),
+          completed_at = now() at time zone 'utc',
+          error_class = 'unknown_outcome',
+          updated_at = now() at time zone 'utc'
+      where status = 'processing';
+      commit;
+      ```
+
+- [ ] Re-run the 007 reclassification. It uses the same predicate as 007 and is
+      idempotent:
+
+      ```sql
+      update scheduled_publications sp
+      set status = 'needs_review'
+      where sp.status = 'failed'
+        and (
+          exists (
+            select 1
+            from publication_results r
+            join publication_jobs j on j.id = r.publication_job_id
+            where j.scheduled_publication_id = sp.id
+              and r.platform_post_id is not null
+          )
+          or (
+            select r.error_type
+            from publication_results r
+            join publication_jobs j on j.id = r.publication_job_id
+            where j.scheduled_publication_id = sp.id
+            order by r.created_at desc, r.id desc
+            limit 1
+          ) in ('unknown_outcome', 'unexpected_error', 'retry_exhausted')
+        );
+      ```
+
+- [ ] Give every `scheduled` row a fresh dispatch generation and clear stale
+      ownership:
+      `update scheduled_publications set dispatch_generation = dispatch_generation + 1, active_attempt_id = null, lease_expires_at = null where status = 'scheduled';`
+- [ ] Deploy the API immediately, then the worker (this resumes dispatch), then
+      the web app.
+- [ ] Smoke test as in the 007 rollout.

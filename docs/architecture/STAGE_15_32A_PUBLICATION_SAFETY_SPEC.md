@@ -32,6 +32,8 @@ publication state:
 
 - **I1 — One owner per publication.** A publication has at most one active attempt. Only the owner of the active attempt may mutate the publication's execution state, and every such write is conditional on that ownership.
 - **I2 — No automatic re-arm after the request marker.** Once `provider_request_started_at` exists for an attempt, no automatic path can start another provider attempt for that publication. An unconfirmed outcome or lease expiry after the marker always leads to `unknown`. Neither `unknown` nor `needs_review` can be left through the normal reschedule or cancel endpoints.
+  - The one carve-out: the adapter may declare that the provider rejected the post-creating request and did not apply it. Examples are HTTP 429 and the Meta throttle codes. That response is a safe retry per §6.2, so it may re-arm.
+  - The "no automatic re-arm" rule covers unconfirmed outcomes and lease expiry after the marker.
 - **I3 — `failed` means known.** `failed` is written only when SoStats has enough information to conclude the attempt did not create an unconfirmed external publication.
 - **I4 — Recovery writes are compare-and-set.** A sweeper, a late worker, or a user mutation may change a publication only if it is still in the state and ownership that its decision was based on. Zero affected rows means "state changed; do nothing".
 - **I5 — One active logical schedule.** At most one publication in an active state exists per `(workspace_id, content_item_id, social_account_id, scheduled_at)`.
@@ -156,7 +158,13 @@ which stays correct with multiple attempts per publication.
 - **Backfills (non-destructive):**
   - `publication_jobs.attempt_number` = `row_number() over (partition by scheduled_publication_id order by created_at, id)`.
   - `scheduled_publications.attempt_count` = the latest job's legacy `attempts` for `scheduled` rows, else 0.
-  - **Latest-outcome reclassification.** A publication with `status = 'failed'` whose **latest** `publication_results` row is `unknown_outcome` becomes `needs_review`. "Latest" is ordered by `created_at desc, id desc` across all of the publication's jobs. An older `unknown_outcome` followed by a definitive result does not qualify. This enforces I3 for historical data. Those rows cannot be rescheduled until 32B ships operator resolution; that is the intended safe side.
+  - **Latest-outcome reclassification.** Pre-32A code wrote `failed` for posts that may be live: an audit failure after a committed publish, C4/C5 (`unexpected_error`), and the old dead-letter (`retry_exhausted`, which could hit an in-flight `publishing` row). A publication with `status = 'failed'` becomes `needs_review` when either holds:
+    - any `publication_results` row across its jobs has a non-null `platform_post_id`;
+    - its **latest** `publication_results` row has `error_type` in (`unknown_outcome`, `unexpected_error`, `retry_exhausted`). "Latest" is ordered by `created_at desc, id desc` across all of the publication's jobs.
+
+    Every other `failed` row stays `failed`. Examples: a latest `provider_rejected` with no platform post id, or an older ambiguous result followed by a definitive one. This enforces I3 for historical data.
+
+    007 defines this predicate once. The reclassification, the duplicate pre-check (which counts these rows as active) and the pre-check's diagnostic `HINT` query all use it. Those rows cannot be rescheduled until 32B ships operator resolution; that is the intended safe side.
 - `apps/api/src/db/schema.ts` declares every column, check and index added by 007.
 - The chain list in `infra/postgres/migrations/README.md` gains `007`.
 
@@ -409,7 +417,7 @@ Provider error messages and response bodies are **not** logged. They stay in
 
    If a row cannot drain (for example a crashed legacy execution), resolve it by checking the provider account manually, or run 007 with the explicit `mark_unknown` opt-in (§4.3). Never convert it to retryable.
 3. **Apply 007.** It enforces the drained precondition itself.
-4. **Deploy the API.** The new API is compatible with the old worker:
+4. **Deploy the API immediately after 007.** Until it is live, the old API and web app can still reschedule rows that 007 just moved to `needs_review`. The new API is compatible with the old worker:
    - domain outcomes are HTTP 200, so old jobs complete;
    - re-arms bump `updated_at`, so the old version-based job id changes;
    - dead-letter is a no-op.
@@ -421,14 +429,25 @@ Provider error messages and response bodies are **not** logged. They stay in
 
 - **Roll back the code, not the schema.** Stop the worker, roll back the worker, then the API. 007 has no destructive statements and no down-migration; fixes go forward.
 - **The old API works against the 007 schema.** New columns are nullable or defaulted, `attempt_number` defaults to 1 (which matches the old one-row-per-publication pattern), and the old code writes only statuses inside the new CHECK set.
-- **Cost of a rollback:** the old `updateSchedule` would again allow rescheduling `unknown` / `needs_review` rows (D2 reopens for manual actions only). The old dispatcher never picks those statuses, so no automatic duplicate is reintroduced.
+- **Cost of a rollback.** For as long as the old code runs, the duplicate paths that 32A closed return:
+  - D1 comes back.
+  - D3 comes back. The unique index still rejects identical identities, but the old step computes `startAt` per execution.
+  - C7 comes back.
+  - The old automatic retry on Meta `is_transient` after the post request comes back.
+
+  New ambiguous outcomes are again written as `failed`. The old `updateSchedule` can reschedule `unknown` / `needs_review` rows (D2), and it leaves a stale `active_attempt_id` on them. Rows still in flight stay `publishing` without a request marker.
+- **Roll-forward is not just a redeploy.** Follow "Roll forward after a rollback" in `infra/postgres/migrations/README.md`:
+  1. pause and drain as in §13.1, and handle `publishing` rows like the 007 drain rule (never retryable);
+  2. re-run the 007 reclassification;
+  3. bump `dispatch_generation` and clear `active_attempt_id` / `lease_expires_at` on `scheduled` rows;
+  4. deploy in the §13.1 order.
 
 ## 14. Acceptance gate (32A)
 
 - [ ] D1, D2, D3 each have a test that fails before and passes after.
 - [ ] C1–C7 are each covered by a test from §12.
 - [ ] Every write to `scheduled_publications` execution state checks ownership or status. Review checklist: no `where id = ?`-only update remains in `publishing.service.ts` / `scheduling.service.ts`.
-- [ ] No automatic path re-arms a publication whose active attempt has a request marker (I2).
+- [ ] No automatic path re-arms a publication whose active attempt has a request marker (I2). The one exception is an adapter-declared "rejected, not applied" response to the post-creating request, such as HTTP 429 or the Meta throttle codes (§6.2). An unconfirmed outcome or lease expiry after the marker never re-arms.
 - [ ] The worker transport-exhaustion test passes; domain state is unchanged by transport failure (I8).
 - [ ] 2xx malformed / missing id → `unknown` for all four providers.
 - [ ] The Instagram container id is persisted before `media_publish`.
@@ -458,6 +477,15 @@ Handoff to 32B:
   - LinkedIn goes to `needs_review` under the current scopes.
 - **Disconnected channels.** For a `needs_review` publication on a disconnected channel, operators can mark it published or cancel it. "Confirm absent and retry" requires reconnecting first.
 - **Late successes.** The `ownership_lost_after_success` log line and the success result stored on the attempt must be visible to operators.
+  - When the success write fails after the provider confirmed a post, the attempt's `provider_checkpoint` keeps `confirmedPlatformPostId` / `confirmedPlatformPostUrl`.
+  - This evidence is deliberately not in `publication_results.platform_post_id`, which analytics ingests.
+- **Deploy order for new execute statuses.** When 32B adds an `execute` response status, deploy the worker **before** the API.
+  - The worker completes a job only on statuses it recognises.
+  - It treats any other response as a transport failure: the job is retried, removed and re-dispatched.
+- **Markers on `failed` / `abandoned` attempts.** When an attempt is `failed` or `abandoned` and its `beforeSideEffect` hook rejected, its request marker means "not sent": the adapter never sent the request.
+  - A marker alone is therefore not evidence of an external request.
+  - Other `failed` attempts with a marker are adapter-declared known rejections: a safe retry or a known terminal failure (§6.1, §6.2).
+- **Cascade deletes.** Deleting a brand cascades through `social_accounts`. Replacing a campaign's content deletes `content_items`. Both cascade to `scheduled_publications`, `publication_jobs` and `publication_results`, so they can remove `unknown` / `needs_review` rows and their evidence.
 
 ## 16. Known ceilings
 
