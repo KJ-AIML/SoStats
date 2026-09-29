@@ -29,6 +29,7 @@ alter table publication_jobs
       'idle',
       'claimed',
       'provider_request_started',
+      'provider_confirmed',
       'terminal'
     )
   );
@@ -38,6 +39,10 @@ create index if not exists publication_job_schedule_idx
 
 create index if not exists publication_job_lease_idx
   on publication_jobs (status, lease_expires_at);
+
+create unique index if not exists publication_result_success_job_unique
+  on publication_results (publication_job_id)
+  where platform_post_id is not null;
 
 alter table automation_run_steps
   add column if not exists attempts integer not null default 0,
