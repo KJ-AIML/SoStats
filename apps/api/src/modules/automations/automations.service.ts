@@ -55,6 +55,7 @@ function webhookBaseUrl(required = false) {
     const url = new URL(configured);
     if (
       !['http:', 'https:'].includes(url.protocol) ||
+      (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') ||
       url.username ||
       url.password ||
       url.pathname !== '/' ||

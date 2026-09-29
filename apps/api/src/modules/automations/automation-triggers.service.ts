@@ -122,6 +122,7 @@ function webhookBaseUrl() {
     const url = new URL(value);
     if (
       !['http:', 'https:'].includes(url.protocol) ||
+      (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') ||
       url.username ||
       url.password ||
       url.pathname !== '/' ||
@@ -469,9 +470,6 @@ export class AutomationTriggersService {
 
     const config = webhookConfig(trigger.config);
     const incomingEvent = String(input.eventName || '').trim();
-    if (!incomingEvent || incomingEvent !== config.eventName) {
-      throw new BadRequestException('Webhook event does not match this trigger');
-    }
 
     let secret: string;
     try {
@@ -491,6 +489,10 @@ export class AutomationTriggersService {
     });
     if (!verification.ok) {
       throw new UnauthorizedException(verification.reason);
+    }
+
+    if (incomingEvent !== config.eventName) {
+      throw new BadRequestException('Webhook event does not match this trigger');
     }
 
     if (!input.eventId?.trim()) {

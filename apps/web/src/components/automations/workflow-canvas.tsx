@@ -370,7 +370,30 @@ export function WorkflowCanvas({
                     </span>
                     <select
                       value={String(config.mode || "manual")}
-                      onChange={(event) => updateConfig("mode", event.target.value)}
+                      onChange={(event) => {
+                        const mode = event.target.value;
+                        if (mode === "webhook") {
+                          const sourceType =
+                            typeof config.sourceType === "string"
+                              ? config.sourceType
+                              : "wordpress";
+                          updateNodeData({
+                            config: {
+                              ...config,
+                              mode,
+                              sourceType,
+                              eventName:
+                                typeof config.eventName === "string"
+                                  ? config.eventName
+                                  : sourceType === "wordpress"
+                                    ? "wordpress.post.published"
+                                    : "content.published",
+                            },
+                          });
+                          return;
+                        }
+                        updateConfig("mode", mode);
+                      }}
                       className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
                     >
                       <option value="manual">Manual / test run</option>

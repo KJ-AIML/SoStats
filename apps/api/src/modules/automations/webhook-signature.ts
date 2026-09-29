@@ -55,7 +55,11 @@ export function verifyWebhookSignature(input: {
   ) {
     return { ok: false, reason: 'Webhook event name is missing or invalid' };
   }
-  if (!eventId || eventId.length > 1024) {
+  if (
+    !eventId ||
+    eventId.length > 1024 ||
+    !/^[a-z0-9._:+-]+$/i.test(eventId)
+  ) {
     return { ok: false, reason: 'Webhook event id is missing or invalid' };
   }
 

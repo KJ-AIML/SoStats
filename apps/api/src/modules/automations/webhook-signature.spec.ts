@@ -84,5 +84,17 @@ describe('webhook signature', () => {
         nowMs: 1790650800 * 1000,
       }).ok,
     ).toBe(false);
+
+    expect(
+      verifyWebhookSignature({
+        secret,
+        timestamp,
+        signature,
+        eventName,
+        eventId: 'event id with spaces',
+        rawBody: original,
+        nowMs: 1790650800 * 1000,
+      }).ok,
+    ).toBe(false);
   });
 });
