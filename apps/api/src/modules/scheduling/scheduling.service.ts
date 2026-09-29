@@ -34,20 +34,25 @@ export class SchedulingService {
     ];
 
     if (query.startDate) {
-      conditions.push(
-        gte(schema.scheduledPublications.scheduledAt, new Date(query.startDate)),
-      );
+      const startDate = new Date(query.startDate);
+      if (Number.isNaN(startDate.getTime())) {
+        throw new BadRequestException('startDate must be a valid date');
+      }
+      conditions.push(gte(schema.scheduledPublications.scheduledAt, startDate));
     }
+
     if (query.endDate) {
-      conditions.push(
-        lte(schema.scheduledPublications.scheduledAt, new Date(query.endDate)),
-      );
+      const endDate = new Date(query.endDate);
+      if (Number.isNaN(endDate.getTime())) {
+        throw new BadRequestException('endDate must be a valid date');
+      }
+      conditions.push(lte(schema.scheduledPublications.scheduledAt, endDate));
     }
 
     return this.db.query.scheduledPublications.findMany({
       where: and(...conditions),
       with: {
-        contentItem: true,
+        contentItem: { with: { campaign: true } },
         variant: true,
         socialAccount: true,
         jobs: { with: { results: true } },
@@ -168,50 +173,142 @@ export class SchedulingService {
     });
     if (!current) throw new NotFoundException('Scheduled publication not found');
 
-    if (
-      data.scheduledAt &&
-      ['published', 'cancelled'].includes(current.status)
-    ) {
+    if (['published', 'cancelled', 'publishing'].includes(current.status)) {
       throw new BadRequestException(
-        'Published or cancelled publications cannot be rescheduled',
+        current.status === 'publishing'
+          ? 'A publication in progress cannot be changed'
+          : 'Published or cancelled publications cannot be changed',
       );
     }
 
-    const updateData: {
-      scheduledAt?: Date;
-      status?: string;
-      updatedAt: Date;
-    } = { updatedAt: new Date() };
-
-    if (data.scheduledAt) {
-      const scheduledAt = new Date(data.scheduledAt);
-      if (Number.isNaN(scheduledAt.getTime())) {
-        throw new BadRequestException('scheduledAt must be a valid date');
-      }
-      updateData.scheduledAt = scheduledAt;
-      updateData.status = 'scheduled';
+    if (data.status && data.status !== 'cancelled') {
+      throw new BadRequestException(
+        'Schedule status can only be cancelled manually',
+      );
     }
 
-    if (data.status) {
-      if (!['scheduled', 'cancelled'].includes(data.status)) {
-        throw new BadRequestException(
-          'Schedule status can only be set to scheduled or cancelled manually',
-        );
-      }
-      updateData.status = data.status;
+    if (!data.scheduledAt && data.status !== 'cancelled') {
+      throw new BadRequestException(
+        'Provide scheduledAt to reschedule or status=cancelled to cancel',
+      );
     }
 
-    const [record] = await this.db
-      .update(schema.scheduledPublications)
-      .set(updateData)
-      .where(
-        and(
-          eq(schema.scheduledPublications.id, id),
-          eq(schema.scheduledPublications.workspaceId, workspaceId),
+    if (data.status === 'cancelled') {
+      return this.cancelSchedule(workspaceId, current);
+    }
+
+    const scheduledAt = new Date(data.scheduledAt as string);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('scheduledAt must be a valid date');
+    }
+
+    return this.db.transaction(async (tx) => {
+      const [record] = await tx
+        .update(schema.scheduledPublications)
+        .set({
+          scheduledAt,
+          status: 'scheduled',
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.scheduledPublications.id, id),
+            eq(schema.scheduledPublications.workspaceId, workspaceId),
+          ),
+        )
+        .returning();
+
+      await tx
+        .update(schema.contentItems)
+        .set({ status: 'scheduled', updatedAt: new Date() })
+        .where(eq(schema.contentItems.id, current.contentItemId));
+
+      if (current.variantId) {
+        await tx
+          .update(schema.contentVariants)
+          .set({
+            status: 'scheduled',
+            scheduledAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.contentVariants.id, current.variantId));
+      }
+
+      return record;
+    });
+  }
+
+  private cancelSchedule(
+    workspaceId: number,
+    current: typeof schema.scheduledPublications.$inferSelect,
+  ) {
+    return this.db.transaction(async (tx) => {
+      const [record] = await tx
+        .update(schema.scheduledPublications)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.scheduledPublications.id, current.id),
+            eq(schema.scheduledPublications.workspaceId, workspaceId),
+          ),
+        )
+        .returning();
+
+      const contentSchedules = await tx.query.scheduledPublications.findMany({
+        where: eq(
+          schema.scheduledPublications.contentItemId,
+          current.contentItemId,
         ),
-      )
-      .returning();
+      });
+      const activeContentSchedules = contentSchedules.filter((schedule) =>
+        ['scheduled', 'publishing'].includes(schedule.status),
+      );
+      const hasPublishedContentSchedule = contentSchedules.some(
+        (schedule) => schedule.status === 'published',
+      );
 
-    return record;
+      await tx
+        .update(schema.contentItems)
+        .set({
+          status: activeContentSchedules.length
+            ? 'scheduled'
+            : hasPublishedContentSchedule
+              ? 'published'
+              : 'in_review',
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.contentItems.id, current.contentItemId));
+
+      if (current.variantId) {
+        const variantSchedules = contentSchedules.filter(
+          (schedule) => schedule.variantId === current.variantId,
+        );
+        const activeVariantSchedule = variantSchedules
+          .filter((schedule) =>
+            ['scheduled', 'publishing'].includes(schedule.status),
+          )
+          .sort(
+            (a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime(),
+          )[0];
+        const hasPublishedVariantSchedule = variantSchedules.some(
+          (schedule) => schedule.status === 'published',
+        );
+
+        await tx
+          .update(schema.contentVariants)
+          .set({
+            status: activeVariantSchedule
+              ? 'scheduled'
+              : hasPublishedVariantSchedule
+                ? 'published'
+                : 'draft',
+            scheduledAt: activeVariantSchedule?.scheduledAt || null,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.contentVariants.id, current.variantId));
+      }
+
+      return record;
+    });
   }
 }
