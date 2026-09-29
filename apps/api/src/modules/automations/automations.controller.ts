@@ -70,6 +70,14 @@ export class AutomationsController {
     return this.automationsService.publish(workspaceId, id);
   }
 
+  @Post(':id/trigger/rotate-secret')
+  rotateTriggerSecret(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.triggers.rotateWebhookSecret(workspaceId, id);
+  }
+
   @Post(':id/trigger/retry')
   retryTrigger(
     @Param('id', ParseIntPipe) id: number,

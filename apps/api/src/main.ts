@@ -11,6 +11,7 @@ async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter(),
+    { rawBody: true },
   );
 
   app.useGlobalFilters(new AllExceptionsFilter());
