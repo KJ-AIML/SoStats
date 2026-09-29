@@ -104,7 +104,17 @@ export class CampaignsService {
     workspaceId: number,
     campaign: Awaited<ReturnType<CampaignsService['findOne']>>,
     data: GenerateCampaignDto,
-  ): Promise<AiCampaignPlan> {
+  ): Promise<{
+    plan: AiCampaignPlan;
+    knowledgeEvidence: Array<{
+      chunkId: number;
+      sourceId: number;
+      sourceTitle: string;
+      sourceUrl: string | null;
+      content: string;
+      similarity: number;
+    }>;
+  }> {
     const baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
@@ -165,7 +175,10 @@ export class CampaignsService {
         );
       }
 
-      return (await response.json()) as AiCampaignPlan;
+      return {
+        plan: (await response.json()) as AiCampaignPlan,
+        knowledgeEvidence,
+      };
     } catch (error) {
       if (error instanceof BadGatewayException) throw error;
       throw new BadGatewayException('AI campaign planning service unavailable');
@@ -181,7 +194,11 @@ export class CampaignsService {
     options: { replaceExistingContent?: boolean } = {},
   ) {
     const campaign = await this.findOne(workspaceId, id);
-    const plan = await this.requestPlan(workspaceId, campaign, data);
+    const { plan, knowledgeEvidence } = await this.requestPlan(
+      workspaceId,
+      campaign,
+      data,
+    );
 
     await this.db.transaction(async (tx) => {
       await tx
@@ -238,6 +255,15 @@ export class CampaignsService {
         .set({
           description: campaign.description || plan.objective,
           status: 'active',
+          generationContext: {
+            knowledgeEvidence: knowledgeEvidence.map((item) => ({
+              chunkId: item.chunkId,
+              sourceId: item.sourceId,
+              sourceTitle: item.sourceTitle,
+              sourceUrl: item.sourceUrl,
+              similarity: Math.round(item.similarity * 1000) / 1000,
+            })),
+          },
           updatedAt: new Date(),
         })
         .where(

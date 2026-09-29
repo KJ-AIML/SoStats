@@ -26,6 +26,15 @@ type Campaign = {
   description?: string | null;
   goal?: string | null;
   status: string;
+  generationContext?: {
+    knowledgeEvidence?: Array<{
+      chunkId: number;
+      sourceId: number;
+      sourceTitle: string;
+      sourceUrl?: string | null;
+      similarity: number;
+    }>;
+  };
   channels?: Array<{ id: number; platform: string }>;
   pillars?: Array<{ id: number; pillar: string }>;
   contentItems?: Array<{
@@ -76,6 +85,13 @@ export default function AiStudioPage() {
   const pillars = useMemo(
     () => campaign?.pillars?.map((item) => item.pillar) || [],
     [campaign],
+  );
+  const knowledgeEvidence =
+    campaign?.generationContext?.knowledgeEvidence || [];
+  const knowledgeSources = Array.from(
+    new Map(
+      knowledgeEvidence.map((item) => [item.sourceId, item]),
+    ).values(),
   );
 
   const toggleChannel = (channel: string) => {
@@ -339,7 +355,11 @@ export default function AiStudioPage() {
                       <p className="text-[10px] font-semibold">Real generation loop</p>
                     </div>
                     <p className="mt-3 text-[10px] leading-4 text-white/55">
-                      This campaign was created through the NestJS API, enriched with Brand Brain context, planned by the AI service, then persisted as campaign, content and variant records.
+                      This campaign was created through the NestJS API, enriched with structured Brand Brain context
+                      {knowledgeSources.length
+                        ? ` plus ${knowledgeSources.length} retrieved knowledge source${knowledgeSources.length === 1 ? "" : "s"}`
+                        : ""}
+                      , planned by the AI service, then persisted as campaign, content and variant records.
                     </p>
                   </div>
 
@@ -354,6 +374,44 @@ export default function AiStudioPage() {
                           {pillar}
                         </span>
                       ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-black/[0.055] bg-white p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] font-semibold">Knowledge grounding</p>
+                      <span
+                        className={
+                          knowledgeSources.length
+                            ? "text-[8px] font-semibold text-emerald-600"
+                            : "text-[8px] font-medium text-neutral-400"
+                        }
+                      >
+                        {knowledgeSources.length
+                          ? `${knowledgeEvidence.length} chunks`
+                          : "Structured context only"}
+                      </span>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {knowledgeSources.length ? (
+                        knowledgeSources.slice(0, 4).map((item) => (
+                          <div
+                            key={item.sourceId}
+                            className="rounded-lg bg-neutral-50 px-3 py-2"
+                          >
+                            <p className="truncate text-[9px] font-semibold">
+                              {item.sourceTitle}
+                            </p>
+                            <p className="mt-0.5 text-[8px] text-muted-foreground">
+                              Semantic match {Math.round(item.similarity * 100)}%
+                            </p>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-[8px] leading-4 text-muted-foreground">
+                          No indexed knowledge matched this brief. Voice, audience, products, pillars and guardrails still informed generation.
+                        </p>
+                      )}
                     </div>
                   </div>
 

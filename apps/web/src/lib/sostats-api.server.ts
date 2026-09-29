@@ -58,6 +58,15 @@ export type CampaignRecord = {
   description?: string | null;
   goal?: string | null;
   status: string;
+  generationContext?: {
+    knowledgeEvidence?: Array<{
+      chunkId: number;
+      sourceId: number;
+      sourceTitle: string;
+      sourceUrl?: string | null;
+      similarity: number;
+    }>;
+  } | Record<string, unknown>;
   channels?: Array<{ id: number; platform: string }>;
   pillars?: Array<{ id: number; pillar: string }>;
   contentItems?: ContentRecord[];
