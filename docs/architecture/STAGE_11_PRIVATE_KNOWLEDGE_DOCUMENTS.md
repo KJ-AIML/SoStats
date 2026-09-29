@@ -322,7 +322,10 @@ processing.
 Deleting a private knowledge source also deletes its object from storage before
 removing the database source/chunks.
 
-The UI prevents deletion while a document is actively uploading or processing.
+An upload that fails before completion is cleaned up best-effort and an
+`uploading` source can be deleted manually. Sources already queued or actively
+processing cannot be deleted until the background lease reaches a terminal
+state.
 
 ## Database changes
 
