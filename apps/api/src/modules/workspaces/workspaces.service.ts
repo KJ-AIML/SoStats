@@ -173,7 +173,7 @@ export class WorkspacesService {
     userId: number,
     input: { name?: string; timezone?: string },
   ) {
-    await this.access.requireMembership(userId, id, ['owner', 'admin']);
+    await this.access.requireManager(userId, id);
 
     const values: Partial<typeof schema.workspaces.$inferInsert> = {
       updatedAt: new Date(),
@@ -199,7 +199,7 @@ export class WorkspacesService {
     memberId: number,
     role: string,
   ) {
-    await this.access.requireMembership(actorUserId, workspaceId, ['owner']);
+    await this.access.requireOwner(actorUserId, workspaceId);
 
     if (!['admin', 'member'].includes(role)) {
       throw new BadRequestException(
@@ -236,6 +236,10 @@ export class WorkspacesService {
     previousOwnerRole: WorkspaceRole = 'admin',
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
+
+    if (!Number.isInteger(targetMemberId) || targetMemberId <= 0) {
+      throw new BadRequestException('A valid target member id is required');
+    }
 
     if (!['admin', 'member'].includes(previousOwnerRole)) {
       throw new BadRequestException(
@@ -332,7 +336,7 @@ export class WorkspacesService {
     actorUserId: number,
     memberId: number,
   ) {
-    await this.access.requireMembership(actorUserId, workspaceId, ['owner']);
+    await this.access.requireOwner(actorUserId, workspaceId);
 
     const member = await this.db.query.workspaceMembers.findFirst({
       where: and(
@@ -368,7 +372,7 @@ export class WorkspacesService {
   }
 
   async remove(id: number, userId: number) {
-    await this.access.requireMembership(userId, id, ['owner']);
+    await this.access.requireOwner(userId, id);
 
     const [workspace] = await this.db
       .delete(schema.workspaces)
