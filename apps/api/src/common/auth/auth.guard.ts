@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { AuthService } from './auth.service.js';
 import { ApiKeyService } from './api-key.service.js';
+import { SessionService } from './session.service.js';
 import { WORKSPACE_SCOPED_KEY } from '../workspace/workspace.decorator.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import type { AuthenticatedUser } from './auth.types.js';
@@ -22,6 +23,7 @@ export class AuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly authService: AuthService,
     private readonly apiKeys: ApiKeyService,
+    private readonly sessions: SessionService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -83,14 +85,28 @@ export class AuthGuard implements CanActivate {
           'x-dev-user-email is required when AUTH_DEV_BYPASS=true',
         );
       }
+      const user = await this.authService.resolveUser(
+        this.authService.resolveDevelopmentClaims(
+          email,
+          typeof name === 'string' ? name : undefined,
+        ),
+      );
+      const session = await this.sessions.touchDevelopmentSession({
+        userId: user.id,
+        email: user.email,
+        userAgent:
+          typeof request.headers['user-agent'] === 'string'
+            ? request.headers['user-agent']
+            : null,
+      });
       request.user = {
-        ...(await this.authService.resolveUser(
-          this.authService.resolveDevelopmentClaims(
-            email,
-            typeof name === 'string' ? name : undefined,
-          ),
-        )),
+        ...user,
         authMethod: 'development',
+        session: {
+          id: session.id,
+          authMethod: 'development',
+          expiresAt: session.expiresAt,
+        },
       };
       return true;
     }
@@ -102,12 +118,26 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Bearer token is required');
     }
 
-    const claims = this.authService.verifyJwt(
-      authorization.slice('Bearer '.length).trim(),
-    );
+    const rawToken = authorization.slice('Bearer '.length).trim();
+    const claims = this.authService.verifyJwt(rawToken);
+    const user = await this.authService.resolveUser(claims);
+    const session = await this.sessions.touchJwtSession({
+      userId: user.id,
+      token: rawToken,
+      expiresAt: claims.exp ? new Date(claims.exp * 1000) : null,
+      userAgent:
+        typeof request.headers['user-agent'] === 'string'
+          ? request.headers['user-agent']
+          : null,
+    });
     request.user = {
-      ...(await this.authService.resolveUser(claims)),
+      ...user,
       authMethod: 'jwt',
+      session: {
+        id: session.id,
+        authMethod: 'jwt',
+        expiresAt: session.expiresAt,
+      },
     };
     return true;
   }
