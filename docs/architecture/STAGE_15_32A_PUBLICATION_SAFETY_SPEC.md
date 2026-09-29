@@ -83,6 +83,8 @@ Rejected in 32A with 409 Conflict: reschedule or cancel from `publishing`, `unkn
 
 `processing` → one of `completed` | `failed` | `unknown` | `abandoned`.
 `abandoned` = lease expired before the request marker. Enforced by `CHECK`.
+The only transition out of a terminal attempt status is `unknown` → `completed`,
+when that same attempt's confirmed success arrives late (or 32B confirms it).
 
 ## 4. Data model — migration `007_stage15_publication_safety.sql`
 
@@ -198,7 +200,9 @@ For each row with `status='publishing' and lease_expires_at <= now()`, in one tr
 - `updateSchedule` (reschedule): re-arm `where id and workspace_id and status in ('scheduled','failed') and updated_at = $read`, which also sets `attempt_count = 0` and `next_attempt_at = null`. 0 rows → 409. Re-arming a `failed` row can collide with another active row on `scheduled_pub_active_identity_idx` → 409.
 - `cancelSchedule`: the same compare-and-set status set → `cancelled`. 0 rows → 409.
 - `createSchedule`: a unique violation on `scheduled_pub_active_identity_idx` → 409 Conflict carrying the existing row id.
-- Automation schedule step (`automation-runtime.service.ts`): on that 409, reuse the existing row id instead of failing. This closes D3; the rest of automation idempotency is 32C.
+- Automation schedule step (`automation-runtime.service.ts`): on that 409, reuse the existing row id instead of failing.
+  - When `startAt` is not configured, the step's `startAt` checkpoint write becomes first-writer-wins (compare-and-set on the step's prior `logs` value). The loser re-reads the step and uses the winner's `startAt`, so concurrent executions compute identical `scheduled_at` values.
+  - This closes D3; the rest of automation idempotency is 32C.
 - Rollups (`cancelSchedule` content/variant status, `channels.service` active counts) use the active set.
 - `ChannelsService.disconnect` blocks on `scheduled`, `publishing` and `unknown`. `unknown` may still need credentials for 32B reconciliation; `needs_review` does not.
 
@@ -350,7 +354,7 @@ Provider error messages and response bodies are **not** logged. They stay in
 - Tests use real Drizzle over postgres-js with a pool size > 1, the real `PublishingService` / `SchedulingService`, and fake adapters driven by controllable promises.
 
 **Worker — Redis.**
-- `apps/worker/test/*.int.test.cjs`, run by `pnpm --filter worker test:int`. It requires `REDIS_HOST` and uses a local HTTP server as a scriptable fake API.
+- `apps/worker/test/*.int-test.cjs`, run by `pnpm --filter worker test:int`. The name keeps it out of the unit glob `test/*.test.cjs`. It requires `REDIS_HOST`, uses `REDIS_DB` (default 15) for isolation, and uses a local HTTP server as a scriptable fake API.
 
 **CI.** The `node` job gains `pgvector/pgvector:pg16` and `redis:7-alpine` services, plus both `test:int` steps.
 
