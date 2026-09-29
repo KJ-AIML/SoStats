@@ -103,7 +103,11 @@ export class AutomationsService {
       with: {
         versions: true,
         runs: {
-          with: { steps: true },
+          with: { steps: true, version: true },
+          orderBy: (fields, { desc: orderDesc }) => [
+            orderDesc(fields.createdAt),
+          ],
+          limit: 10,
         },
         triggers: true,
       },
@@ -414,6 +418,42 @@ export class AutomationsService {
       triggerType,
       webhook: webhookCredentials,
     };
+  }
+
+  async pause(workspaceId: number, automationId: number) {
+    const automation = await this.requireAutomation(workspaceId, automationId);
+    if (automation.status !== 'active') {
+      throw new BadRequestException('Only an active automation can be paused');
+    }
+
+    return this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(schema.automations)
+        .set({ status: 'paused', updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.automations.id, automationId),
+            eq(schema.automations.workspaceId, workspaceId),
+          ),
+        )
+        .returning();
+
+      await tx
+        .update(schema.automationTriggers)
+        .set({
+          status: 'paused',
+          leaseToken: null,
+          leaseExpiresAt: null,
+          nextPollAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.automationTriggers.automationId, automationId));
+
+      return {
+        automationId: updated.id,
+        status: updated.status,
+      };
+    });
   }
 
   async run(
