@@ -9,8 +9,11 @@ import { randomUUID } from 'crypto';
 import { DRIZZLE } from '../../db/db.module.js';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
-import { and, eq } from 'drizzle-orm';
-import { WorkspaceAccessService } from '../../common/workspace/workspace-access.service.js';
+import { and, eq, sql } from 'drizzle-orm';
+import {
+  WorkspaceAccessService,
+  type WorkspaceRole,
+} from '../../common/workspace/workspace-access.service.js';
 import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
 
 function slugify(name: string) {
@@ -134,6 +137,7 @@ export class WorkspacesService {
         canManageWorkspace: ['owner', 'admin'].includes(membership.role),
         canManageMembers: membership.role === 'owner',
         canManageInvitations: membership.role === 'owner',
+        canTransferOwnership: membership.role === 'owner',
         canDeleteWorkspace: membership.role === 'owner',
       },
       security: {
@@ -157,6 +161,7 @@ export class WorkspacesService {
         apiKeys: false,
         notificationPreferences: false,
         auditLog: false,
+        ownershipTransfer: true,
         workspacePublishPolicy: false,
       },
     };
@@ -197,7 +202,7 @@ export class WorkspacesService {
 
     if (!['admin', 'member'].includes(role)) {
       throw new BadRequestException(
-        'Role must be admin or member. Ownership transfer is not implemented.',
+        'Role must be admin or member. Use ownership transfer to assign owner.',
       );
     }
 
@@ -221,6 +226,104 @@ export class WorkspacesService {
       .returning();
 
     return updated;
+  }
+
+  async transferOwnership(
+    workspaceId: number,
+    actorUserId: number,
+    targetMemberId: number,
+    previousOwnerRole: WorkspaceRole = 'admin',
+  ) {
+    await this.access.requireOwner(actorUserId, workspaceId);
+
+    if (!['admin', 'member'].includes(previousOwnerRole)) {
+      throw new BadRequestException(
+        'Previous owner role must be admin or member',
+      );
+    }
+
+    return this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(${workspaceId}, 0)`,
+      );
+
+      const owner = await tx.query.workspaceMembers.findFirst({
+        where: and(
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+          eq(schema.workspaceMembers.userId, actorUserId),
+        ),
+      });
+      if (!owner || owner.role !== 'owner') {
+        throw new ForbiddenException(
+          'Only the current workspace owner can transfer ownership',
+        );
+      }
+
+      const target = await tx.query.workspaceMembers.findFirst({
+        where: and(
+          eq(schema.workspaceMembers.id, targetMemberId),
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+        ),
+      });
+      if (!target) {
+        throw new NotFoundException('Workspace member not found');
+      }
+      if (target.userId === actorUserId || target.role === 'owner') {
+        throw new BadRequestException(
+          'Ownership must transfer to another non-owner workspace member',
+        );
+      }
+
+      const now = new Date();
+
+      const [previousOwner] = await tx
+        .update(schema.workspaceMembers)
+        .set({ role: previousOwnerRole, updatedAt: now })
+        .where(
+          and(
+            eq(schema.workspaceMembers.id, owner.id),
+            eq(schema.workspaceMembers.workspaceId, workspaceId),
+            eq(schema.workspaceMembers.role, 'owner'),
+          ),
+        )
+        .returning();
+
+      if (!previousOwner) {
+        throw new ConflictException(
+          'Workspace ownership changed before this transfer completed',
+        );
+      }
+
+      const [newOwner] = await tx
+        .update(schema.workspaceMembers)
+        .set({ role: 'owner', updatedAt: now })
+        .where(
+          and(
+            eq(schema.workspaceMembers.id, target.id),
+            eq(schema.workspaceMembers.workspaceId, workspaceId),
+          ),
+        )
+        .returning();
+
+      if (!newOwner) {
+        throw new ConflictException('Ownership transfer target changed');
+      }
+
+      return {
+        workspaceId,
+        previousOwner: {
+          id: previousOwner.id,
+          userId: previousOwner.userId,
+          role: previousOwner.role,
+        },
+        owner: {
+          id: newOwner.id,
+          userId: newOwner.userId,
+          role: newOwner.role,
+        },
+        transferredAt: now,
+      };
+    });
   }
 
   async removeMember(
