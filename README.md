@@ -60,6 +60,7 @@ Architecture notes:
 - [Stage 12 product UI completion: Analytics](docs/architecture/STAGE_12_PRODUCT_UI_ANALYTICS.md)
 - [Stage 12 product UI completion: Media](docs/architecture/STAGE_12_PRODUCT_UI_MEDIA.md)
 - [Stage 12 product UI completion: Channels](docs/architecture/STAGE_12_PRODUCT_UI_CHANNELS.md)
+- [Stage 12 product UI completion: Brand Brain](docs/architecture/STAGE_12_PRODUCT_UI_BRAND_BRAIN.md)
 
 ## Repository layout
 

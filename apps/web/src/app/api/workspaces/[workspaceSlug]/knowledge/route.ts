@@ -15,14 +15,18 @@ type CreateKnowledgeRequest = {
 };
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ workspaceSlug: string }> },
 ) {
   try {
     const { workspaceSlug } = await context.params;
+    const brandId = new URL(request.url).searchParams.get("brandId");
+    const path = brandId
+      ? `/v1/knowledge?brandId=${encodeURIComponent(brandId)}`
+      : "/v1/knowledge";
     const sources = await workspaceRequest<KnowledgeSourceRecord[]>(
       workspaceSlug,
-      "/v1/knowledge",
+      path,
     );
     return NextResponse.json(sources);
   } catch (error) {
