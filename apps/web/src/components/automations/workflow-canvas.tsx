@@ -299,7 +299,7 @@ export function WorkflowCanvas({
             <p className="text-[9px] font-semibold">Trigger</p>
           </div>
           <p className="mt-1 text-[8px] leading-4 text-muted-foreground">
-            The trigger stays as the first node. Manual and RSS sources both create the same immutable, versioned automation runs.
+            Manual, RSS and signed webhook sources all enter the same immutable, versioned automation runtime.
           </p>
         </div>
       </aside>
@@ -375,6 +375,7 @@ export function WorkflowCanvas({
                     >
                       <option value="manual">Manual / test run</option>
                       <option value="rss">RSS / Atom feed</option>
+                      <option value="webhook">Signed webhook / WordPress</option>
                     </select>
                   </label>
 
@@ -436,6 +437,59 @@ export function WorkflowCanvas({
 
                       <p className="rounded-xl bg-emerald-50 p-3 text-[9px] leading-4 text-emerald-800">
                         RSS URLs are fetched only from public HTTP/HTTPS network targets. Existing feed history is deduplicated before a run is created.
+                      </p>
+                    </>
+                  )}
+
+                  {String(config.mode || "manual") === "webhook" && (
+                    <>
+                      <label>
+                        <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                          Payload source
+                        </span>
+                        <select
+                          value={String(config.sourceType || "wordpress")}
+                          onChange={(event) => {
+                            const sourceType = event.target.value;
+                            updateNodeData({
+                              config: {
+                                ...config,
+                                sourceType,
+                                eventName:
+                                  sourceType === "wordpress"
+                                    ? "wordpress.post.published"
+                                    : "content.published",
+                              },
+                            });
+                          }}
+                          className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
+                        >
+                          <option value="wordpress">WordPress post</option>
+                          <option value="generic">Generic JSON webhook</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                          Event name
+                        </span>
+                        <input
+                          value={String(
+                            config.eventName ||
+                              (config.sourceType === "generic"
+                                ? "content.published"
+                                : "wordpress.post.published"),
+                          )}
+                          onChange={(event) =>
+                            updateConfig("eventName", event.target.value)
+                          }
+                          placeholder="wordpress.post.published"
+                          className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
+                        />
+                      </label>
+
+                      <p className="rounded-xl bg-violet-50 p-3 text-[9px] leading-4 text-violet-800">
+                        Publish the workflow to generate its endpoint and signing secret. Every request must include a timestamp, event name, stable event ID, and HMAC-SHA256 signature.
                       </p>
                     </>
                   )}
