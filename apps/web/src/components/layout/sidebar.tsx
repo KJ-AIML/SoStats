@@ -39,7 +39,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const segments = pathname.split("/").filter(Boolean);
   const firstSegment = segments[0];
-  const workspaceSlug = firstSegment || "demo";
+  const workspaceSlug =
+    firstSegment && firstSegment !== "settings" ? firstSegment : "demo";
   const base = `/${workspaceSlug}`;
 
   const isActive = (href: string) => {
