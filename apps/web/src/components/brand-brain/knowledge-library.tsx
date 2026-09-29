@@ -82,7 +82,7 @@ export function KnowledgeLibrary({
     const timer = window.setInterval(async () => {
       try {
         const response = await fetch(
-          `/api/workspaces/${encodeURIComponent(workspaceSlug)}/knowledge`,
+          `/api/workspaces/${encodeURIComponent(workspaceSlug)}/knowledge?brandId=${encodeURIComponent(String(brandId || ""))}`,
           { cache: "no-store" },
         );
         if (!response.ok) return;
