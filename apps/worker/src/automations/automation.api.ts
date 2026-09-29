@@ -13,6 +13,7 @@ export type ExecuteAutomationResponse = {
     | 'completed'
     | 'waiting_approval'
     | 'failed'
+    | 'in_progress'
     | 'stale'
     | 'already_terminal';
   runId: number;
