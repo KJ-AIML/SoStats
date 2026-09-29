@@ -344,6 +344,10 @@ export class AnalyticsService {
         latestSnapshotAt:
           latestByProvider.get(entry.provider)?.toISOString() || null,
       }))
+      .filter(
+        (entry) =>
+          channelTotals.has(entry.provider) || entry.trackedPosts > 0,
+      )
       .sort((a, b) => {
         const aReach =
           a.totals.reach || a.totals.impressions || a.totals.views || 0;
