@@ -236,12 +236,20 @@ export async function fetchPublicKnowledgeUrl(
       );
     }
 
-    const contentType = String(
+    let contentType = String(
       response.headers['content-type'] || 'application/octet-stream',
     )
       .split(';', 1)[0]
       .trim()
       .toLowerCase();
+
+    if (
+      contentType === 'application/octet-stream' &&
+      response.body.subarray(0, 5).toString('ascii') === '%PDF-'
+    ) {
+      contentType = 'application/pdf';
+    }
+
     const supported =
       contentType === 'application/pdf' ||
       contentType === 'text/html' ||

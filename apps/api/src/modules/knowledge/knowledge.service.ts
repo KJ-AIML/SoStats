@@ -358,9 +358,12 @@ export class KnowledgeService {
 
     if (!response.ok) {
       const detail = await response.text();
-      throw new BadGatewayException(
-        `AI knowledge processing returned HTTP ${response.status}: ${detail.slice(0, 300)}`,
-      );
+      const message =
+        `AI knowledge processing returned HTTP ${response.status}: ${detail.slice(0, 300)}`;
+      if (response.status >= 400 && response.status < 500) {
+        throw new BadRequestException(message);
+      }
+      throw new BadGatewayException(message);
     }
 
     const payload = (await response.json()) as ProcessedKnowledge;

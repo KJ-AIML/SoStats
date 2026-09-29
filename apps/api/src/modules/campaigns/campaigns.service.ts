@@ -116,8 +116,6 @@ export class CampaignsService {
     }>;
   }> {
     const baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
     const brand = await this.brandContext.get(workspaceId, campaign.brandId);
     const retrievalQuery = [
       campaign.goal,
@@ -154,6 +152,8 @@ export class CampaignsService {
       'Existing brand audience';
     const tone =
       brand?.voiceProfiles[0]?.tone || 'Use the configured brand voice';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
 
     try {
       const response = await fetch(baseUrl + '/v1/campaigns/plan', {
