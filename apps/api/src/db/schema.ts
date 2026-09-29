@@ -168,6 +168,7 @@ export const workspaceAuditEvents = pgTable(
     actorEmail: varchar('actor_email', { length: 255 }),
     authMethod: varchar('auth_method', { length: 40 }).notNull(),
     apiKeyId: integer('api_key_id'),
+    sourceOutboxEventId: integer('source_outbox_event_id').unique(),
     action: varchar('action', { length: 120 }).notNull(),
     targetType: varchar('target_type', { length: 80 }).notNull(),
     targetId: varchar('target_id', { length: 120 }),
@@ -196,6 +197,51 @@ export const workspaceAuditEvents = pgTable(
     workspaceAuditTargetTypeCheck: check(
       'workspace_audit_target_type_check',
       sql`length(trim(${table.targetType})) between 1 and 80`,
+    ),
+  }),
+);
+
+// outbox_events
+// Durable handoff between domain transactions and asynchronous side effects.
+// Rows are claimed with leases so queue/process crashes recover after lease expiry.
+export const outboxEvents = pgTable(
+  'outbox_events',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id'),
+    topic: varchar('topic', { length: 120 }).notNull(),
+    dedupeKey: varchar('dedupe_key', { length: 255 }).notNull().unique(),
+    payload: jsonb('payload')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    status: varchar('status', { length: 30 }).notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    availableAt: timestamp('available_at').defaultNow().notNull(),
+    leaseToken: varchar('lease_token', { length: 64 }),
+    leaseExpiresAt: timestamp('lease_expires_at'),
+    processedAt: timestamp('processed_at'),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    outboxDispatchIdx: index('outbox_dispatch_idx').on(
+      table.status,
+      table.availableAt,
+      table.leaseExpiresAt,
+    ),
+    outboxWorkspaceIdx: index('outbox_workspace_idx').on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    outboxStatusCheck: check(
+      'outbox_status_check',
+      sql`${table.status} in ('pending', 'processing', 'completed', 'dead')`,
+    ),
+    outboxAttemptsCheck: check(
+      'outbox_attempts_check',
+      sql`${table.attempts} >= 0`,
     ),
   }),
 );
