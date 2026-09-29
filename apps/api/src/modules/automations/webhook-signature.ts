@@ -10,10 +10,16 @@ export type WebhookVerification =
 export function signWebhookPayload(
   secret: string,
   timestamp: string,
+  eventName: string,
+  eventId: string,
   rawBody: Buffer,
 ) {
   return createHmac('sha256', secret)
     .update(timestamp, 'utf8')
+    .update('.', 'utf8')
+    .update(eventName, 'utf8')
+    .update('.', 'utf8')
+    .update(eventId, 'utf8')
     .update('.', 'utf8')
     .update(rawBody)
     .digest('hex');
@@ -23,6 +29,8 @@ export function verifyWebhookSignature(input: {
   secret: string;
   timestamp?: string;
   signature?: string;
+  eventName?: string;
+  eventId?: string;
   rawBody: Buffer;
   nowMs?: number;
   toleranceSeconds?: number;
@@ -31,12 +39,24 @@ export function verifyWebhookSignature(input: {
   const signature = String(input.signature || '')
     .trim()
     .replace(/^sha256=/i, '');
+  const eventName = String(input.eventName || '').trim();
+  const eventId = String(input.eventId || '').trim();
 
   if (!/^\d{10,13}$/.test(timestamp)) {
     return { ok: false, reason: 'Webhook timestamp is missing or invalid' };
   }
   if (!/^[a-f0-9]{64}$/i.test(signature)) {
     return { ok: false, reason: 'Webhook signature is missing or invalid' };
+  }
+  if (
+    !eventName ||
+    eventName.length > 100 ||
+    !/^[a-z0-9][a-z0-9._:-]*$/i.test(eventName)
+  ) {
+    return { ok: false, reason: 'Webhook event name is missing or invalid' };
+  }
+  if (!eventId || eventId.length > 1024) {
+    return { ok: false, reason: 'Webhook event id is missing or invalid' };
   }
 
   const rawTimestamp = Number(timestamp);
@@ -53,7 +73,13 @@ export function verifyWebhookSignature(input: {
   }
 
   const expected = Buffer.from(
-    signWebhookPayload(input.secret, timestamp, input.rawBody),
+    signWebhookPayload(
+      input.secret,
+      timestamp,
+      eventName,
+      eventId,
+      input.rawBody,
+    ),
     'hex',
   );
   const provided = Buffer.from(signature, 'hex');

@@ -455,11 +455,17 @@ export class AutomationTriggersService {
       secret,
       timestamp: input.timestamp,
       signature: input.signature,
+      eventName: incomingEvent,
+      eventId: input.eventId,
       rawBody: input.rawBody,
       toleranceSeconds: 300,
     });
     if (!verification.ok) {
       throw new UnauthorizedException(verification.reason);
+    }
+
+    if (!input.eventId?.trim()) {
+      throw new BadRequestException('Webhook event id is required');
     }
 
     const item = normalizeWebhookPayload({
