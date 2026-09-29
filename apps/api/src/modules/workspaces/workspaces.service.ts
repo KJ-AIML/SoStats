@@ -17,6 +17,7 @@ import {
 } from '../../common/workspace/workspace-access.service.js';
 import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
 import { ApiKeyService } from '../../common/auth/api-key.service.js';
+import { AuditLogService } from '../../common/audit/audit-log.service.js';
 
 function slugify(name: string) {
   const base = name
@@ -53,6 +54,7 @@ export class WorkspacesService {
     private readonly access: WorkspaceAccessService,
     private readonly invitations: WorkspaceInvitationsService,
     private readonly apiKeys: ApiKeyService,
+    private readonly audit: AuditLogService,
   ) {}
 
   async create(name: string, userId: number) {
@@ -118,6 +120,10 @@ export class WorkspacesService {
       membership.role === 'owner'
         ? await this.apiKeys.listForWorkspace(id, userId)
         : [];
+    const auditEvents =
+      membership.role === 'owner'
+        ? await this.audit.listForWorkspace(id, userId, { limit: 50 })
+        : [];
 
     return {
       workspace: {
@@ -130,6 +136,7 @@ export class WorkspacesService {
         updatedAt: workspace.updatedAt,
       },
       apiKeys,
+      auditEvents,
       members: workspace.members.map((member) => ({
         id: member.id,
         userId: member.userId,
@@ -146,6 +153,7 @@ export class WorkspacesService {
         canManageMembers: membership.role === 'owner',
         canManageInvitations: membership.role === 'owner',
         canManageApiKeys: membership.role === 'owner',
+        canViewAuditLog: membership.role === 'owner',
         canTransferOwnership: membership.role === 'owner',
         canDeleteWorkspace: membership.role === 'owner',
       },
@@ -169,7 +177,7 @@ export class WorkspacesService {
         invitationEmailDelivery: false,
         apiKeys: true,
         notificationPreferences: false,
-        auditLog: false,
+        auditLog: true,
         ownershipTransfer: true,
         workspacePublishPolicy: false,
       },

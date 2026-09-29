@@ -13,6 +13,7 @@ import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 import { ProviderPublishError } from '../channels/ports/SocialPublisherPort.js';
 import { ChannelCredentialService } from '../channels/channel-credential.service.js';
 import { MediaService } from '../media/media.service.js';
+import { AuditLogService } from '../../common/audit/audit-log.service.js';
 
 type DispatchablePublication = {
   id: number;
@@ -44,6 +45,7 @@ export class PublishingService {
     private readonly providerRegistry: ProviderRegistry,
     private readonly credentials: ChannelCredentialService,
     private readonly mediaService: MediaService,
+    private readonly audit: AuditLogService,
   ) {}
 
   private async reconcileStaleClaims() {
@@ -390,6 +392,26 @@ export class PublishingService {
         }
       });
 
+      await this.audit.record({
+        workspaceId: publication.workspaceId,
+        actor: {
+          userId: null,
+          email: null,
+          authMethod: 'system',
+        },
+        action: 'publication.published',
+        targetType: 'scheduled_publication',
+        targetId: scheduledPublicationId,
+        metadata: {
+          contentItemId: publication.contentItemId,
+          variantId: publication.variantId,
+          socialAccountId: publication.socialAccountId,
+          provider: account.provider,
+          platformPostId: result.postId,
+          platformPostUrl: result.url,
+        },
+      });
+
       return {
         status: 'published',
         scheduledPublicationId,
@@ -412,6 +434,26 @@ export class PublishingService {
       );
 
       if (terminal) {
+        await this.audit.record({
+          workspaceId: publication.workspaceId,
+          actor: {
+            userId: null,
+            email: null,
+            authMethod: 'system',
+          },
+          action: 'publication.failed',
+          targetType: 'scheduled_publication',
+          targetId: scheduledPublicationId,
+          metadata: {
+            contentItemId: publication.contentItemId,
+            variantId: publication.variantId,
+            socialAccountId: publication.socialAccountId,
+            provider: publication.socialAccount.provider,
+            jobId: job.id,
+            errorType: failure.errorType,
+          },
+        });
+
         return {
           status: 'failed_terminal',
           scheduledPublicationId,
@@ -468,6 +510,27 @@ export class PublishingService {
           });
         }
       }
+    });
+
+    await this.audit.record({
+      workspaceId: publication.workspaceId,
+      actor: {
+        userId: null,
+        email: null,
+        authMethod: 'system',
+      },
+      action: 'publication.failed',
+      targetType: 'scheduled_publication',
+      targetId: scheduledPublicationId,
+      metadata: {
+        contentItemId: publication.contentItemId,
+        variantId: publication.variantId,
+        socialAccountId: publication.socialAccountId,
+        provider: publication.socialAccount.provider,
+        jobId: latestJob?.id,
+        errorType: 'retry_exhausted',
+        hasReason: Boolean(reason),
+      },
     });
 
     return { status: 'failed', scheduledPublicationId };

@@ -68,6 +68,7 @@ function makeService(options?: { targetMissing?: boolean }) {
       access as never,
       {} as never,
       {} as never,
+      {} as never,
     ),
   };
 }

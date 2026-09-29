@@ -59,6 +59,20 @@ export type WorkspaceApiKeyRecord = {
   } | null;
 };
 
+export type WorkspaceAuditEventRecord = {
+  id: number;
+  workspaceId: number;
+  actorUserId?: number | null;
+  actorEmail?: string | null;
+  authMethod: "jwt" | "development" | "api_key" | "invitation_token" | "system" | string;
+  apiKeyId?: number | null;
+  action: string;
+  targetType: string;
+  targetId?: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type WorkspaceSettingsRecord = {
   workspace: WorkspaceRecord & {
     createdAt?: string;
@@ -66,6 +80,7 @@ export type WorkspaceSettingsRecord = {
   };
   invitations: WorkspaceInvitationRecord[];
   apiKeys: WorkspaceApiKeyRecord[];
+  auditEvents: WorkspaceAuditEventRecord[];
   members: Array<{
     id: number;
     userId: number;
@@ -81,6 +96,7 @@ export type WorkspaceSettingsRecord = {
     canManageMembers: boolean;
     canManageInvitations: boolean;
     canManageApiKeys: boolean;
+    canViewAuditLog: boolean;
     canTransferOwnership: boolean;
     canDeleteWorkspace: boolean;
   };
