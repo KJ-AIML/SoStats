@@ -19,6 +19,11 @@ import { IntegrationsService } from './integrations.service.js';
 export class IntegrationsController {
   constructor(private readonly integrationsService: IntegrationsService) {}
 
+  @Get('overview')
+  overview(@CurrentWorkspaceId() workspaceId: number) {
+    return this.integrationsService.overview(workspaceId);
+  }
+
   @Get()
   findAll(@CurrentWorkspaceId() workspaceId: number) {
     return this.integrationsService.findAll(workspaceId);
