@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { CacheInterceptor, CacheModule } from '@nestjs/cache-manager';
+import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -23,7 +22,6 @@ import { IntegrationsModule } from './modules/integrations/integrations.module.j
 @Module({
   imports: [
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
-    CacheModule.register({ isGlobal: true, ttl: 5000 }),
     DbModule,
     SecurityModule,
     WorkspacesModule,
@@ -44,7 +42,6 @@ import { IntegrationsModule } from './modules/integrations/integrations.module.j
     { provide: APP_GUARD, useExisting: AuthGuard },
     { provide: APP_GUARD, useExisting: WorkspaceGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
-    { provide: APP_INTERCEPTOR, useClass: CacheInterceptor },
   ],
 })
 export class AppModule {}

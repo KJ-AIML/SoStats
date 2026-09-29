@@ -176,6 +176,19 @@ X_SCOPES=tweet.read tweet.write users.read offline.access
 
 Production must use the exact callback URL registered with each provider.
 
+## Tenant-safe response caching
+
+During the provider OAuth review, Stage 7 also removes the global Nest
+`CacheInterceptor`.
+
+SoStats workspace authorization is header/user-context based. A global GET cache
+whose key is not explicitly workspace-aware can cache authenticated resource
+responses under a shared URL. OAuth callbacks are also stateful GET requests and
+must never be served from a response cache.
+
+Caching can be reintroduced later for specific read models with explicit keys
+that include workspace and relevant query dimensions.
+
 ## Capability scope
 
 Stage 7 deliberately starts X with text publishing plus post analytics.
