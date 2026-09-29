@@ -104,6 +104,7 @@ export class OAuthStateService {
 
   validReturnTo(value: string) {
     return (
+      value.length <= 200 &&
       value.startsWith('/') &&
       !value.startsWith('//') &&
       !value.includes('\n') &&
