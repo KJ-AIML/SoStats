@@ -179,6 +179,11 @@ export type ScheduleRecord = {
 
 export type AnalyticsOverview = {
   workspaceId: number;
+  windowStart?: string;
+  windowEnd?: string;
+  rangeDays?: number;
+  selectedChannel?: string;
+  availableChannels?: string[];
   totals: Record<string, number>;
   daily: Array<{
     id: number;
@@ -188,7 +193,25 @@ export type AnalyticsOverview = {
   hasData: boolean;
   latestSnapshotAt?: string | null;
   trackedPosts?: number;
+  publishedCount?: number;
   syncWindowDays?: number;
+  channelBreakdown?: Array<{
+    provider: string;
+    accountCount: number;
+    accountNames: string[];
+    totals: Record<string, number>;
+    trackedPosts: number;
+    latestSnapshotAt?: string | null;
+  }>;
+  contentPerformance?: Array<{
+    contentItemId: number;
+    title: string;
+    provider: string;
+    accountName: string;
+    platformPostId: string;
+    metrics: Record<string, number>;
+    snapshotAt: string;
+  }>;
 };
 
 export type AiInsightRecord = {

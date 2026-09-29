@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Inject,
   NotFoundException,
@@ -118,38 +119,94 @@ export class AnalyticsService {
     private readonly credentials: ChannelCredentialService,
   ) {}
 
-  async getOverview(workspaceId: number) {
+  async getOverview(
+    workspaceId: number,
+    options: { days?: number; channel?: string } = {},
+  ) {
+    const days = options.days ?? 30;
+    if (![7, 30, 90].includes(days)) {
+      throw new BadRequestException('days must be one of 7, 30, or 90');
+    }
+
+    const selectedChannel = options.channel?.trim().toLowerCase() || 'all';
     const workspace = await this.db.query.workspaces.findFirst({
       where: eq(schema.workspaces.id, workspaceId),
       columns: { timezone: true },
     });
-    const start = calendarDayInZone(workspace?.timezone || 'UTC');
-    start.setUTCDate(start.getUTCDate() - 29);
+    const windowEnd = new Date();
+    const start = calendarDayInZone(workspace?.timezone || 'UTC', windowEnd);
+    start.setUTCDate(start.getUTCDate() - (days - 1));
 
-    const rows = await this.db.query.analyticsDaily.findMany({
-      where: and(
-        eq(schema.analyticsDaily.workspaceId, workspaceId),
-        gte(schema.analyticsDaily.date, start),
-      ),
-      orderBy: (fields, { asc }) => [asc(fields.date)],
+    const accounts = await this.db.query.socialAccounts.findMany({
+      where: eq(schema.socialAccounts.workspaceId, workspaceId),
+      columns: {
+        id: true,
+        provider: true,
+        accountName: true,
+        status: true,
+      },
     });
+
+    const analyticsAccounts = accounts.filter((account) => {
+      const provider = this.providerRegistry.describeProvider(account.provider);
+      return Boolean(provider.capabilities?.analytics);
+    });
+    const availableChannels = [
+      ...new Set(analyticsAccounts.map((account) => account.provider)),
+    ].sort();
+
+    if (
+      selectedChannel !== 'all' &&
+      !availableChannels.some(
+        (provider) => provider.toLowerCase() === selectedChannel,
+      )
+    ) {
+      throw new BadRequestException(
+        'channel must reference a connected analytics-capable provider',
+      );
+    }
+
+    const relevantAccounts =
+      selectedChannel === 'all'
+        ? analyticsAccounts
+        : analyticsAccounts.filter(
+            (account) => account.provider.toLowerCase() === selectedChannel,
+          );
+    const relevantAccountIds = relevantAccounts.map((account) => account.id);
+
+    const rows = relevantAccountIds.length
+      ? await this.db.query.analyticsDaily.findMany({
+          where: and(
+            eq(schema.analyticsDaily.workspaceId, workspaceId),
+            gte(schema.analyticsDaily.date, start),
+            inArray(schema.analyticsDaily.socialAccountId, relevantAccountIds),
+          ),
+          with: { socialAccount: true },
+          orderBy: (fields, { asc }) => [asc(fields.date)],
+        })
+      : [];
 
     const grouped = new Map<
       string,
       { id: number; date: string; metrics: NumericMetrics }
     >();
+    const channelTotals = new Map<string, NumericMetrics>();
 
     for (const row of rows) {
       const key = row.date.toISOString().slice(0, 10);
       const previous = grouped.get(key);
+      const metrics = asNumericMetrics(row.metrics);
       grouped.set(key, {
         id: previous?.id || row.id,
         date: row.date.toISOString(),
-        metrics: addMetrics(
-          previous?.metrics || {},
-          asNumericMetrics(row.metrics),
-        ),
+        metrics: addMetrics(previous?.metrics || {}, metrics),
       });
+
+      const provider = row.socialAccount?.provider || 'unknown';
+      channelTotals.set(
+        provider,
+        addMetrics(channelTotals.get(provider) || {}, metrics),
+      );
     }
 
     const daily = [...grouped.values()].sort((a, b) =>
@@ -160,44 +217,181 @@ export class AnalyticsService {
       {},
     );
 
-    const accounts = await this.db.query.socialAccounts.findMany({
-      where: eq(schema.socialAccounts.workspaceId, workspaceId),
-      columns: { id: true },
-    });
-    const accountIds = accounts.map((account) => account.id);
+    const recentSnapshots = relevantAccountIds.length
+      ? await this.db.query.metricSnapshots.findMany({
+          where: and(
+            inArray(schema.metricSnapshots.socialAccountId, relevantAccountIds),
+            gte(schema.metricSnapshots.snapshotAt, start),
+          ),
+          with: {
+            contentItem: true,
+            socialAccount: true,
+          },
+          orderBy: (fields, { desc: orderDesc }) => [
+            orderDesc(fields.snapshotAt),
+          ],
+          limit: 3000,
+        })
+      : [];
 
-    let latestSnapshotAt: string | null = null;
-    let trackedPosts = 0;
+    const latestSnapshot = relevantAccountIds.length
+      ? await this.db.query.metricSnapshots.findFirst({
+          where: inArray(
+            schema.metricSnapshots.socialAccountId,
+            relevantAccountIds,
+          ),
+          columns: { snapshotAt: true },
+          orderBy: (fields, { desc: orderDesc }) => [
+            orderDesc(fields.snapshotAt),
+          ],
+        })
+      : undefined;
 
-    if (accountIds.length) {
-      const snapshots = await this.db.query.metricSnapshots.findMany({
-        where: inArray(schema.metricSnapshots.socialAccountId, accountIds),
-        columns: {
-          platformPostId: true,
-          snapshotAt: true,
-        },
-        orderBy: (fields, { desc: orderDesc }) => [
-          orderDesc(fields.snapshotAt),
-        ],
-        limit: 1000,
+    const latestPost = new Map<
+      string,
+      (typeof recentSnapshots)[number]
+    >();
+    for (const snapshot of recentSnapshots) {
+      if (
+        !snapshot.platformPostId ||
+        !snapshot.contentItem ||
+        !snapshot.socialAccount
+      ) {
+        continue;
+      }
+      const key = `${snapshot.contentItemId}:${snapshot.socialAccountId}:${snapshot.platformPostId}`;
+      if (!latestPost.has(key)) latestPost.set(key, snapshot);
+    }
+
+    const interactionScore = (metrics: NumericMetrics) =>
+      (metrics.reactions || metrics.likes || 0) +
+      (metrics.comments || 0) * 2 +
+      (metrics.shares || metrics.reshares || 0) * 3 +
+      (metrics.clicks || metrics.link_clicks || 0);
+
+    const contentPerformance = [...latestPost.values()]
+      .map((snapshot) => ({
+        contentItemId: snapshot.contentItem!.id,
+        title: snapshot.contentItem!.title,
+        provider: snapshot.socialAccount!.provider,
+        accountName:
+          snapshot.socialAccount!.accountName ||
+          snapshot.socialAccount!.provider,
+        platformPostId: snapshot.platformPostId!,
+        metrics: asNumericMetrics(snapshot.metrics),
+        snapshotAt: snapshot.snapshotAt.toISOString(),
+      }))
+      .sort((a, b) => {
+        const score = interactionScore(b.metrics) - interactionScore(a.metrics);
+        if (score !== 0) return score;
+        return (
+          (b.metrics.reach ||
+            b.metrics.impressions ||
+            b.metrics.views ||
+            0) -
+          (a.metrics.reach ||
+            a.metrics.impressions ||
+            a.metrics.views ||
+            0)
+        );
+      })
+      .slice(0, 20);
+
+    const trackedPostsByProvider = new Map<string, Set<string>>();
+    const latestByProvider = new Map<string, Date>();
+    for (const snapshot of recentSnapshots) {
+      const provider = snapshot.socialAccount?.provider;
+      if (!provider || !snapshot.platformPostId) continue;
+      const tracked = trackedPostsByProvider.get(provider) || new Set<string>();
+      tracked.add(snapshot.platformPostId);
+      trackedPostsByProvider.set(provider, tracked);
+
+      const current = latestByProvider.get(provider);
+      if (!current || snapshot.snapshotAt > current) {
+        latestByProvider.set(provider, snapshot.snapshotAt);
+      }
+    }
+
+    const channelBreakdown = relevantAccounts
+      .reduce<
+        Array<{
+          provider: string;
+          accountIds: number[];
+          accountNames: string[];
+        }>
+      >((result, account) => {
+        const existing = result.find(
+          (entry) => entry.provider === account.provider,
+        );
+        if (existing) {
+          existing.accountIds.push(account.id);
+          if (account.accountName) existing.accountNames.push(account.accountName);
+        } else {
+          result.push({
+            provider: account.provider,
+            accountIds: [account.id],
+            accountNames: account.accountName ? [account.accountName] : [],
+          });
+        }
+        return result;
+      }, [])
+      .map((entry) => ({
+        provider: entry.provider,
+        accountCount: entry.accountIds.length,
+        accountNames: [...new Set(entry.accountNames)],
+        totals: channelTotals.get(entry.provider) || {},
+        trackedPosts: trackedPostsByProvider.get(entry.provider)?.size || 0,
+        latestSnapshotAt:
+          latestByProvider.get(entry.provider)?.toISOString() || null,
+      }))
+      .filter(
+        (entry) =>
+          channelTotals.has(entry.provider) || entry.trackedPosts > 0,
+      )
+      .sort((a, b) => {
+        const aReach =
+          a.totals.reach || a.totals.impressions || a.totals.views || 0;
+        const bReach =
+          b.totals.reach || b.totals.impressions || b.totals.views || 0;
+        return bReach - aReach;
       });
 
-      latestSnapshotAt = snapshots[0]?.snapshotAt.toISOString() || null;
-      trackedPosts = new Set(
-        snapshots
-          .map((snapshot) => snapshot.platformPostId)
-          .filter((value): value is string => Boolean(value)),
-      ).size;
-    }
+    const publishedSchedules = relevantAccountIds.length
+      ? await this.db.query.scheduledPublications.findMany({
+          where: and(
+            eq(schema.scheduledPublications.workspaceId, workspaceId),
+            eq(schema.scheduledPublications.status, 'published'),
+            gte(schema.scheduledPublications.scheduledAt, start),
+            inArray(
+              schema.scheduledPublications.socialAccountId,
+              relevantAccountIds,
+            ),
+          ),
+          columns: { id: true },
+          limit: 5000,
+        })
+      : [];
 
     return {
       workspaceId,
+      windowStart: start.toISOString(),
+      windowEnd: windowEnd.toISOString(),
+      rangeDays: days,
+      selectedChannel,
+      availableChannels,
       totals,
       daily,
       hasData: rows.length > 0,
-      latestSnapshotAt,
-      trackedPosts,
+      latestSnapshotAt: latestSnapshot?.snapshotAt.toISOString() || null,
+      trackedPosts: new Set(
+        recentSnapshots
+          .map((snapshot) => snapshot.platformPostId)
+          .filter((value): value is string => Boolean(value)),
+      ).size,
+      publishedCount: publishedSchedules.length,
       syncWindowDays: 30,
+      channelBreakdown,
+      contentPerformance,
     };
   }
 

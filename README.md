@@ -57,6 +57,7 @@ Architecture notes:
 - [Stage 12 product UI completion: Content workspace](docs/architecture/STAGE_12_PRODUCT_UI_CONTENT.md)
 - [Stage 12 product UI completion: Calendar](docs/architecture/STAGE_12_PRODUCT_UI_CALENDAR.md)
 - [Stage 12 product UI completion: Automations](docs/architecture/STAGE_12_PRODUCT_UI_AUTOMATIONS.md)
+- [Stage 12 product UI completion: Analytics](docs/architecture/STAGE_12_PRODUCT_UI_ANALYTICS.md)
 
 ## Repository layout
 

@@ -23,8 +23,16 @@ export class AnalyticsController {
   ) {}
 
   @Get('overview')
-  getOverview(@CurrentWorkspaceId() workspaceId: number) {
-    return this.analyticsService.getOverview(workspaceId);
+  getOverview(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Query('days') days?: string,
+    @Query('channel') channel?: string,
+  ) {
+    const parsedDays = days ? Number.parseInt(days, 10) : undefined;
+    return this.analyticsService.getOverview(workspaceId, {
+      days: Number.isFinite(parsedDays) ? parsedDays : undefined,
+      channel,
+    });
   }
 
   @Get('insights')
