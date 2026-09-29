@@ -15,6 +15,7 @@ import {
   type SocialAnalyticsPort,
   type SocialMetricTotals,
 } from '../ports/SocialAnalyticsPort.js';
+import { httpErrorClass, providerSignal, readJson } from './provider-http.js';
 
 type XTokenResponse = {
   access_token?: string;
@@ -203,29 +204,32 @@ export class XPublisherAdapter
           'content-type': 'application/x-www-form-urlencoded',
         },
         body,
+        signal: providerSignal(),
       });
     } catch {
       throw new ProviderPublishError(
         'X token refresh request failed before a provider response was received',
-        { retryable: true },
+        { retryable: true, errorClass: 'network_transient' },
       );
     }
 
     if (!response.ok) {
-      const detail = await response.text();
+      const detail = await response.text().catch(() => '');
       throw new ProviderPublishError(
         `X token refresh failed (HTTP ${response.status}): ${detail.slice(0, 300)}`,
         {
           statusCode: response.status,
+          errorClass: httpErrorClass(response.status),
           retryable: response.status === 429 || response.status >= 500,
         },
       );
     }
 
-    const token = (await response.json()) as XTokenResponse;
-    if (!token.access_token) {
+    const token = await readJson<XTokenResponse>(response);
+    if (!token?.access_token) {
       throw new ProviderPublishError(
         'X token refresh returned no access token',
+        { retryable: true, errorClass: 'transient_provider' },
       );
     }
 
@@ -241,8 +245,10 @@ export class XPublisherAdapter
   async publishPost(
     content: string,
     accessToken: string,
-    _context?: PublishContext,
+    context: PublishContext,
   ): Promise<PublishResult> {
+    await context.beforeSideEffect({ operationType: 'x_create_post' });
+
     let response: Response;
     try {
       response = await fetch('https://api.x.com/2/tweets', {
@@ -252,39 +258,38 @@ export class XPublisherAdapter
           'content-type': 'application/json',
         },
         body: JSON.stringify({ text: content }),
+        signal: providerSignal(context.signal),
       });
     } catch {
       throw new ProviderPublishError(
         'X publish request ended without a confirmed provider response',
-        { outcomeUnknown: true },
+        { outcomeUnknown: true, errorClass: 'network_transient' },
       );
     }
 
     if (!response.ok) {
-      const detail = await response.text();
+      const detail = await response.text().catch(() => '');
       throw new ProviderPublishError(
         `X publish failed (HTTP ${response.status}): ${detail.slice(0, 300)}`,
         {
           statusCode: response.status,
+          errorClass: httpErrorClass(response.status),
           retryable: response.status === 429,
           outcomeUnknown: response.status >= 500,
         },
       );
     }
 
-    const payload = (await response.json()) as XPostResponse;
-    const postId = payload.data?.id;
+    const payload = await readJson<XPostResponse>(response);
+    const postId = payload?.data?.id;
     if (!postId) {
       throw new ProviderPublishError(
-        'X accepted the publish request but returned no post id',
-        { outcomeUnknown: true },
+        'X accepted the publish request but returned no readable post id',
+        { outcomeUnknown: true, errorClass: 'unknown_outcome' },
       );
     }
 
-    return {
-      postId,
-      url: `https://x.com/i/web/status/${postId}`,
-    };
+    return { postId, url: `https://x.com/i/web/status/${postId}` };
   }
 
   async fetchPostMetrics(
