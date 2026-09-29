@@ -114,6 +114,7 @@ export type SocialAccountRecord = {
   id: number;
   workspaceId: number;
   brandId: number;
+  brand?: { id: number; name: string } | null;
   provider: string;
   providerAccountId: string;
   accountName?: string | null;
@@ -128,6 +129,23 @@ export type SocialAccountRecord = {
     analytics: boolean;
     nativeScheduling: boolean;
   } | null;
+  credentialState?:
+    | "active"
+    | "no_expiry"
+    | "expiring"
+    | "refresh_required"
+    | "expired"
+    | "disconnected"
+    | "missing_token"
+    | string;
+  hasRefreshToken?: boolean;
+  publishingReady?: boolean;
+  analyticsReady?: boolean;
+  activeScheduleCount?: number;
+  publishedCount?: number;
+  lastPublishedAt?: string | null;
+  latestAnalyticsAt?: string | null;
+  updatedAt?: string;
 };
 
 export type SocialProviderRecord = {
@@ -139,6 +157,9 @@ export type SocialProviderRecord = {
     carousel: boolean;
     analytics: boolean;
     nativeScheduling: boolean;
+  };
+  oauth?: {
+    pkce: boolean;
   };
 };
 
