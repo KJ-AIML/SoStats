@@ -7,6 +7,12 @@ alter table campaigns
 create unique index if not exists campaign_source_key_unique
   on campaigns (source_key);
 
+alter table scheduled_publications
+  add column if not exists source_key varchar(255);
+
+create unique index if not exists scheduled_pub_source_key_unique
+  on scheduled_publications (source_key);
+
 alter table publication_jobs
   add column if not exists execution_phase varchar(40) not null default 'idle',
   add column if not exists execution_token varchar(64),
