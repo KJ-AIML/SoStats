@@ -359,7 +359,7 @@ export class WorkspacesService {
   }
 
   async update(id: number, userId: number, name: string) {
-    await this.access.requireMembership(userId, id, ['owner', 'admin']);
+    await this.access.requireManager(userId, id);
 
     const [workspace] = await this.db
       .update(schema.workspaces)
