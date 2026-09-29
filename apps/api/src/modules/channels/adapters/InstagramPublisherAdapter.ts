@@ -21,8 +21,7 @@ import {
   type MetaErrorBody,
   metaErrorClass,
   metaMessage,
-  metaRateLimited,
-  metaTransient,
+  metaPostFailure,
   retryableMetaError,
 } from './meta-errors.js';
 import { providerSignal, readJson } from './provider-http.js';
@@ -191,14 +190,17 @@ export class InstagramPublisherAdapter
       access_token: accessToken,
     });
 
-let createResponse: Response;
+    let createResponse: Response;
     try {
-      createResponse = await fetch(this.meta.graphUrl(`${instagramId}/media`), {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: createBody,
-        signal: providerSignal(context.signal),
-      });
+      createResponse = await fetch(
+        this.meta.graphUrl(`${instagramId}/media`),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: createBody,
+          signal: providerSignal(context.signal),
+        },
+      );
     } catch {
       throw new ProviderPublishError(
         'Instagram media container request failed before a provider response was received',
@@ -209,13 +211,19 @@ let createResponse: Response;
     const created = await readJson<ContainerResponse>(createResponse);
     if (!createResponse.ok || !created?.id) {
       throw new ProviderPublishError(
-        metaMessage('Instagram media container creation failed', createResponse.status, created),
+        metaMessage(
+          'Instagram media container creation failed',
+          createResponse.status,
+          created,
+        ),
         {
           statusCode: createResponse.status,
           errorClass: createResponse.ok
             ? 'transient_provider'
             : metaErrorClass(createResponse.status, created),
-          retryable: createResponse.ok || retryableMetaError(createResponse.status, created),
+          retryable:
+            createResponse.ok ||
+            retryableMetaError(createResponse.status, created),
         },
       );
     }
@@ -234,12 +242,18 @@ let createResponse: Response;
 
     let publishResponse: Response;
     try {
-      publishResponse = await fetch(this.meta.graphUrl(`${instagramId}/media_publish`), {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ creation_id: created.id, access_token: accessToken }),
-        signal: providerSignal(context.signal),
-      });
+      publishResponse = await fetch(
+        this.meta.graphUrl(`${instagramId}/media_publish`),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            creation_id: created.id,
+            access_token: accessToken,
+          }),
+          signal: providerSignal(context.signal),
+        },
+      );
     } catch {
       throw new ProviderPublishError(
         'Instagram media_publish ended without a confirmed provider response',
@@ -249,14 +263,15 @@ let createResponse: Response;
 
     const published = await readJson<PublishResponse>(publishResponse);
     if (!publishResponse.ok) {
-      const unknown = metaTransient(publishResponse.status, published);
       throw new ProviderPublishError(
-        metaMessage('Instagram media publish failed', publishResponse.status, published),
+        metaMessage(
+          'Instagram media publish failed',
+          publishResponse.status,
+          published,
+        ),
         {
           statusCode: publishResponse.status,
-          errorClass: metaErrorClass(publishResponse.status, published),
-          outcomeUnknown: unknown,
-          retryable: !unknown && metaRateLimited(publishResponse.status, published),
+          ...metaPostFailure(publishResponse.status, published),
         },
       );
     }
@@ -267,7 +282,11 @@ let createResponse: Response;
       );
     }
 
-    const url = await this.permalink(published.id, accessToken, context.signal);
+    const url = await this.permalink(
+      published.id,
+      accessToken,
+      context.signal,
+    );
     return { postId: published.id, ...(url ? { url } : {}) };
   }
 
@@ -346,9 +365,10 @@ let createResponse: Response;
       });
       let response: Response;
       try {
-        response = await fetch(`${this.meta.graphUrl(containerId)}?${params.toString()}`, {
-          signal: providerSignal(signal),
-        });
+        response = await fetch(
+          `${this.meta.graphUrl(containerId)}?${params.toString()}`,
+          { signal: providerSignal(signal) },
+        );
       } catch {
         throw new ProviderPublishError(
           'Instagram container status request failed before a provider response was received',
@@ -359,7 +379,11 @@ let createResponse: Response;
       const payload = await readJson<ContainerStatusResponse>(response);
       if (!response.ok) {
         throw new ProviderPublishError(
-          metaMessage('Instagram container status failed', response.status, payload),
+          metaMessage(
+            'Instagram container status failed',
+            response.status,
+            payload,
+          ),
           {
             statusCode: response.status,
             errorClass: metaErrorClass(response.status, payload),
@@ -369,7 +393,16 @@ let createResponse: Response;
       }
 
       if (payload?.status_code === 'FINISHED') return;
-      if (payload?.status_code === 'ERROR' || payload?.status_code === 'EXPIRED') {
+      if (!payload?.status_code) {
+        throw new ProviderPublishError(
+          'Instagram container status response was unreadable',
+          { retryable: true, errorClass: 'transient_provider' },
+        );
+      }
+      if (
+        payload.status_code === 'ERROR' ||
+        payload.status_code === 'EXPIRED'
+      ) {
         throw new ProviderPublishError(
           `Instagram media container could not be published: ${payload.status || payload.status_code}`,
           { errorClass: 'content_rejected' },
@@ -379,22 +412,33 @@ let createResponse: Response;
       try {
         await delay(1000, undefined, { signal });
       } catch {
-        break;
+        throw new ProviderPublishError(
+          'Instagram publish budget was exhausted while waiting for the media container',
+          { retryable: true, errorClass: 'network_transient' },
+        );
       }
     }
 
     throw new ProviderPublishError(
-      'Instagram media container was not ready within the publish budget',
-      { retryable: true, errorClass: 'network_transient' },
+      'Instagram media container was not ready after 6 status checks',
+      { retryable: true, errorClass: 'transient_provider' },
     );
   }
 
-  private async permalink(mediaId: string, accessToken: string, signal: AbortSignal) {
-    const params = new URLSearchParams({ fields: 'permalink', access_token: accessToken });
+  private async permalink(
+    mediaId: string,
+    accessToken: string,
+    signal: AbortSignal,
+  ) {
+    const params = new URLSearchParams({
+      fields: 'permalink',
+      access_token: accessToken,
+    });
     try {
-      const response = await fetch(`${this.meta.graphUrl(mediaId)}?${params.toString()}`, {
-        signal: providerSignal(signal),
-      });
+      const response = await fetch(
+        `${this.meta.graphUrl(mediaId)}?${params.toString()}`,
+        { signal: providerSignal(signal) },
+      );
       if (!response.ok) return undefined;
       const payload = await readJson<PermalinkResponse>(response);
       return payload?.permalink || undefined;

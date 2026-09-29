@@ -18,10 +18,8 @@ import {
 import { MetaGraphClient } from './MetaGraphClient.js';
 import {
   type MetaErrorBody,
-  metaErrorClass,
   metaMessage,
-  metaRateLimited,
-  metaTransient,
+  metaPostFailure,
   retryableMetaError,
 } from './meta-errors.js';
 import { providerSignal, readJson } from './provider-http.js';
@@ -222,14 +220,11 @@ export class FacebookPublisherAdapter
 
     const payload = await readJson<FacebookPublishResponse>(response);
     if (!response.ok) {
-      const unknown = metaTransient(response.status, payload);
       throw new ProviderPublishError(
         metaMessage('Facebook publish failed', response.status, payload),
         {
           statusCode: response.status,
-          errorClass: metaErrorClass(response.status, payload),
-          outcomeUnknown: unknown,
-          retryable: !unknown && metaRateLimited(response.status, payload),
+          ...metaPostFailure(response.status, payload),
         },
       );
     }

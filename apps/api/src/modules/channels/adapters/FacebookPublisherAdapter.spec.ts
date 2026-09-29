@@ -159,6 +159,20 @@ describe('FacebookPublisherAdapter', () => {
         },
       ],
       [
+        'rate code 4 with is_transient',
+        () => meta(400, { code: 4, is_transient: true }),
+        { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
+      ],
+      [
+        '503 carrying a rate code',
+        () => meta(503, { code: 4 }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'transient_provider',
+        },
+      ],
+      [
         'rate code 4',
         () => meta(400, { code: 4 }),
         { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
@@ -272,6 +286,46 @@ describe('FacebookPublisherAdapter', () => {
       });
     });
 
+    it.each([
+      ['no page id', 'Hello', undefined, []],
+      ['more than one image', 'Hello', 'page-123', ['a', 'b']],
+      ['a video', 'Hello', 'page-123', ['video']],
+      ['an unsupported image type', 'Hello', 'page-123', ['bmp']],
+    ])(
+      'rejects %s as invalid_request before the marker',
+      async (_label, content, pageId, kinds) => {
+        const media = kinds.map((kind) => ({
+          assetId: 1,
+          fileType: kind === 'video' ? 'video' : 'image',
+          mimeType:
+            kind === 'video'
+              ? 'video/mp4'
+              : kind === 'bmp'
+                ? 'image/bmp'
+                : 'image/jpeg',
+          fileName: 'a',
+          url: 'https://storage.example.com/a',
+        }));
+        const context = testPublishContext();
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const error = await new FacebookPublisherAdapter(new MetaGraphClient())
+          .publishPost(content, 'page-token', {
+            ...context,
+            ...(pageId ? { providerAccountId: pageId } : {}),
+            media,
+          })
+          .catch((caught: unknown) => caught);
+        expect(error).toMatchObject({
+          retryable: false,
+          outcomeUnknown: false,
+          errorClass: 'invalid_request',
+        });
+        expect(context.beforeSideEffect).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
     it('rejects invalid input before the marker', async () => {
       const context = testPublishContext();
       const fetchMock = vi.fn();
@@ -361,6 +415,7 @@ describe('FacebookPublisherAdapter', () => {
         .catch((caught: unknown) => caught);
       expect(error).toMatchObject({
         retryable: false,
+        outcomeUnknown: false,
         errorClass: 'authentication',
       });
     });

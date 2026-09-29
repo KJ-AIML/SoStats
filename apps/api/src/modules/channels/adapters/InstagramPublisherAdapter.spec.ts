@@ -147,6 +147,43 @@ describe('InstagramPublisherAdapter', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['text-only', []],
+    [
+      'a non-JPEG image',
+      [
+        {
+          assetId: 1,
+          fileType: 'image',
+          mimeType: 'image/png',
+          fileName: 'a.png',
+          url: 'https://storage.example.com/a.png',
+        },
+      ],
+    ],
+  ])(
+    'classifies %s input as invalid_request without a network call',
+    async (_label, media) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const context = testPublishContext();
+      const error = await new InstagramPublisherAdapter(new MetaGraphClient())
+        .publishPost('Caption', 'page-token', {
+          ...context,
+          providerAccountId: 'ig-123',
+          media,
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        retryable: false,
+        outcomeUnknown: false,
+        errorClass: 'invalid_request',
+      });
+      expect(context.beforeSideEffect).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   describe('side-effect boundary and error semantics', () => {
     const image = {
       assetId: 1,
@@ -342,6 +379,132 @@ describe('InstagramPublisherAdapter', () => {
       expect(context.beforeSideEffect).toHaveBeenCalledTimes(1);
     });
 
+    it('treats media_publish rate limit with is_transient as retryable and known', async () => {
+      routeFetch({
+        publish: () => json({ error: { code: 4, is_transient: true } }, 400),
+      });
+      expect(await publish()).toMatchObject({
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'rate_limit',
+      });
+    });
+
+    it('treats media_publish is_transient on a non-5xx response as unknown', async () => {
+      routeFetch({
+        publish: () => json({ error: { is_transient: true } }, 400),
+      });
+      expect(await publish()).toMatchObject({
+        retryable: false,
+        outcomeUnknown: true,
+        errorClass: 'transient_provider',
+      });
+    });
+
+    it('treats a media_publish 503 carrying a rate code as unknown', async () => {
+      routeFetch({ publish: () => json({ error: { code: 4 } }, 503) });
+      expect(await publish()).toMatchObject({
+        retryable: false,
+        outcomeUnknown: true,
+        errorClass: 'transient_provider',
+      });
+    });
+
+    it.each([
+      [
+        'rate limit (code 4)',
+        () => json({ error: { code: 4 } }, 400),
+        { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
+      ],
+      [
+        'token error (code 190)',
+        () => json({ error: { code: 190 } }, 400),
+        {
+          retryable: false,
+          outcomeUnknown: false,
+          errorClass: 'authentication',
+        },
+      ],
+      [
+        'is_transient',
+        () => json({ error: { is_transient: true } }, 400),
+        {
+          retryable: true,
+          outcomeUnknown: false,
+          errorClass: 'transient_provider',
+        },
+      ],
+    ])(
+      'classifies container creation %s as known and pre-marker',
+      async (_label, create, expected) => {
+        routeFetch({ create });
+        const context = testPublishContext();
+        expect(await publish(context)).toMatchObject(expected);
+        expect(context.beforeSideEffect).not.toHaveBeenCalled();
+      },
+    );
+
+    it('treats a status-poll network failure as retryable and never marks', async () => {
+      routeFetch({
+        status: () => {
+          throw new TypeError('fetch failed');
+        },
+      });
+      const context = testPublishContext();
+      expect(await publish(context)).toMatchObject({
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'network_transient',
+      });
+      expect(context.beforeSideEffect).not.toHaveBeenCalled();
+    });
+
+    it('treats a container EXPIRED status as content_rejected without marking', async () => {
+      routeFetch({ status: () => json({ status_code: 'EXPIRED' }) });
+      const context = testPublishContext();
+      expect(await publish(context)).toMatchObject({
+        retryable: false,
+        outcomeUnknown: false,
+        errorClass: 'content_rejected',
+      });
+      expect(context.beforeSideEffect).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['unreadable', () => new Response('<html>', { status: 200 })],
+      ['without a status_code', () => json({ id: 'container-1' })],
+    ])(
+      'fails fast on a status-poll 2xx body that is %s',
+      async (_label, status) => {
+        const calls = routeFetch({ status });
+        const context = testPublishContext();
+        expect(await publish(context)).toMatchObject({
+          retryable: true,
+          outcomeUnknown: false,
+          errorClass: 'transient_provider',
+        });
+        expect(calls.filter((call) => call === 'status')).toHaveLength(1);
+        expect(context.beforeSideEffect).not.toHaveBeenCalled();
+      },
+    );
+
+    it('gives up after 6 status checks with a retryable transient_provider error', async () => {
+      const calls = routeFetch({
+        status: () => json({ status_code: 'IN_PROGRESS' }),
+      });
+      const context = testPublishContext();
+      const error = await publish(context);
+      expect(error).toMatchObject({
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'transient_provider',
+      });
+      expect((error as Error).message).toContain('6 status checks');
+      expect(calls.filter((call) => call === 'status')).toHaveLength(6);
+      expect(calls).not.toContain('publish');
+      expect(context.beforeSideEffect).not.toHaveBeenCalled();
+    }, 15_000);
+
     it('treats media_publish rate limit as retryable and known', async () => {
       routeFetch({ publish: () => json({ error: { code: 4 } }, 400) });
       expect(await publish()).toMatchObject({
@@ -441,6 +604,7 @@ describe('InstagramPublisherAdapter', () => {
       });
       expect(context.beforeSideEffect).not.toHaveBeenCalled();
       expect(calls).not.toContain('publish');
+      expect(calls.filter((call) => call === 'status')).toHaveLength(1);
     });
 
     it('classifies refresh as an authentication failure', async () => {
@@ -449,6 +613,7 @@ describe('InstagramPublisherAdapter', () => {
         .catch((caught: unknown) => caught);
       expect(error).toMatchObject({
         retryable: false,
+        outcomeUnknown: false,
         errorClass: 'authentication',
       });
     });
