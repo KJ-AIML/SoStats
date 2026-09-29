@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CampaignsModule } from '../campaigns/campaigns.module.js';
 import { SchedulingModule } from '../scheduling/scheduling.module.js';
 import { AnalyticsModule } from '../analytics/analytics.module.js';
+import { ChannelsModule } from '../channels/channels.module.js';
 import { AutomationsController } from './automations.controller.js';
 import { AutomationRuntimeController } from './automation-runtime.controller.js';
 import { AutomationTriggersInternalController } from './automation-triggers-internal.controller.js';
@@ -12,7 +13,7 @@ import { AutomationTriggersService } from './automation-triggers.service.js';
 import { WorkerTokenGuard } from '../../common/internal/worker-token.guard.js';
 
 @Module({
-  imports: [CampaignsModule, SchedulingModule, AnalyticsModule],
+  imports: [CampaignsModule, SchedulingModule, AnalyticsModule, ChannelsModule],
   controllers: [
     AutomationsController,
     AutomationRuntimeController,

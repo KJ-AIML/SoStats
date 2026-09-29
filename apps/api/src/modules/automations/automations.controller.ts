@@ -70,6 +70,14 @@ export class AutomationsController {
     return this.automationsService.publish(workspaceId, id);
   }
 
+  @Post(':id/pause')
+  pause(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.automationsService.pause(workspaceId, id);
+  }
+
   @Post(':id/trigger/rotate-secret')
   rotateTriggerSecret(
     @Param('id', ParseIntPipe) id: number,

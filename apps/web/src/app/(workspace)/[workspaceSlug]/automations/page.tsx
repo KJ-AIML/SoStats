@@ -29,6 +29,15 @@ export default async function AutomationsPage({
       accountName: channel.accountName,
     }));
 
+  const providers = (snapshot?.providers || []).filter(
+    (provider) => provider.capabilities.text,
+  );
+
+  const brands = (snapshot?.brands || []).map((brand) => ({
+    id: brand.id,
+    name: brand.name,
+  }));
+
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-5 p-4 md:p-6 xl:p-8">
       <PageHeading
@@ -47,6 +56,8 @@ export default async function AutomationsPage({
         workspaceSlug={workspaceSlug}
         initialAutomations={snapshot?.automations || []}
         channels={channels}
+        providers={providers}
+        brands={brands}
       />
     </div>
   );
