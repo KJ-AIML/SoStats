@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   CanActivate,
+  ForbiddenException,
   ExecutionContext,
   Injectable,
 } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { WORKSPACE_SCOPED_KEY } from './workspace.decorator.js';
 
 type WorkspaceRequest = {
   headers: Record<string, string | string[] | undefined>;
+  method?: string;
   user?: AuthenticatedUser;
   workspaceId?: number;
 };
@@ -42,6 +44,20 @@ export class WorkspaceGuard implements CanActivate {
     }
 
     await this.access.requireMembership(request.user.id, workspaceId);
+
+    if (request.user.apiKey) {
+      const method = (request.method || 'GET').toUpperCase();
+      const requiredScope = ['GET', 'HEAD', 'OPTIONS'].includes(method)
+        ? 'workspace:read'
+        : 'workspace:write';
+
+      if (!request.user.apiKey.scopes.includes(requiredScope)) {
+        throw new ForbiddenException(
+          `API key is missing required scope: ${requiredScope}`,
+        );
+      }
+    }
+
     request.workspaceId = workspaceId;
     return true;
   }
