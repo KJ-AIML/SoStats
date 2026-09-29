@@ -78,6 +78,24 @@ export class WorkspacesController {
     return this.invitationsService.revoke(id, user.id, invitationId);
   }
 
+  @Post(':id/ownership-transfer')
+  transferOwnership(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      targetMemberId?: number;
+      previousOwnerRole?: 'admin' | 'member';
+    },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.workspacesService.transferOwnership(
+      id,
+      user.id,
+      Number(body.targetMemberId),
+      body.previousOwnerRole || 'admin',
+    );
+  }
+
   @Put(':id/members/:memberId/role')
   updateMemberRole(
     @Param('id', ParseIntPipe) id: number,

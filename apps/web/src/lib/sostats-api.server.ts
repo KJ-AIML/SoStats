@@ -58,6 +58,7 @@ export type WorkspaceSettingsRecord = {
     canManageWorkspace: boolean;
     canManageMembers: boolean;
     canManageInvitations: boolean;
+    canTransferOwnership: boolean;
     canDeleteWorkspace: boolean;
   };
   security: {
@@ -75,6 +76,7 @@ export type WorkspaceSettingsRecord = {
     apiKeys: boolean;
     notificationPreferences: boolean;
     auditLog: boolean;
+    ownershipTransfer: boolean;
     workspacePublishPolicy: boolean;
   };
 };

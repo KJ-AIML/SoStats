@@ -55,6 +55,13 @@ export const workspaceMembers = pgTable(
         table.workspaceId,
         table.userId,
       ),
+      workspaceMemberRoleCheck: check(
+        'workspace_member_role_check',
+        sql`${table.role} in ('owner', 'admin', 'member')`,
+      ),
+      workspaceSingleOwnerIdx: uniqueIndex('workspace_single_owner_idx')
+        .on(table.workspaceId)
+        .where(sql`${table.role} = 'owner'`),
     };
   },
 );

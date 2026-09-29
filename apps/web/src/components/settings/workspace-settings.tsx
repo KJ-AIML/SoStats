@@ -6,6 +6,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Copy,
+  Crown,
   KeyRound,
   LoaderCircle,
   LockKeyhole,
@@ -36,6 +37,7 @@ export function WorkspaceSettings({
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
+  const [confirmTransfer, setConfirmTransfer] = useState<number | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -213,6 +215,43 @@ export function WorkspaceSettings({
         requestError instanceof Error
           ? requestError.message
           : "Unable to update member role",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const transferOwnership = async (memberId: number) => {
+    setBusy(`transfer-${memberId}`);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/ownership-transfer`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            targetMemberId: memberId,
+            previousOwnerRole: "admin",
+          }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to transfer ownership");
+      }
+
+      setConfirmTransfer(null);
+      setMessage(
+        "Workspace ownership transferred. Your role is now admin.",
+      );
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to transfer ownership",
       );
     } finally {
       setBusy(null);
@@ -537,7 +576,7 @@ export function WorkspaceSettings({
             return (
               <div
                 key={member.id}
-                className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_150px_170px]"
+                className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_150px_280px]"
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-950 text-[9px] font-bold text-white">
@@ -590,7 +629,47 @@ export function WorkspaceSettings({
                   )}
                 </div>
 
-                <div className="flex items-end justify-end gap-2">
+                <div className="flex flex-wrap items-end justify-end gap-2">
+                  {canManage &&
+                    initialSettings.permissions.canTransferOwnership &&
+                    (confirmTransfer === member.id ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          disabled={Boolean(busy)}
+                          onClick={() => setConfirmTransfer(null)}
+                          className="h-9 rounded-xl text-[8px]"
+                        >
+                          Keep ownership
+                        </Button>
+                        <Button
+                          disabled={Boolean(busy)}
+                          onClick={() => void transferOwnership(member.id)}
+                          className="h-9 rounded-xl bg-amber-500 text-[8px] text-white hover:bg-amber-600"
+                        >
+                          {busy === `transfer-${member.id}` ? (
+                            <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Crown className="mr-1.5 h-3 w-3" />
+                          )}
+                          Confirm transfer
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        disabled={Boolean(busy)}
+                        onClick={() => {
+                          setConfirmRemove(null);
+                          setConfirmTransfer(member.id);
+                        }}
+                        className="h-9 rounded-xl text-[8px] text-amber-700"
+                      >
+                        <Crown className="mr-1.5 h-3 w-3" />
+                        Make owner
+                      </Button>
+                    ))}
+
                   {canManage &&
                     (confirmRemove === member.id ? (
                       <>
@@ -619,7 +698,10 @@ export function WorkspaceSettings({
                       <Button
                         variant="outline"
                         disabled={Boolean(busy)}
-                        onClick={() => setConfirmRemove(member.id)}
+                        onClick={() => {
+                          setConfirmTransfer(null);
+                          setConfirmRemove(member.id);
+                        }}
                         className="h-9 rounded-xl text-[8px] text-red-700"
                       >
                         <Trash2 className="mr-1.5 h-3 w-3" />
@@ -628,9 +710,7 @@ export function WorkspaceSettings({
                     ))}
                   {!canManage && (
                     <span className="text-[8px] text-muted-foreground">
-                      {isOwner
-                        ? "Ownership transfer not implemented"
-                        : "Owner permission required"}
+                      {isOwner ? "Current workspace owner" : "Owner permission required"}
                     </span>
                   )}
                 </div>
@@ -640,7 +720,7 @@ export function WorkspaceSettings({
         </div>
 
         <div className="border-t border-black/[0.055] bg-neutral-50 px-5 py-3 text-[9px] leading-4 text-muted-foreground">
-          Accepted invitations become persisted workspace membership. Ownership transfer remains a separate lifecycle and is not implied by invitations.
+          Accepted invitations become persisted workspace membership. Ownership transfer is explicit: the current owner becomes admin and the selected member becomes the single owner in one transaction.
         </div>
       </section>
 
@@ -736,6 +816,11 @@ export function WorkspaceSettings({
                 "Secure links exist; automated email delivery is not implemented yet",
               ],
               [
+                "Ownership transfer",
+                initialSettings.productCapabilities.ownershipTransfer,
+                "Transactional single-owner transfer with DB invariant",
+              ],
+              [
                 "API keys",
                 initialSettings.productCapabilities.apiKeys,
                 "Bearer auth exists; user-managed API key lifecycle does not",
@@ -796,7 +881,7 @@ export function WorkspaceSettings({
           <div>
             <p className="text-[10px] font-semibold">Administrative boundary</p>
             <p className="mt-1 max-w-4xl text-[9px] leading-5 text-muted-foreground">
-              Identity/Admin is now extending this surface with real invitation lifecycle state. API-key lifecycle, notification preferences, immutable audit logs and ownership transfer remain later slices and stay unavailable rather than simulated.
+              Identity/Admin now includes invitation lifecycle plus transactional ownership transfer and centralized RBAC roles. API-key lifecycle, notification preferences and immutable audit logs remain later slices and stay unavailable rather than simulated.
             </p>
           </div>
         </div>

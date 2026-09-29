@@ -106,7 +106,7 @@ export class WorkspaceInvitationsService {
   }
 
   async listForWorkspace(workspaceId: number, actorUserId: number) {
-    await this.access.requireMembership(actorUserId, workspaceId, ['owner']);
+    await this.access.requireOwner(actorUserId, workspaceId);
 
     const invitations = await this.db.query.workspaceInvitations.findMany({
       where: eq(schema.workspaceInvitations.workspaceId, workspaceId),
@@ -127,7 +127,7 @@ export class WorkspaceInvitationsService {
     actorUserId: number,
     input: { email?: string; role?: string },
   ) {
-    await this.access.requireMembership(actorUserId, workspaceId, ['owner']);
+    await this.access.requireOwner(actorUserId, workspaceId);
 
     const email = normalizedEmail(input.email);
     const role = invitationRole(input.role);
@@ -221,7 +221,7 @@ export class WorkspaceInvitationsService {
     actorUserId: number,
     invitationId: number,
   ) {
-    await this.access.requireMembership(actorUserId, workspaceId, ['owner']);
+    await this.access.requireOwner(actorUserId, workspaceId);
 
     const token = newToken();
     const outcome = await this.db.transaction(async (tx) => {
@@ -286,7 +286,7 @@ export class WorkspaceInvitationsService {
     actorUserId: number,
     invitationId: number,
   ) {
-    await this.access.requireMembership(actorUserId, workspaceId, ['owner']);
+    await this.access.requireOwner(actorUserId, workspaceId);
 
     const outcome = await this.db.transaction(async (tx) => {
       await tx.execute(
