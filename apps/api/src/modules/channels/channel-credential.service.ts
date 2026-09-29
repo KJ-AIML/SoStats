@@ -19,7 +19,11 @@ export class ChannelCredentialService {
     account: typeof schema.socialAccounts.$inferSelect,
     adapter: SocialPublisherPort,
   ) {
-    if (account.status !== 'active' || !account.accessToken) {
+    if (
+      account.status === 'disconnected' ||
+      !account.accessToken ||
+      !['active', 'expired'].includes(account.status)
+    ) {
       throw new ProviderPublishError(
         'Connected channel is unavailable or has no usable access token',
         { retryable: false },
@@ -28,7 +32,10 @@ export class ChannelCredentialService {
 
     let accessToken = decrypt(account.accessToken);
 
-    if (!account.expiresAt || account.expiresAt.getTime() > Date.now()) {
+    if (
+      account.status === 'active' &&
+      (!account.expiresAt || account.expiresAt.getTime() > Date.now())
+    ) {
       return accessToken;
     }
 
