@@ -1,6 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as schema from '../../src/db/schema.js';
 import { ProviderPublishError } from '../../src/modules/channels/ports/SocialPublisherPort.js';
 import { createTestDatabase, type TestDatabase } from './test-database.js';
@@ -121,6 +121,15 @@ describe('PublishingService.execute', () => {
     const rearmed = await reload(publication.id);
     expect(rearmed.dispatchGeneration).toBe(publication.dispatchGeneration + 1);
     expect(rearmed.nextAttemptAt).toBeInstanceOf(Date);
+    expect(rearmed.updatedAt.getTime()).toBeGreaterThan(
+      publication.updatedAt.getTime(),
+    );
+    // A legacy job (no generation) carrying the old version is stale.
+    await expect(
+      service.execute(publication.id, {
+        expectedVersion: publication.updatedAt.toISOString(),
+      }),
+    ).resolves.toMatchObject({ status: 'stale' });
     await expect(
       service.execute(publication.id, request(publication)),
     ).resolves.toMatchObject({
@@ -354,5 +363,95 @@ describe('PublishingService.execute', () => {
       scheduledPublicationId: publication.id,
     });
     expect((await reload(publication.id)).status).toBe('scheduled');
+  });
+
+  it.each([
+    ['calls the marker', true],
+    ['never calls the marker', false],
+  ])(
+    'records unknown, never a retry, when the success write fails and the adapter %s',
+    async (_label, callsMarker) => {
+      const adapter = new ScriptedAdapter(async (context, self) => {
+        if (callsMarker) await self.send(context);
+        return { postId: 'landed' };
+      });
+      const { service, ledger } = buildPublishing(database.db, adapter);
+      vi.spyOn(ledger, 'recordSuccess').mockRejectedValueOnce(
+        new Error('db down'),
+      );
+      const publication = await scheduled();
+
+      await expect(
+        service.execute(publication.id, request(publication)),
+      ).resolves.toMatchObject({ status: 'outcome_unknown' });
+      expect((await reload(publication.id)).status).toBe('unknown');
+      expect(adapter.calls).toBe(1);
+    },
+  );
+
+  it('keeps the published outcome when the audit write rejects', async () => {
+    const adapter = new ScriptedAdapter(async (context, self) => {
+      await self.send(context);
+      return { postId: 'audited' };
+    });
+    const { service, audit } = buildPublishing(database.db, adapter);
+    audit.record.mockRejectedValue(new Error('audit down'));
+    const publication = await scheduled();
+
+    await expect(
+      service.execute(publication.id, request(publication)),
+    ).resolves.toMatchObject({ status: 'published' });
+    expect((await reload(publication.id)).status).toBe('published');
+    expect(audit.record).toHaveBeenCalled();
+  });
+
+  it.each([
+    'scheduled',
+    'publishing',
+    'unknown',
+    'failed',
+    'published',
+    'cancelled',
+  ] as const)(
+    'dead-letter leaves a %s publication unchanged',
+    async (status) => {
+      const { service, ledger } = buildPublishing(
+        database.db,
+        new ScriptedAdapter(async () => ({ postId: 'x' })),
+      );
+      const publication = await scheduled(
+        status === 'publishing' ? {} : { status },
+      );
+      if (status === 'publishing') {
+        const claim = await ledger.claim({
+          publicationId: publication.id,
+          expectedVersion: publication.updatedAt.toISOString(),
+          expectedDispatchGeneration: publication.dispatchGeneration,
+        });
+        expect(claim).not.toBeNull();
+      }
+      const before = await reload(publication.id);
+
+      await expect(service.deadLetter(publication.id)).resolves.toEqual({
+        status,
+        scheduledPublicationId: publication.id,
+      });
+      expect(await reload(publication.id)).toEqual(before);
+    },
+  );
+
+  it('returns stale before the status decision', async () => {
+    const { service } = buildPublishing(
+      database.db,
+      new ScriptedAdapter(async () => ({ postId: 'x' })),
+    );
+    const publication = await scheduled({ status: 'failed' });
+
+    await expect(
+      service.execute(publication.id, {
+        expectedVersion: publication.updatedAt.toISOString(),
+        expectedDispatchGeneration: publication.dispatchGeneration + 1,
+      }),
+    ).resolves.toMatchObject({ status: 'stale' });
   });
 });

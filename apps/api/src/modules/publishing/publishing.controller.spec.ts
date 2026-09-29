@@ -36,6 +36,13 @@ describe('parseExecuteBody', () => {
     expect(() => parseExecuteBody(body)).toThrow(BadRequestException);
   });
 
+  it('normalizes a non-canonical valid date to ISO milliseconds', () => {
+    expect(
+      parseExecuteBody({ expectedVersion: '2026-09-30T02:00:00+02:00' })
+        .expectedVersion,
+    ).toBe('2026-09-30T00:00:00.000Z');
+  });
+
   it('keeps a string queue job id and drops anything else', () => {
     expect(
       parseExecuteBody({ expectedVersion: version, queueJobId: 'job-1' })

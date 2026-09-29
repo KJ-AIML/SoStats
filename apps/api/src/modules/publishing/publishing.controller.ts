@@ -48,7 +48,7 @@ export function parseExecuteBody(body: unknown): ExecuteRequest {
   }
 
   return {
-    expectedVersion: input.expectedVersion,
+    expectedVersion: new Date(input.expectedVersion).toISOString(),
     expectedDispatchGeneration,
     queueJobId:
       typeof input.queueJobId === 'string'

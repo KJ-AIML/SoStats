@@ -45,6 +45,12 @@ export type SweepDecision = {
   publicationId: number;
   workspaceId: number;
   attemptId: number | null;
+  attemptNumber: number | null;
+  attemptCount: number;
+  dispatchGeneration: number;
+  socialAccountId: number;
+  markerSet: boolean;
+  errorClass: ProviderErrorClass | null;
   outcome: 'unknown' | 'retry_scheduled' | 'retry_exhausted';
 };
 
@@ -332,6 +338,8 @@ export class PublicationLedger {
               workspaceId: sp.workspaceId,
               activeAttemptId: sp.activeAttemptId,
               attemptCount: sp.attemptCount,
+              dispatchGeneration: sp.dispatchGeneration,
+              socialAccountId: sp.socialAccountId,
             })
             .from(sp)
             .where(
@@ -355,6 +363,11 @@ export class PublicationLedger {
             publicationId: candidate.id,
             workspaceId: row.workspaceId,
             attemptId: attempt?.id ?? null,
+            attemptNumber: attempt?.attemptNumber ?? null,
+            attemptCount: row.attemptCount,
+            dispatchGeneration: row.dispatchGeneration,
+            socialAccountId: row.socialAccountId,
+            markerSet: Boolean(attempt?.providerRequestStartedAt),
           };
 
           if (attempt?.providerRequestStartedAt) {
@@ -377,7 +390,11 @@ export class PublicationLedger {
               .update(sp)
               .set({ status: 'unknown', leaseExpiresAt: null, updatedAt: now })
               .where(eq(sp.id, candidate.id));
-            return { ...base, outcome: 'unknown' };
+            return {
+              ...base,
+              errorClass: 'unknown_outcome',
+              outcome: 'unknown',
+            };
           }
 
           if (attempt) {
@@ -410,7 +427,11 @@ export class PublicationLedger {
               .update(sp)
               .set({ status: 'failed', leaseExpiresAt: null, updatedAt: now })
               .where(eq(sp.id, candidate.id));
-            return { ...base, outcome: 'retry_exhausted' };
+            return {
+              ...base,
+              errorClass: attempt ? 'internal' : null,
+              outcome: 'retry_exhausted',
+            };
           }
 
           await tx
@@ -422,7 +443,11 @@ export class PublicationLedger {
               ),
             )
             .where(eq(sp.id, candidate.id));
-          return { ...base, outcome: 'retry_scheduled' };
+          return {
+            ...base,
+            errorClass: attempt ? 'internal' : null,
+            outcome: 'retry_scheduled',
+          };
         },
       );
       if (decision) decisions.push(decision);

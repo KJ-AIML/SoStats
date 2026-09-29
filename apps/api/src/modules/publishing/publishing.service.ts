@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq, isNull, lte, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
@@ -102,12 +102,22 @@ export class PublishingService {
     limit = 250,
   ): Promise<DispatchablePublication[]> {
     const swept = await this.ledger.sweepExpiredLeases();
+    const providers = await this.providersFor(
+      swept.map((decision) => decision.socialAccountId),
+    );
     for (const decision of swept) {
       this.logEvent('publication.sweep', {
         workspace_id: decision.workspaceId,
         publication_id: decision.publicationId,
         attempt_id: decision.attemptId,
+        attempt_number: decision.attemptNumber,
+        attempt_count: decision.attemptCount,
+        dispatch_generation: decision.dispatchGeneration,
+        provider: providers.get(decision.socialAccountId) ?? null,
+        social_account_id: decision.socialAccountId,
         outcome: decision.outcome,
+        error_class: decision.errorClass,
+        marker_set: decision.markerSet,
       });
       if (decision.outcome !== 'retry_scheduled') {
         await this.safeAudit(
@@ -146,6 +156,20 @@ export class PublishingService {
     }));
   }
 
+  private async providersFor(ids: number[]) {
+    const providers = new Map<number, string>();
+    if (ids.length === 0) return providers;
+    const rows = await this.db
+      .select({
+        id: schema.socialAccounts.id,
+        provider: schema.socialAccounts.provider,
+      })
+      .from(schema.socialAccounts)
+      .where(inArray(schema.socialAccounts.id, [...new Set(ids)]));
+    for (const row of rows) providers.set(row.id, row.provider);
+    return providers;
+  }
+
   async execute(id: number, request: ExecuteRequest): Promise<ExecuteResult> {
     const publication = await this.getPublication(id);
     const gate = this.gate(publication, request);
@@ -175,6 +199,7 @@ export class PublishingService {
     }
 
     const marker = { set: false };
+    let providerReturned = false;
     let outcome: AttemptOutcome;
     try {
       const account = publication.socialAccount;
@@ -202,13 +227,16 @@ export class PublishingService {
           marker.set = true;
         },
       });
+      providerReturned = true;
       outcome = {
         kind: 'success',
         result,
         published: await this.ledger.recordSuccess(claim, result),
       };
     } catch (error) {
-      outcome = await this.recordError(claim, error, marker.set);
+      outcome = providerReturned
+        ? await this.recordUnknownAfterSuccess(claim, error, marker.set)
+        : await this.recordError(claim, error, marker.set);
     }
 
     return this.finish(
@@ -258,6 +286,13 @@ export class PublishingService {
     request: ExecuteRequest,
   ): ExecuteResult | null {
     const scheduledPublicationId = publication.id;
+    // Spec �5 step 1: staleness first, then status.
+    const stale =
+      request.expectedDispatchGeneration === undefined
+        ? publication.updatedAt.toISOString() !== request.expectedVersion
+        : publication.dispatchGeneration !== request.expectedDispatchGeneration;
+    if (stale) return { status: 'stale', scheduledPublicationId };
+
     switch (publication.status) {
       case 'published': {
         const result = publication.jobs
@@ -281,11 +316,7 @@ export class PublishingService {
         return { status: 'in_progress', scheduledPublicationId };
     }
 
-    const stale =
-      request.expectedDispatchGeneration === undefined
-        ? publication.updatedAt.toISOString() !== request.expectedVersion
-        : publication.dispatchGeneration !== request.expectedDispatchGeneration;
-    return stale ? { status: 'stale', scheduledPublicationId } : null;
+    return null;
   }
 
   private async recordError(
@@ -313,6 +344,31 @@ export class PublishingService {
           ? (error.statusCode ?? null)
           : null,
     };
+  }
+
+  /**
+   * The provider already returned success: whatever failed afterwards (for
+   * example the success write), the post may exist, so it is `unknown`, never
+   * retried. A failing write here rethrows; the row stays `publishing` for the sweeper.
+   */
+  private async recordUnknownAfterSuccess(
+    claim: ClaimedAttempt,
+    error: unknown,
+    markerSet: boolean,
+  ): Promise<AttemptOutcome> {
+    const decision = {
+      kind: 'unknown' as const,
+      errorClass: 'internal' as const,
+      contractViolation: !markerSet,
+    };
+    const message = failureMessage(error);
+    const recorded = await this.ledger.recordFailure(
+      claim,
+      'unknown',
+      decision.errorClass,
+      message,
+    );
+    return { kind: 'failure', decision, recorded, message, statusCode: null };
   }
 
   private async finish(
@@ -353,6 +409,11 @@ export class PublishingService {
         status_code: null,
       });
       if (!outcome.published) {
+        this.logEvent(
+          'publication.ownership_lost_after_success',
+          fields,
+          'warn',
+        );
         return { status: 'in_progress', scheduledPublicationId };
       }
       await this.safeAudit(
@@ -393,6 +454,21 @@ export class PublishingService {
           ? outcome.decision.contractViolation
           : false,
     });
+
+    if (
+      outcome.decision.kind === 'unknown' &&
+      outcome.decision.contractViolation
+    ) {
+      this.logEvent(
+        'publication.side_effect_contract_violation',
+        {
+          ...fields,
+          error_class: outcome.decision.errorClass,
+          status_code: outcome.statusCode,
+        },
+        'warn',
+      );
+    }
 
     switch (outcome.recorded) {
       case 'retry_scheduled':
@@ -454,7 +530,11 @@ export class PublishingService {
     }
   }
 
-  private logEvent(event: string, fields: Record<string, unknown>) {
-    this.logger.log(JSON.stringify({ event, ...fields }));
+  private logEvent(
+    event: string,
+    fields: Record<string, unknown>,
+    level: 'log' | 'warn' = 'log',
+  ) {
+    this.logger[level](JSON.stringify({ event, ...fields }));
   }
 }
