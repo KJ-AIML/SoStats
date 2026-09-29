@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsc && node --test test/*.test.cjs"
+    "test": "tsc && node --test test/*.test.cjs",
+    "test:int": "tsc && node --test test/*.int-test.cjs"
   },
   "type": "commonjs",
   "dependencies": {

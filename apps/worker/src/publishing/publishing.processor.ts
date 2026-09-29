@@ -1,7 +1,6 @@
 import { Job, Worker } from 'bullmq';
 import { createRedisConnection } from '../queue/redis';
 import {
-  deadLetterPublication,
   executePublication,
   type PublishingJobData,
 } from './publishing.api';
@@ -15,28 +14,27 @@ const concurrency = Number.parseInt(
 const publishingWorker = new Worker<PublishingJobData>(
   'publishing',
   async (job: Job<PublishingJobData>) => {
-    const { scheduledPublicationId, expectedVersion } = job.data;
+    const { scheduledPublicationId, expectedDispatchGeneration } = job.data;
 
     console.log(
-      `[PublishingProcessor] Executing schedule ${scheduledPublicationId}; attempt ${job.attemptsMade + 1}`,
+      `[PublishingProcessor] Executing schedule ${scheduledPublicationId} generation ${expectedDispatchGeneration}; transport attempt ${job.attemptsMade + 1}`,
     );
 
-    const result = await executePublication(
-      scheduledPublicationId,
-      expectedVersion,
+    const result = await executePublication(job.data, job.id);
+
+    // Log the domain status only; the API's failure detail can carry provider text.
+    console.log(
+      JSON.stringify({
+        event: 'publication.domain_result',
+        status: result.status,
+        publication_id: scheduledPublicationId,
+        dispatch_generation: expectedDispatchGeneration,
+        queue_job_id: job.id,
+      }),
     );
 
-    if (result.status === 'failed_terminal') {
-      console.error(
-        `[PublishingProcessor] Schedule ${scheduledPublicationId} failed terminally: ${result.reason || 'provider rejected publication'}`,
-      );
-    } else {
-      console.log(
-        `[PublishingProcessor] Schedule ${scheduledPublicationId} finished with domain status ${result.status}`,
-      );
-    }
-
-    return result;
+    // Return only non-sensitive fields so provider text is not stored in Redis.
+    return { status: result.status, scheduledPublicationId };
   },
   {
     connection,
@@ -54,24 +52,19 @@ publishingWorker.on('failed', (job, error) => {
   console.error(
     `[PublishingProcessor] Queue job ${job?.id || 'unknown'} failed: ${error.message}`,
   );
-
   if (!job) return;
+  if (job.attemptsMade < Number(job.opts.attempts || 1)) return;
 
-  const allowedAttempts = Number(job.opts.attempts || 1);
-  if (job.attemptsMade < allowedAttempts) return;
-
-  void deadLetterPublication(
-    job.data.scheduledPublicationId,
-    job.data.expectedVersion,
-    error.message,
-  ).catch((deadLetterError) => {
-    console.error(
-      '[PublishingProcessor] Failed to persist dead-letter state:',
-      deadLetterError instanceof Error
-        ? deadLetterError.message
-        : deadLetterError,
-    );
-  });
+  // Spec I8: transport exhaustion never changes publication state. removeOnFail
+  // lets the next dispatch poll re-enqueue this generation once the API is back.
+  console.error(
+    JSON.stringify({
+      event: 'publication.transport_exhausted',
+      publication_id: job.data.scheduledPublicationId,
+      dispatch_generation: job.data.expectedDispatchGeneration,
+      queue_job_id: job.id,
+    }),
+  );
 });
 
 publishingWorker.on('error', (error) => {
