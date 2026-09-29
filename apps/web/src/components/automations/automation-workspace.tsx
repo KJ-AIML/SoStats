@@ -728,9 +728,10 @@ export function AutomationWorkspace({
                 )}
 
                 <div className="rounded-xl bg-violet-50 p-3 text-[8px] leading-4 text-violet-800">
-                  Sign: timestamp + "." + event name + "." + event ID + "." + exact JSON body.
-                  Send headers x-sostats-timestamp, x-sostats-event,
-                  x-sostats-event-id, and x-sostats-signature.
+                  Sign the exact UTF-8 JSON bytes using the sequence{" "}
+                  <code>timestamp.event-name.event-id.body</code>. Send headers
+                  x-sostats-timestamp, x-sostats-event, x-sostats-event-id,
+                  and x-sostats-signature.
                 </div>
               </div>
             </div>
