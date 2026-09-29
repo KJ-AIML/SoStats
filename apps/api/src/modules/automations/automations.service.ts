@@ -114,6 +114,7 @@ export class AutomationsService {
   ) {
     await this.requireAutomation(workspaceId, automationId);
     const definition = validateWorkflowDefinition(dto.workflowDefinition);
+    workflowTriggerMode(definition);
 
     const [latest] = await this.db
       .select()
