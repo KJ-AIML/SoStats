@@ -6,8 +6,9 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { createHash, randomBytes } from 'crypto';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
@@ -35,6 +36,7 @@ type RuntimeResult = {
     | 'completed'
     | 'waiting_approval'
     | 'failed'
+    | 'in_progress'
     | 'stale'
     | 'already_terminal';
   runId: number;
@@ -100,6 +102,35 @@ function normalizeProvider(value?: string | null) {
   return normalized === 'twitter' ? 'x' : normalized;
 }
 
+function automationLeaseMs() {
+  const parsed = Number.parseInt(
+    process.env.AUTOMATION_STEP_LEASE_SECONDS || '900',
+    10,
+  );
+  const seconds = Number.isFinite(parsed)
+    ? Math.min(Math.max(parsed, 120), 3600)
+    : 900;
+  return seconds * 1000;
+}
+
+function durableAutomationKey(
+  runId: number,
+  stepId: string,
+  kind: string,
+  suffix = '',
+) {
+  const digest = createHash('sha256')
+    .update([runId, stepId, kind, suffix].join(':'))
+    .digest('hex');
+  return `automation:${digest}`;
+}
+
+function deterministicGenerationId(runId: number, stepId: string) {
+  return createHash('sha256')
+    .update(`automation-insight:${runId}:${stepId}`)
+    .digest('hex');
+}
+
 @Injectable()
 export class AutomationRuntimeService {
   constructor(
@@ -110,6 +141,8 @@ export class AutomationRuntimeService {
   ) {}
 
   async listDispatchable(offset = 0, limit = 250) {
+    await this.reconcileExpiredStepLeases();
+
     const safeOffset = Math.max(0, offset);
     const safeLimit = Math.min(500, Math.max(1, limit));
 
@@ -154,6 +187,7 @@ export class AutomationRuntimeService {
   }
 
   async execute(runId: number, expectedStepId?: string): Promise<RuntimeResult> {
+    await this.reconcileExpiredStepLeases(runId);
     const run = await this.getRun(runId);
 
     if (['completed', 'failed'].includes(run.status)) {
@@ -186,18 +220,6 @@ export class AutomationRuntimeService {
       return { status: 'stale', runId, stepId: firstPending.id };
     }
 
-    if (!run.startedAt) {
-      await this.db
-        .update(schema.automationRuns)
-        .set({ status: 'running', startedAt: new Date(), error: null })
-        .where(eq(schema.automationRuns.id, runId));
-    } else {
-      await this.db
-        .update(schema.automationRuns)
-        .set({ status: 'running', error: null })
-        .where(eq(schema.automationRuns.id, runId));
-    }
-
     for (let index = 0; index < order.length; index += 1) {
       const node = order[index];
       const step = stepMap.get(node.id);
@@ -208,18 +230,48 @@ export class AutomationRuntimeService {
         return { status: 'waiting_approval', runId, stepId: node.id };
       }
 
-      await this.db
-        .update(schema.automationRunSteps)
-        .set({
-          status: 'running',
-          startedAt: step.startedAt || new Date(),
-          completedAt: null,
-          error: null,
-        })
-        .where(eq(schema.automationRunSteps.id, step.id));
+      if (
+        step.status === 'running' &&
+        step.leaseExpiresAt &&
+        step.leaseExpiresAt.getTime() > Date.now()
+      ) {
+        return { status: 'in_progress', runId, stepId: step.stepId };
+      }
+
+      const claimedStep = await this.claimStep(run, step);
+      if (!claimedStep) {
+        const current = await this.db.query.automationRunSteps.findFirst({
+          where: eq(schema.automationRunSteps.id, step.id),
+        });
+        if (current?.status === 'completed') {
+          step.status = 'completed';
+          step.logs = current.logs;
+          continue;
+        }
+        return {
+          status: current?.status === 'running' ? 'in_progress' : 'stale',
+          runId,
+          stepId: current?.stepId || step.stepId,
+        };
+      }
+
+      step.status = 'running';
+      step.startedAt = claimedStep.startedAt;
+      step.logs = claimedStep.logs;
+      step.error = null;
+      step.executionToken = claimedStep.executionToken;
+      step.leaseExpiresAt = claimedStep.leaseExpiresAt;
+      step.attempts = claimedStep.attempts;
+      step.updatedAt = claimedStep.updatedAt;
 
       try {
-        const output = await this.executeNode(run, node, order, index, step);
+        const output = await this.executeNode(
+          run,
+          node,
+          order,
+          index,
+          claimedStep,
+        );
 
         const completedAt = new Date();
         const completedLogs = JSON.stringify({
@@ -227,15 +279,32 @@ export class AutomationRuntimeService {
           output,
         });
 
-        await this.db
+        const [completedStep] = await this.db
           .update(schema.automationRunSteps)
           .set({
             status: 'completed',
             completedAt,
             logs: completedLogs,
             error: null,
+            executionToken: null,
+            leaseExpiresAt: null,
+            updatedAt: completedAt,
           })
-          .where(eq(schema.automationRunSteps.id, step.id));
+          .where(
+            and(
+              eq(schema.automationRunSteps.id, step.id),
+              eq(
+                schema.automationRunSteps.executionToken,
+                claimedStep.executionToken!,
+              ),
+              eq(schema.automationRunSteps.status, 'running'),
+            ),
+          )
+          .returning();
+
+        if (!completedStep) {
+          return { status: 'stale', runId, stepId: step.stepId };
+        }
 
         step.status = 'completed';
         step.completedAt = completedAt;
@@ -253,8 +322,19 @@ export class AutomationRuntimeService {
               .set({
                 status: 'pending',
                 error: message,
+                executionToken: null,
+                leaseExpiresAt: null,
+                updatedAt: new Date(),
               })
-              .where(eq(schema.automationRunSteps.id, step.id));
+              .where(
+                and(
+                  eq(schema.automationRunSteps.id, step.id),
+                  eq(
+                    schema.automationRunSteps.executionToken,
+                    claimedStep.executionToken!,
+                  ),
+                ),
+              );
             await tx
               .update(schema.automationRuns)
               .set({ status: 'pending', error: message })
@@ -271,8 +351,19 @@ export class AutomationRuntimeService {
               status: 'failed',
               completedAt: new Date(),
               error: message,
+              executionToken: null,
+              leaseExpiresAt: null,
+              updatedAt: new Date(),
             })
-            .where(eq(schema.automationRunSteps.id, step.id));
+            .where(
+              and(
+                eq(schema.automationRunSteps.id, step.id),
+                eq(
+                  schema.automationRunSteps.executionToken,
+                  claimedStep.executionToken!,
+                ),
+              ),
+            );
           await tx
             .update(schema.automationRuns)
             .set({
@@ -411,6 +502,9 @@ export class AutomationRuntimeService {
           startedAt: null,
           completedAt: null,
           error: null,
+          executionToken: null,
+          leaseExpiresAt: null,
+          updatedAt: new Date(),
         })
         .where(eq(schema.automationRunSteps.id, failed.id));
 
@@ -454,6 +548,9 @@ export class AutomationRuntimeService {
             status: 'failed',
             completedAt: new Date(),
             error: message,
+            executionToken: null,
+            leaseExpiresAt: null,
+            updatedAt: new Date(),
           })
           .where(eq(schema.automationRunSteps.id, step.id));
       }
@@ -469,6 +566,111 @@ export class AutomationRuntimeService {
     });
 
     return { runId, status: 'failed', stepId: step?.stepId };
+  }
+
+  private async reconcileExpiredStepLeases(runId?: number) {
+    const conditions = [
+      eq(schema.automationRunSteps.status, 'running'),
+      or(
+        isNull(schema.automationRunSteps.leaseExpiresAt),
+        lte(schema.automationRunSteps.leaseExpiresAt, new Date()),
+      )!,
+    ];
+    if (runId) {
+      conditions.push(eq(schema.automationRunSteps.runId, runId));
+    }
+
+    const stale = await this.db.query.automationRunSteps.findMany({
+      where: and(...conditions),
+      orderBy: (fields, { asc }) => [asc(fields.id)],
+      limit: 100,
+    });
+
+    for (const step of stale) {
+      await this.db.transaction(async (tx) => {
+        const [recovered] = await tx
+          .update(schema.automationRunSteps)
+          .set({
+            status: 'pending',
+            executionToken: null,
+            leaseExpiresAt: null,
+            error: 'Recovered expired automation execution lease',
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(schema.automationRunSteps.id, step.id),
+              eq(schema.automationRunSteps.status, 'running'),
+              step.executionToken
+                ? eq(
+                    schema.automationRunSteps.executionToken,
+                    step.executionToken,
+                  )
+                : isNull(schema.automationRunSteps.executionToken),
+            ),
+          )
+          .returning();
+
+        if (recovered) {
+          await tx
+            .update(schema.automationRuns)
+            .set({
+              status: 'pending',
+              error: 'Recovered expired automation execution lease',
+            })
+            .where(
+              and(
+                eq(schema.automationRuns.id, step.runId),
+                eq(schema.automationRuns.status, 'running'),
+              ),
+            );
+        }
+      });
+    }
+  }
+
+  private async claimStep(
+    run: Awaited<ReturnType<AutomationRuntimeService['getRun']>>,
+    step: typeof schema.automationRunSteps.$inferSelect,
+  ) {
+    const token = randomBytes(24).toString('hex');
+    const now = new Date();
+    const leaseExpiresAt = new Date(now.getTime() + automationLeaseMs());
+
+    return this.db.transaction(async (tx) => {
+      const [claimed] = await tx
+        .update(schema.automationRunSteps)
+        .set({
+          status: 'running',
+          attempts: step.attempts + 1,
+          executionToken: token,
+          leaseExpiresAt,
+          startedAt: step.startedAt || now,
+          completedAt: null,
+          error: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.automationRunSteps.id, step.id),
+            eq(schema.automationRunSteps.status, 'pending'),
+          ),
+        )
+        .returning();
+
+      if (!claimed) return null;
+
+      await tx
+        .update(schema.automationRuns)
+        .set({
+          status: 'running',
+          startedAt: run.startedAt || now,
+          error: null,
+        })
+        .where(eq(schema.automationRuns.id, run.id));
+
+      return claimed;
+    });
   }
 
   private async executeNode(
@@ -500,7 +702,10 @@ export class AutomationRuntimeService {
       const result = await this.recommendations.generate(
         run.automation.workspaceId,
         brandId,
-        { supersedePending: false },
+        {
+          supersedePending: false,
+          generationId: deterministicGenerationId(run.id, node.id),
+        },
       );
       return {
         summary: result.summary,
@@ -532,9 +737,11 @@ export class AutomationRuntimeService {
         node.data.label ||
         'Automation campaign';
       const channels = stringArrayConfig(config, 'channels');
-      const created = await this.campaigns.create(run.automation.workspaceId, {
-        brandId: numberConfig(config, 'brandId'),
-        name:
+      const created = await this.campaigns.create(
+        run.automation.workspaceId,
+        {
+          brandId: numberConfig(config, 'brandId'),
+          name:
           stringConfig(config, 'name') ||
           (triggerContext.title
             ? `${goal}: ${triggerContext.title}`.slice(0, 255)
@@ -543,9 +750,17 @@ export class AutomationRuntimeService {
           stringConfig(config, 'description') ||
           triggerContext.context ||
           undefined,
-        goal,
-        channels,
-      });
+          goal,
+          channels,
+        },
+        {
+          sourceKey: durableAutomationKey(
+            run.id,
+            step.stepId,
+            'generate-campaign',
+          ),
+        },
+      );
       campaignId = created.id;
 
       await this.db
@@ -559,6 +774,36 @@ export class AutomationRuntimeService {
         .where(eq(schema.automationRunSteps.id, step.id));
     }
 
+    const checkpointContentItemIds = Array.isArray(
+      log.checkpoint?.contentItemIds,
+    )
+      ? log.checkpoint.contentItemIds.filter(
+          (value): value is number => typeof value === 'number',
+        )
+      : [];
+
+    if (
+      campaignId &&
+      log.checkpoint?.generationCompleted === true &&
+      checkpointContentItemIds.length
+    ) {
+      const campaign = await this.campaigns.findOne(
+        run.automation.workspaceId,
+        campaignId,
+      );
+      return {
+        campaignId: campaign.id,
+        contentItemIds: checkpointContentItemIds,
+        contentItems: campaign.contentItems
+          .filter((item) => checkpointContentItemIds.includes(item.id))
+          .map((item) => ({
+            id: item.id,
+            title: item.title,
+            variantIds: item.variants.map((variant) => variant.id),
+          })),
+      };
+    }
+
     const generated = await this.campaigns.generate(
       run.automation.workspaceId,
       campaignId,
@@ -569,7 +814,7 @@ export class AutomationRuntimeService {
       { replaceExistingContent: true },
     );
 
-    return {
+    const output = {
       campaignId: generated.id,
       contentItemIds: generated.contentItems.map((item) => item.id),
       contentItems: generated.contentItems.map((item) => ({
@@ -578,6 +823,22 @@ export class AutomationRuntimeService {
         variantIds: item.variants.map((variant) => variant.id),
       })),
     };
+    const checkpointLogs = JSON.stringify({
+      ...parseStepLog(step.logs),
+      checkpoint: {
+        ...(parseStepLog(step.logs).checkpoint || {}),
+        campaignId: generated.id,
+        generationCompleted: true,
+        contentItemIds: output.contentItemIds,
+      },
+    });
+    await this.db
+      .update(schema.automationRunSteps)
+      .set({ logs: checkpointLogs, updatedAt: new Date() })
+      .where(eq(schema.automationRunSteps.id, step.id));
+    step.logs = checkpointLogs;
+
+    return output;
   }
 
   private triggerContext(
@@ -751,6 +1012,14 @@ export class AutomationRuntimeService {
           socialAccountId,
           scheduledAt: scheduledAt.toISOString(),
         },
+        {
+          sourceKey: durableAutomationKey(
+            run.id,
+            step.stepId,
+            'schedule',
+            `${contentItemId}:${socialAccountId}`,
+          ),
+        },
       );
       scheduleIds.push(created.id);
     }
@@ -810,6 +1079,9 @@ export class AutomationRuntimeService {
             output: { contentItemIds },
           }),
           error: null,
+          executionToken: null,
+          leaseExpiresAt: null,
+          updatedAt: new Date(),
         })
         .where(eq(schema.automationRunSteps.id, step.id));
 
