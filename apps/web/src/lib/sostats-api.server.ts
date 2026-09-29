@@ -38,12 +38,34 @@ export type WorkspaceInvitationRecord = {
   updatedAt: string;
 };
 
+export type WorkspaceApiKeyRecord = {
+  id: number;
+  workspaceId: number;
+  name: string;
+  publicId: string;
+  displayPrefix: string;
+  scopes: Array<"workspace:read" | "workspace:write" | string>;
+  status: "active" | "expired" | "revoked" | string;
+  expiresAt: string;
+  lastUsedAt?: string | null;
+  rotatedAt?: string | null;
+  revokedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: {
+    id: number;
+    name?: string | null;
+    email: string;
+  } | null;
+};
+
 export type WorkspaceSettingsRecord = {
   workspace: WorkspaceRecord & {
     createdAt?: string;
     updatedAt?: string;
   };
   invitations: WorkspaceInvitationRecord[];
+  apiKeys: WorkspaceApiKeyRecord[];
   members: Array<{
     id: number;
     userId: number;
@@ -58,6 +80,7 @@ export type WorkspaceSettingsRecord = {
     canManageWorkspace: boolean;
     canManageMembers: boolean;
     canManageInvitations: boolean;
+    canManageApiKeys: boolean;
     canTransferOwnership: boolean;
     canDeleteWorkspace: boolean;
   };
