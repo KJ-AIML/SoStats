@@ -26,7 +26,7 @@ export class ChannelCredentialService {
     ) {
       throw new ProviderPublishError(
         'Connected channel is unavailable or has no usable access token',
-        { retryable: false },
+        { retryable: false, errorClass: 'authentication' },
       );
     }
 
@@ -47,7 +47,7 @@ export class ChannelCredentialService {
 
       throw new ProviderPublishError(
         'Connected channel access token is expired and no refresh token is available',
-        { retryable: false },
+        { retryable: false, errorClass: 'authentication' },
       );
     }
 
