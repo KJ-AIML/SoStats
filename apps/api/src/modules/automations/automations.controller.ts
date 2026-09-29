@@ -13,6 +13,7 @@ import {
 } from '../../common/workspace/workspace.decorator.js';
 import { AutomationsService } from './automations.service.js';
 import { AutomationRuntimeService } from './automation-runtime.service.js';
+import { AutomationTriggersService } from './automation-triggers.service.js';
 import {
   AutomationDecisionDto,
   CreateAutomationDto,
@@ -27,6 +28,7 @@ export class AutomationsController {
   constructor(
     private readonly automationsService: AutomationsService,
     private readonly runtime: AutomationRuntimeService,
+    private readonly triggers: AutomationTriggersService,
   ) {}
 
   @Get()
@@ -66,6 +68,14 @@ export class AutomationsController {
     @CurrentWorkspaceId() workspaceId: number,
   ) {
     return this.automationsService.publish(workspaceId, id);
+  }
+
+  @Post(':id/trigger/retry')
+  retryTrigger(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.triggers.retry(workspaceId, id);
   }
 
   @Post(':id/run')
