@@ -325,14 +325,13 @@ export class PublishingService {
         publication.variantId || undefined,
       );
 
-      const result = await adapter.publishPost(
-        content,
-        accessToken,
-        {
-          providerAccountId: account.providerAccountId,
-          media,
-        },
-      );
+      const result = await adapter.publishPost(content, accessToken, {
+        providerAccountId: account.providerAccountId,
+        media,
+        signal: AbortSignal.timeout(120_000),
+        // Transitional (Task 3 → Task 5): Task 5 replaces this with the lease-checked marker.
+        beforeSideEffect: () => Promise.resolve(),
+      });
 
       await this.db.transaction(async (tx) => {
         await tx.insert(schema.publicationResults).values({

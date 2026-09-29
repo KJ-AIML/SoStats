@@ -11,9 +11,31 @@ export type PublishMedia = {
   url: string;
 };
 
+export type ProviderErrorClass =
+  | 'authentication'
+  | 'authorization'
+  | 'rate_limit'
+  | 'transient_provider'
+  | 'network_transient'
+  | 'invalid_request'
+  | 'content_rejected'
+  | 'resource_not_found'
+  | 'unknown_outcome'
+  | 'permanent_provider'
+  | 'internal';
+
+export type ProviderCheckpoint = {
+  operationType: string;
+  operationId?: string;
+  data?: Record<string, unknown>; // non-secret only
+};
+
 export type PublishContext = {
   providerAccountId?: string;
   media?: PublishMedia[];
+  signal: AbortSignal;
+  /** Await immediately before the one request that can create a public post. */
+  beforeSideEffect(checkpoint: ProviderCheckpoint): Promise<void>;
 };
 
 export type RefreshedToken = {
@@ -43,6 +65,7 @@ export type ProviderOAuthAccount = {
 };
 
 export class ProviderPublishError extends Error {
+  readonly errorClass: ProviderErrorClass;
   readonly retryable: boolean;
   readonly outcomeUnknown: boolean;
   readonly statusCode?: number;
@@ -50,6 +73,7 @@ export class ProviderPublishError extends Error {
   constructor(
     message: string,
     options: {
+      errorClass?: ProviderErrorClass;
       retryable?: boolean;
       outcomeUnknown?: boolean;
       statusCode?: number;
@@ -60,6 +84,13 @@ export class ProviderPublishError extends Error {
     this.retryable = options.retryable ?? false;
     this.outcomeUnknown = options.outcomeUnknown ?? false;
     this.statusCode = options.statusCode;
+    this.errorClass =
+      options.errorClass ??
+      (this.outcomeUnknown
+        ? 'unknown_outcome'
+        : this.retryable
+          ? 'transient_provider'
+          : 'permanent_provider');
   }
 }
 
@@ -71,7 +102,7 @@ export interface SocialPublisherPort {
   publishPost(
     content: string,
     accessToken: string,
-    context?: PublishContext,
+    context: PublishContext,
   ): Promise<PublishResult>;
 
   getAuthUrl(

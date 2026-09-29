@@ -115,6 +115,8 @@ describe('InstagramPublisherAdapter', () => {
     await expect(
       adapter.publishPost('Hello Instagram', 'page-token', {
         providerAccountId: 'ig-123',
+        signal: new AbortController().signal,
+        beforeSideEffect: () => Promise.resolve(),
         media: [
           {
             assetId: 1,
@@ -140,6 +142,8 @@ describe('InstagramPublisherAdapter', () => {
     await expect(
       adapter.publishPost('Caption only', 'page-token', {
         providerAccountId: 'ig-123',
+        signal: new AbortController().signal,
+        beforeSideEffect: () => Promise.resolve(),
         media: [],
       }),
     ).rejects.toThrow('requires exactly one attached JPEG image');

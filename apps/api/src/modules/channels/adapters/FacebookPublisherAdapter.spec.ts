@@ -65,6 +65,8 @@ describe('FacebookPublisherAdapter', () => {
     await expect(
       adapter.publishPost('Launch day', 'page-token', {
         providerAccountId: 'page-123',
+        signal: new AbortController().signal,
+        beforeSideEffect: () => Promise.resolve(),
         media: [
           {
             assetId: 1,
