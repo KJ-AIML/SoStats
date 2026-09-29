@@ -345,6 +345,7 @@ export class WorkspaceInvitationsService {
     if (!workspace) throw new NotFoundException('Invitation not found');
 
     return {
+      invitationId: invitation.id,
       workspace,
       email: maskedEmail(invitation.email),
       role: invitation.role,
