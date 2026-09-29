@@ -794,6 +794,7 @@ export const scheduledPublications = pgTable(
     socialAccountId: integer('social_account_id')
       .notNull()
       .references(() => socialAccounts.id, { onDelete: 'cascade' }),
+    sourceKey: varchar('source_key', { length: 255 }),
     scheduledAt: timestamp('scheduled_at').notNull(),
     status: varchar('status', { length: 50 }).notNull().default('scheduled'), // scheduled, published, failed, cancelled
     createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -807,6 +808,9 @@ export const scheduledPublications = pgTable(
       scheduledPubDateIdx: index('scheduled_pub_date_idx').on(
         table.scheduledAt,
       ),
+      scheduledPubSourceKeyUnique: uniqueIndex(
+        'scheduled_pub_source_key_unique',
+      ).on(table.sourceKey),
     };
   },
 );
