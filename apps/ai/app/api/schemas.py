@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field  # type: ignore
 
 
@@ -45,26 +47,69 @@ class CampaignPlan(BaseModel):
 
 
 class AnalyticsMetrics(BaseModel):
-    platform: str = Field(..., description="Platform (e.g., Instagram, TikTok)")
-    metric_type: str = Field(..., description="Type of metric (e.g., engagement, reach)")
-    value: float = Field(..., description="Value of the metric")
-    period: str = Field(..., description="Time period (e.g., Last 30 days)")
+    platform: str = Field(..., description="Platform (e.g., LinkedIn)")
+    metric_type: str = Field(..., description="Type of metric (e.g., impressions, reactions)")
+    value: float = Field(..., description="Observed metric value")
+    period: str = Field(..., description="Observed time period")
+
+
+class ContentPerformanceEvidence(BaseModel):
+    content_item_id: int
+    title: str
+    platform: str
+    published_at: str | None = None
+    metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class UpcomingScheduleEvidence(BaseModel):
+    schedule_id: int
+    content_item_id: int
+    title: str
+    platform: str
+    scheduled_at: str
 
 
 class InsightRequest(BaseModel):
     metrics: list[AnalyticsMetrics]
+    content_performance: list[ContentPerformanceEvidence] = Field(default_factory=list)
+    upcoming_schedules: list[UpcomingScheduleEvidence] = Field(default_factory=list)
+    available_channels: list[str] = Field(default_factory=list)
     brand_context: str | None = Field(None, description="Optional brand context")
 
 
+class InsightAction(BaseModel):
+    type: Literal[
+        "create_campaign",
+        "repurpose_content",
+        "reschedule_publication",
+        "none",
+    ] = "none"
+    campaign_goal: str | None = None
+    audience: str | None = None
+    source_content_id: int | None = None
+    target_platforms: list[str] = Field(default_factory=list)
+    schedule_id: int | None = None
+    suggested_at: str | None = None
+
+
 class ActionableInsight(BaseModel):
-    finding: str = Field(..., description="The main finding from the data")
+    finding: str = Field(..., description="Observation supported by supplied evidence")
+    evidence: list[str] = Field(
+        default_factory=list,
+        description="Short concrete evidence statements tied to supplied metrics/content/schedules",
+    )
     recommendation: str = Field(..., description="Actionable recommendation based on the finding")
-    impact_estimate: str = Field(..., description="Estimated impact of taking action")
+    impact_estimate: str = Field(
+        ...,
+        description="Qualitative impact unless the supplied evidence supports a number",
+    )
+    confidence: Literal["low", "medium", "high"] = "medium"
+    action: InsightAction = Field(default_factory=InsightAction)
 
 
 class AIInsightResponse(BaseModel):
     insights: list[ActionableInsight]
-    summary: str = Field(..., description="Overall summary of the insights")
+    summary: str = Field(..., description="Overall summary of the evidence-backed insights")
 
 
 class KnowledgeSource(BaseModel):

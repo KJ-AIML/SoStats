@@ -9,7 +9,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { MetricCard } from "@/components/sostats/metric-card";
 import { PageHeading } from "@/components/sostats/page-heading";
-import { loadWorkspaceSnapshot } from "@/lib/sostats-api.server";
+import {
+  type AiInsightRecord,
+  loadWorkspaceSnapshot,
+} from "@/lib/sostats-api.server";
 import { AiInsightCard } from "./ai-insight-card";
 
 function firstMetric(
@@ -51,6 +54,7 @@ export default async function AnalyticsPage({
   let trackedPosts = 0;
   let syncWindowDays = 30;
   let publishedCount = 0;
+  let insights: AiInsightRecord[] = [];
   let published: Array<{
     id: number;
     title: string;
@@ -67,6 +71,7 @@ export default async function AnalyticsPage({
     trackedPosts = snapshot.analytics.trackedPosts || 0;
     syncWindowDays = snapshot.analytics.syncWindowDays || 30;
     brandId = snapshot.brand?.id;
+    insights = snapshot.insights;
 
     const publishedItems = snapshot.content.filter(
       (item) => item.status === "published",
@@ -225,6 +230,7 @@ export default async function AnalyticsPage({
             workspaceSlug={workspaceSlug}
             brandId={brandId}
             hasData={hasData}
+            initialInsights={insights}
           />
         </div>
       </div>

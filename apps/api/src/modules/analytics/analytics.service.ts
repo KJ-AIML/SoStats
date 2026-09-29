@@ -1,6 +1,4 @@
 import {
-  BadGatewayException,
-  BadRequestException,
   Injectable,
   Inject,
   NotFoundException,
@@ -18,20 +16,10 @@ import {
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
-import { BrandContextService } from '../brands/brand-context.service.js';
 import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 import { ChannelCredentialService } from '../channels/channel-credential.service.js';
 import { ProviderAnalyticsError } from '../channels/ports/SocialAnalyticsPort.js';
 import { ProviderPublishError } from '../channels/ports/SocialPublisherPort.js';
-
-export interface AiInsightResponse {
-  insights: Array<{
-    finding: string;
-    recommendation: string;
-    impact_estimate: string;
-  }>;
-  summary: string;
-}
 
 type NumericMetrics = Record<string, number>;
 
@@ -126,7 +114,6 @@ export function analyticsIntervalMs(postAgeMs: number) {
 export class AnalyticsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
-    private readonly brandContext: BrandContextService,
     private readonly providerRegistry: ProviderRegistry,
     private readonly credentials: ChannelCredentialService,
   ) {}
@@ -527,71 +514,6 @@ export class AnalyticsService {
       }
 
       throw error;
-    }
-  }
-
-  async generateInsights(workspaceId: number, brandId?: number) {
-    const workspace = await this.db.query.workspaces.findFirst({
-      where: eq(schema.workspaces.id, workspaceId),
-      columns: { timezone: true },
-    });
-    const start = calendarDayInZone(workspace?.timezone || 'UTC');
-    start.setUTCDate(start.getUTCDate() - 29);
-
-    const rows = await this.db.query.analyticsDaily.findMany({
-      where: and(
-        eq(schema.analyticsDaily.workspaceId, workspaceId),
-        gte(schema.analyticsDaily.date, start),
-      ),
-      with: { socialAccount: true },
-      orderBy: (fields, { desc: orderDesc }) => [orderDesc(fields.date)],
-      limit: 1000,
-    });
-
-    const metrics = rows.flatMap((row) => {
-      const values = asNumericMetrics(row.metrics);
-      return Object.entries(values).map(([metricType, value]) => ({
-        platform: row.socialAccount?.provider || 'all',
-        metric_type: metricType,
-        value,
-        period: row.date.toISOString().slice(0, 10),
-      }));
-    });
-
-    if (!metrics.length) {
-      throw new BadRequestException(
-        'Analytics data is required before generating AI insights',
-      );
-    }
-
-    const brand = await this.brandContext.get(workspaceId, brandId);
-    const baseUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-
-    try {
-      const response = await fetch(baseUrl + '/v1/insights/generate', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          metrics,
-          brand_context: this.brandContext.serialize(brand),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new BadGatewayException(
-          `AI service returned HTTP ${response.status}`,
-        );
-      }
-
-      return (await response.json()) as AiInsightResponse;
-    } catch (error) {
-      if (error instanceof BadGatewayException) throw error;
-      throw new BadGatewayException('AI insight service unavailable');
-    } finally {
-      clearTimeout(timer);
     }
   }
 

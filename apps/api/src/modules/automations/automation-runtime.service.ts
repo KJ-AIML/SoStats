@@ -12,7 +12,7 @@ import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
 import { SchedulingService } from '../scheduling/scheduling.service.js';
-import { AnalyticsService } from '../analytics/analytics.service.js';
+import { RecommendationsService } from '../analytics/recommendations.service.js';
 import { AutomationDecisionDto } from './automations.dto.js';
 import {
   nodeConfig,
@@ -106,7 +106,7 @@ export class AutomationRuntimeService {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly campaigns: CampaignsService,
     private readonly scheduling: SchedulingService,
-    private readonly analytics: AnalyticsService,
+    private readonly recommendations: RecommendationsService,
   ) {}
 
   async listDispatchable(offset = 0, limit = 250) {
@@ -497,9 +497,10 @@ export class AutomationRuntimeService {
     if (kind === 'analyze') {
       const config = nodeConfig(node);
       const brandId = numberConfig(config, 'brandId');
-      const result = await this.analytics.generateInsights(
+      const result = await this.recommendations.generate(
         run.automation.workspaceId,
         brandId,
+        { supersedePending: false },
       );
       return {
         summary: result.summary,
