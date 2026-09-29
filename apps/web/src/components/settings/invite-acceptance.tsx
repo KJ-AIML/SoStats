@@ -55,7 +55,9 @@ export function InviteAcceptance({
         throw new Error(payload.error || `Unable to ${action} invitation`);
       }
 
-      setStatus(payload.status || action === "accept" ? "accepted" : "rejected");
+      setStatus(
+        payload.status || (action === "accept" ? "accepted" : "rejected"),
+      );
       if (action === "accept" && payload.workspace) {
         setAcceptedWorkspace(payload.workspace);
       }
