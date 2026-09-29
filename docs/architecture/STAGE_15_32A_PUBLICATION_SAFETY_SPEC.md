@@ -1,6 +1,6 @@
 # Stage 15 · PR 32A — Publication Safety Core (spec)
 
-Status: approved architecture, rev 2 · Baseline: `main` @ `b5b9194` · Roadmap: Stage 15 PR #32, slice A of A/B/C
+Status: implemented on feat/stage-15-32a-publication-safety, rev 2 · Baseline: `main` @ `b5b9194` · Roadmap: Stage 15 PR #32, slice A of A/B/C
 
 This spec is the implementation and review contract for 32A. 32B (reconciliation +
 operator resolution) and 32C (automation runtime reliability) are out of scope

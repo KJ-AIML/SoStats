@@ -41,3 +41,19 @@ by the corresponding architecture stage.
 - Deployment must stop if a migration fails.
 - Application code that requires a schema delta must not be rolled out before
   the matching migration succeeds.
+
+## 007 rollout (hard sequence — do not reorder)
+
+- [ ] Pause publication dispatch: stop every worker process.
+- [ ] Drain: wait for in-flight API executions to finish.
+- [ ] Assert zero legacy in-flight work:
+      `select count(*) from scheduled_publications where status = 'publishing';` → 0
+      `select count(*) from publication_jobs where status in ('processing', 'pending');` → 0
+      (If a row cannot drain: verify it on the provider, or run 007 with
+      `set sostats.inflight_publications = 'mark_unknown';` in the same session. Never make it retryable.)
+- [ ] Apply `007_stage15_publication_safety.sql` (it re-checks the drain and fails loudly).
+- [ ] Deploy the API.
+- [ ] Deploy the worker (this resumes dispatch).
+- [ ] Deploy the web app.
+- [ ] Smoke test: one post to a sandbox channel reaches `published`; its attempt row has a request marker and is `completed`.
+- [ ] On smoke failure: stop the worker and roll back the code (worker, then API); keep the schema.
