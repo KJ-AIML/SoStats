@@ -3,10 +3,11 @@ import io
 import re
 from html.parser import HTMLParser
 
+from docx import Document
 from pypdf import PdfReader
 
 
-MAX_SOURCE_BYTES = 8 * 1024 * 1024
+MAX_SOURCE_BYTES = 15 * 1024 * 1024
 MAX_TEXT_CHARS = 500_000
 MAX_CHUNKS = 100
 
@@ -78,6 +79,22 @@ def extract_text(
         for page in reader.pages:
             pages.append(page.extract_text() or "")
         return normalize_text("\n\n".join(pages))
+
+    if (
+        normalized_type
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ):
+        document = Document(io.BytesIO(raw))
+        parts: list[str] = []
+        for paragraph in document.paragraphs:
+            if paragraph.text.strip():
+                parts.append(paragraph.text)
+        for table in document.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+        return normalize_text("\n".join(parts))
 
     if normalized_type.startswith("text/"):
         return normalize_text(raw.decode("utf-8", errors="replace"))

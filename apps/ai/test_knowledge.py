@@ -1,6 +1,7 @@
 import base64
 import io
 
+from docx import Document
 from pypdf import PdfWriter
 
 from app.rag.embedder import chunk_text, extract_text
@@ -39,3 +40,26 @@ def test_extracts_pdf_text_path_without_network():
         content_base64=base64.b64encode(buffer.getvalue()).decode(),
     )
     assert text == ""
+
+
+def test_extracts_docx_paragraphs_and_tables():
+    document = Document()
+    document.add_heading("Product handbook", level=1)
+    document.add_paragraph("SoStats turns one idea into a content pipeline.")
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Plan"
+    table.cell(0, 1).text = "Automate"
+    buffer = io.BytesIO()
+    document.save(buffer)
+
+    text = extract_text(
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
+        content_base64=base64.b64encode(buffer.getvalue()).decode(),
+    )
+
+    assert "Product handbook" in text
+    assert "content pipeline" in text
+    assert "Plan | Automate" in text
