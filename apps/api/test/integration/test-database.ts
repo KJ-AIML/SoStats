@@ -13,9 +13,9 @@ const migrationsDir = path.join(repoRoot, 'infra/postgres/migrations');
 export type TestDatabase = {
   db: PostgresJsDatabase<typeof schema>;
   sql: postgres.Sql;
-  applyPostBaselineMigrations(options?: {
+  applyPostBaselineMigrations: (options?: {
     inflightPublications?: 'mark_unknown';
-  }): Promise<void>;
+  }) => Promise<void>;
   drop(): Promise<void>;
 };
 
