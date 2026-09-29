@@ -4,10 +4,12 @@ import {
   Inject,
   NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
+import { encrypt } from '../../utils/encryption.util.js';
 import {
   CreateAutomationDto,
   CreateAutomationVersionDto,
@@ -22,14 +24,50 @@ import {
   workflowTriggerMode,
 } from './workflow-definition.js';
 
+function webhookBaseUrl(required = false) {
+  const configured =
+    process.env.WEBHOOK_PUBLIC_BASE_URL ||
+    process.env.PUBLIC_API_URL ||
+    (process.env.NODE_ENV !== 'production'
+      ? 'http://localhost:4000'
+      : undefined);
+
+  if (!configured) {
+    if (required) {
+      throw new BadRequestException(
+        'WEBHOOK_PUBLIC_BASE_URL must be configured for webhook automations',
+      );
+    }
+    return undefined;
+  }
+
+  return configured.replace(/\/$/, '');
+}
+
+function webhookUrl(publicId?: string | null) {
+  if (!publicId) return null;
+  const base = webhookBaseUrl(false);
+  return base ? `${base}/v1/automation-hooks/${publicId}` : null;
+}
+
+function safeTrigger(
+  trigger: typeof schema.automationTriggers.$inferSelect,
+) {
+  const { secret: _secret, ...safe } = trigger;
+  return {
+    ...safe,
+    endpointUrl: webhookUrl(trigger.publicId),
+  };
+}
+
 @Injectable()
 export class AutomationsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
   ) {}
 
-  findAll(workspaceId: number) {
-    return this.db.query.automations.findMany({
+  async findAll(workspaceId: number) {
+    const records = await this.db.query.automations.findMany({
       where: eq(schema.automations.workspaceId, workspaceId),
       with: {
         versions: true,
@@ -40,6 +78,11 @@ export class AutomationsService {
       },
       orderBy: (fields, { desc: orderDesc }) => [orderDesc(fields.updatedAt)],
     });
+
+    return records.map((automation) => ({
+      ...automation,
+      triggers: automation.triggers.map(safeTrigger),
+    }));
   }
 
   async create(workspaceId: number, dto: CreateAutomationDto) {
@@ -163,6 +206,15 @@ export class AutomationsService {
     );
     const triggerConfig = triggerNode ? nodeConfig(triggerNode) : {};
 
+    let webhookCredentials:
+      | {
+          endpointUrl: string;
+          secret?: string;
+          sourceType: string;
+          eventName: string;
+        }
+      | undefined;
+
     await this.db.transaction(async (tx) => {
       await tx
         .update(schema.automationVersions)
@@ -206,6 +258,8 @@ export class AutomationsService {
               type: 'rss',
               config: rssConfig,
               status: 'active',
+              publicId: null,
+              secret: null,
               leaseToken: null,
               leaseExpiresAt: null,
               nextPollAt: new Date(),
@@ -228,11 +282,68 @@ export class AutomationsService {
             nextPollAt: new Date(),
           });
         }
+      } else if (triggerType === 'webhook') {
+        const sourceType = String(triggerConfig.sourceType || 'generic')
+          .trim()
+          .toLowerCase();
+        const eventName = String(
+          triggerConfig.eventName ||
+            (sourceType === 'wordpress'
+              ? 'wordpress.post.published'
+              : 'content.published'),
+        ).trim();
+        const publicId =
+          existingTrigger?.publicId ||
+          randomBytes(18).toString('base64url');
+        let secret = existingTrigger?.secret || null;
+        let revealedSecret: string | undefined;
+
+        if (!secret) {
+          revealedSecret = randomBytes(32).toString('base64url');
+          secret = encrypt(revealedSecret);
+        }
+
+        if (existingTrigger) {
+          await tx
+            .update(schema.automationTriggers)
+            .set({
+              type: 'webhook',
+              config: { sourceType, eventName },
+              status: 'active',
+              publicId,
+              secret,
+              leaseToken: null,
+              leaseExpiresAt: null,
+              nextPollAt: null,
+              lastPolledAt: null,
+              lastError: null,
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.automationTriggers.id, existingTrigger.id));
+        } else {
+          await tx.insert(schema.automationTriggers).values({
+            automationId,
+            type: 'webhook',
+            config: { sourceType, eventName },
+            status: 'active',
+            publicId,
+            secret,
+          });
+        }
+
+        webhookCredentials = {
+          endpointUrl: `${webhookBaseUrl(true)}/v1/automation-hooks/${publicId}`,
+          secret: revealedSecret,
+          sourceType,
+          eventName,
+        };
       } else if (existingTrigger) {
         await tx
           .update(schema.automationTriggers)
           .set({
             status: 'paused',
+            publicId: null,
+            secret: null,
             leaseToken: null,
             leaseExpiresAt: null,
             nextPollAt: null,
@@ -249,6 +360,7 @@ export class AutomationsService {
       versionNumber: latest.versionNumber,
       status: 'active',
       triggerType,
+      webhook: webhookCredentials,
     };
   }
 
