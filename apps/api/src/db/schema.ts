@@ -529,11 +529,14 @@ export const automationTriggers = pgTable(
     type: varchar('type', { length: 50 }).notNull(),
     config: jsonb('config').notNull().default({}),
     status: varchar('status', { length: 30 }).notNull().default('active'),
+    publicId: varchar('public_id', { length: 64 }),
+    secret: varchar('secret', { length: 512 }),
     leaseToken: varchar('lease_token', { length: 64 }),
     leaseExpiresAt: timestamp('lease_expires_at'),
     nextPollAt: timestamp('next_poll_at'),
     lastPolledAt: timestamp('last_polled_at'),
     lastTriggeredAt: timestamp('last_triggered_at'),
+    lastReceivedAt: timestamp('last_received_at'),
     lastError: text('last_error'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -542,6 +545,9 @@ export const automationTriggers = pgTable(
     automationTriggerAutomationUnique: uniqueIndex(
       'automation_trigger_automation_unique',
     ).on(table.automationId),
+    automationTriggerPublicIdUnique: uniqueIndex(
+      'automation_trigger_public_id_unique',
+    ).on(table.publicId),
     automationTriggerDueIdx: index('automation_trigger_due_idx').on(
       table.status,
       table.nextPollAt,

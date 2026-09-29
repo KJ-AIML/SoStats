@@ -211,9 +211,12 @@ export type AutomationTriggerRecord = {
   type: string;
   config: Record<string, unknown>;
   status: string;
+  publicId?: string | null;
+  endpointUrl?: string | null;
   nextPollAt?: string | null;
   lastPolledAt?: string | null;
   lastTriggeredAt?: string | null;
+  lastReceivedAt?: string | null;
   lastError?: string | null;
   createdAt: string;
   updatedAt: string;

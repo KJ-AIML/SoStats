@@ -5,6 +5,7 @@ import { AnalyticsModule } from '../analytics/analytics.module.js';
 import { AutomationsController } from './automations.controller.js';
 import { AutomationRuntimeController } from './automation-runtime.controller.js';
 import { AutomationTriggersInternalController } from './automation-triggers-internal.controller.js';
+import { AutomationHooksController } from './automation-hooks.controller.js';
 import { AutomationsService } from './automations.service.js';
 import { AutomationRuntimeService } from './automation-runtime.service.js';
 import { AutomationTriggersService } from './automation-triggers.service.js';
@@ -16,6 +17,7 @@ import { WorkerTokenGuard } from '../../common/internal/worker-token.guard.js';
     AutomationsController,
     AutomationRuntimeController,
     AutomationTriggersInternalController,
+    AutomationHooksController,
   ],
   providers: [
     AutomationsService,

@@ -49,6 +49,7 @@ Architecture notes:
 - [Stage 6 real media processing](docs/architecture/STAGE_6_REAL_MEDIA.md)
 - [Stage 7 X provider + secure OAuth](docs/architecture/STAGE_7_X_PROVIDER.md)
 - [Stage 8 external RSS automation trigger](docs/architecture/STAGE_8_RSS_TRIGGER.md)
+- [Stage 9 signed webhook / WordPress trigger](docs/architecture/STAGE_9_SIGNED_WEBHOOK_TRIGGER.md)
 
 ## Repository layout
 

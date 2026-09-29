@@ -53,8 +53,15 @@ describe('OAuthStateService', () => {
       returnTo: '/demo/channels',
     });
 
-    const tampered =
-      sealed.slice(0, -1) + (sealed.endsWith('A') ? 'B' : 'A');
+    const [version, iv, tag, ciphertext] = sealed.split('.');
+    const tamperedBytes = Buffer.from(ciphertext, 'base64url');
+    tamperedBytes[0] ^= 0x01;
+    const tampered = [
+      version,
+      iv,
+      tag,
+      tamperedBytes.toString('base64url'),
+    ].join('.');
     expect(() => service.open(tampered)).toThrow(/invalid or expired/i);
 
     const expired = service.seal(

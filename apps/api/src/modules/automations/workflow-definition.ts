@@ -29,7 +29,7 @@ export type WorkflowDefinition = {
   edges: WorkflowEdge[];
 };
 
-export type WorkflowTriggerMode = 'manual' | 'rss';
+export type WorkflowTriggerMode = 'manual' | 'rss' | 'webhook';
 
 const supportedKinds = new Set<WorkflowNodeKind>([
   'trigger',
@@ -192,6 +192,14 @@ export function nodeConfig(node: WorkflowNode) {
     : {};
 }
 
+function configString(
+  config: Record<string, unknown>,
+  key: string,
+  fallback = '',
+) {
+  const value = config[key];
+  return typeof value === 'string' ? value : fallback;
+}
 
 export function workflowTriggerMode(
   definition: WorkflowDefinition,
@@ -204,16 +212,48 @@ export function workflowTriggerMode(
   }
 
   const config = nodeConfig(trigger);
-  const mode = String(config.mode || 'manual').trim().toLowerCase();
+  const mode = configString(config, 'mode', 'manual').trim().toLowerCase();
 
   if (mode === 'manual') return 'manual';
+
+  if (mode === 'webhook') {
+    const sourceType = configString(config, 'sourceType', 'generic')
+      .trim()
+      .toLowerCase();
+    if (!['generic', 'wordpress'].includes(sourceType)) {
+      throw new BadRequestException(
+        'Webhook sourceType must be generic or wordpress',
+      );
+    }
+
+    const eventName = configString(
+      config,
+      'eventName',
+      sourceType === 'wordpress'
+        ? 'wordpress.post.published'
+        : 'content.published',
+    ).trim();
+
+    if (
+      !eventName ||
+      eventName.length > 100 ||
+      !/^[a-z0-9][a-z0-9._:-]*$/i.test(eventName)
+    ) {
+      throw new BadRequestException(
+        'Webhook eventName must be a simple event identifier',
+      );
+    }
+
+    return 'webhook';
+  }
+
   if (mode !== 'rss') {
     throw new BadRequestException(
-      'Trigger mode must be manual or rss',
+      'Trigger mode must be manual, rss, or webhook',
     );
   }
 
-  const feedUrl = String(config.feedUrl || '').trim();
+  const feedUrl = configString(config, 'feedUrl').trim();
   if (!feedUrl || feedUrl.length > 2048) {
     throw new BadRequestException(
       'RSS trigger requires config.feedUrl',
@@ -248,7 +288,7 @@ export function workflowTriggerMode(
     );
   }
 
-  const initialSync = String(config.initialSync || 'baseline');
+  const initialSync = configString(config, 'initialSync', 'baseline');
   if (!['baseline', 'latest'].includes(initialSync)) {
     throw new BadRequestException(
       'RSS initialSync must be baseline or latest',

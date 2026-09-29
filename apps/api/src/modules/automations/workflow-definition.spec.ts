@@ -68,6 +68,38 @@ describe('automation workflow definition', () => {
     expect(() => workflowTriggerMode(definition)).toThrow();
   });
 
+  it('validates a signed WordPress webhook source', () => {
+    const candidate = linearDefinition();
+    (candidate.nodes[0].data as {
+      type: string;
+      config?: Record<string, unknown>;
+    }).config = {
+      mode: 'webhook',
+      sourceType: 'wordpress',
+      eventName: 'wordpress.post.published',
+    };
+
+    const definition = validateWorkflowDefinition(candidate);
+    expect(workflowTriggerMode(definition)).toBe('webhook');
+  });
+
+  it('rejects unsafe webhook event identifiers', () => {
+    const candidate = linearDefinition();
+    (candidate.nodes[0].data as {
+      type: string;
+      config?: Record<string, unknown>;
+    }).config = {
+      mode: 'webhook',
+      sourceType: 'generic',
+      eventName: '../content published',
+    };
+
+    const definition = validateWorkflowDefinition(candidate);
+    expect(() => workflowTriggerMode(definition)).toThrow(
+      /eventName/i,
+    );
+  });
+
   it('rejects branching in runtime v1', () => {
     const definition = linearDefinition();
     definition.edges.push({ source: 'generate', target: 'schedule' });
