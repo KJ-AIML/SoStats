@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  ArrowRight,
   CheckCircle2,
   FileImage,
   Film,
@@ -483,6 +482,13 @@ export function MediaLibrary({
     (selectedAsset.usageCount || 0) === 0 &&
     !["uploaded", "processing"].includes(selectedAsset.status);
 
+  const metricCards = [
+    { label: "Ready", value: counts.ready, Icon: ShieldCheck },
+    { label: "Processing", value: counts.processing, Icon: RefreshCw },
+    { label: "Failed", value: counts.failed, Icon: AlertCircle },
+    { label: "In content", value: counts.used, Icon: Paperclip },
+  ];
+
   return (
     <div className="space-y-4">
       <input
@@ -497,20 +503,13 @@ export function MediaLibrary({
       />
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ["Ready", counts.ready, ShieldCheck],
-          ["Processing", counts.processing, RefreshCw],
-          ["Failed", counts.failed, AlertCircle],
-          ["In content", counts.used, Paperclip],
-        ].map(([label, value, Icon]) => (
-          <div key={String(label)} className="sostats-card p-4">
+        {metricCards.map(({ label, value, Icon }) => (
+          <div key={label} className="sostats-card p-4">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-[9px] text-muted-foreground">
-                  {String(label)}
-                </p>
+                <p className="text-[9px] text-muted-foreground">{label}</p>
                 <p className="mt-1 text-2xl font-semibold tracking-[-0.04em]">
-                  {String(value)}
+                  {value}
                 </p>
               </div>
               <div className="sostats-icon h-8 w-8">
