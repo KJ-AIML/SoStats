@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Post,
   Put,
 } from '@nestjs/common';
@@ -12,7 +13,11 @@ import {
   WorkspaceScoped,
 } from '../../common/workspace/workspace.decorator.js';
 import { BrandsService } from './brands.service.js';
-import { CreateBrandDto, UpdateBrandDto } from './brands.dto.js';
+import {
+  CreateBrandDto,
+  ReplaceBrandContextDto,
+  UpdateBrandDto,
+} from './brands.dto.js';
 
 @WorkspaceScoped()
 @Controller('brands')
@@ -30,21 +35,36 @@ export class BrandsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string, @CurrentWorkspaceId() workspaceId: number) {
-    return this.brandsService.findOne(+id, workspaceId);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.brandsService.findOne(id, workspaceId);
   }
 
   @Put(':id')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() data: UpdateBrandDto,
     @CurrentWorkspaceId() workspaceId: number,
   ) {
-    return this.brandsService.update(+id, workspaceId, data);
+    return this.brandsService.update(id, workspaceId, data);
+  }
+
+  @Put(':id/context')
+  replaceContext(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: ReplaceBrandContextDto,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.brandsService.replaceContext(id, workspaceId, data);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentWorkspaceId() workspaceId: number) {
-    return this.brandsService.remove(+id, workspaceId);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentWorkspaceId() workspaceId: number,
+  ) {
+    return this.brandsService.remove(id, workspaceId);
   }
 }
