@@ -567,7 +567,10 @@ export function ContentBoard({
             }),
           },
         );
-        const payload = (await response.json()) as { error?: string };
+        const payload = (await response.json()) as {
+          error?: string;
+          status?: string;
+        };
         if (!response.ok) {
           throw new Error(payload.error || "Unable to update content");
         }
@@ -579,6 +582,12 @@ export function ContentBoard({
                   ...item,
                   title: editTitle.trim(),
                   description: editDescription.trim() || undefined,
+                  ...(payload.status
+                    ? {
+                        rawStatus: payload.status,
+                        status: boardStatus(payload.status),
+                      }
+                    : {}),
                 }
               : item,
           ),
@@ -614,6 +623,12 @@ export function ContentBoard({
             item.id === detailItem.id
               ? {
                   ...item,
+                  rawStatus: ["in_review", "approved"].includes(item.rawStatus)
+                    ? "draft"
+                    : item.rawStatus,
+                  status: ["in_review", "approved"].includes(item.rawStatus)
+                    ? "Drafts"
+                    : item.status,
                   variantRefs: item.variantRefs.map((entry) =>
                     entry.id === variant.id
                       ? {
@@ -629,7 +644,11 @@ export function ContentBoard({
         );
       }
 
-      setWorkflowMessage("Content changes saved.");
+      setWorkflowMessage(
+        ["in_review", "approved"].includes(detailItem.rawStatus)
+          ? "Content changes saved. Review was reset to Draft because the copy changed."
+          : "Content changes saved.",
+      );
       setDetailItemId(null);
     } catch (error) {
       setDetailError(
