@@ -201,6 +201,7 @@ export default async function BrandBrainPage({
       </section>
 
       <BrandProfileEditor
+        key={selectedBrand?.id || "new-brand"}
         workspaceSlug={workspaceSlug}
         brand={selectedBrand}
       />
@@ -208,6 +209,7 @@ export default async function BrandBrainPage({
       {selectedBrand && (
         <>
           <KnowledgeLibrary
+            key={selectedBrand.id}
             workspaceSlug={workspaceSlug}
             brandId={selectedBrand.id}
             initialSources={sources}
