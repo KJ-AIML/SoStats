@@ -156,6 +156,38 @@ export const workspaceApiKeys = pgTable(
   }),
 );
 
+// workspace_audit_events
+// Intentionally append-only. workspace/actor/target ids are snapshots rather than
+// foreign keys so the audit record survives deletion of the referenced entity.
+export const workspaceAuditEvents = pgTable(
+  'workspace_audit_events',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id').notNull(),
+    actorUserId: integer('actor_user_id'),
+    actorEmail: varchar('actor_email', { length: 255 }),
+    authMethod: varchar('auth_method', { length: 40 }).notNull(),
+    apiKeyId: integer('api_key_id'),
+    action: varchar('action', { length: 120 }).notNull(),
+    targetType: varchar('target_type', { length: 80 }).notNull(),
+    targetId: varchar('target_id', { length: 120 }),
+    metadata: jsonb('metadata')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    workspaceAuditWorkspaceCreatedIdx: index(
+      'workspace_audit_workspace_created_idx',
+    ).on(table.workspaceId, table.createdAt),
+    workspaceAuditActionIdx: index('workspace_audit_action_idx').on(
+      table.workspaceId,
+      table.action,
+    ),
+  }),
+);
+
 // brands
 export const brands = pgTable(
   'brands',
