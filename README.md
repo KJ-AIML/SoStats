@@ -68,6 +68,7 @@ Architecture notes:
 - [Stage 14 Identity/Admin: ownership transfer + RBAC](docs/architecture/STAGE_14_OWNERSHIP_RBAC.md)
 - [Stage 14 Identity/Admin: workspace API keys](docs/architecture/STAGE_14_WORKSPACE_API_KEYS.md)
 - [Stage 14 Identity/Admin: immutable audit log](docs/architecture/STAGE_14_IMMUTABLE_AUDIT_LOG.md)
+- [Stage 14 Identity/Admin: sessions + notification administration](docs/architecture/STAGE_14_SESSIONS_NOTIFICATIONS.md)
 
 ## Repository layout
 
