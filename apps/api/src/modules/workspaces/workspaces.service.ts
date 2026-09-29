@@ -17,7 +17,10 @@ import {
 } from '../../common/workspace/workspace-access.service.js';
 import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
 import { ApiKeyService } from '../../common/auth/api-key.service.js';
-import { AuditLogService } from '../../common/audit/audit-log.service.js';
+import {
+  AuditLogService,
+  type AuditActor,
+} from '../../common/audit/audit-log.service.js';
 import { SessionService } from '../../common/auth/session.service.js';
 import { NotificationPreferencesService } from '../../common/notifications/notification-preferences.service.js';
 
@@ -61,19 +64,48 @@ export class WorkspacesService {
     private readonly notificationPreferences: NotificationPreferencesService,
   ) {}
 
-  async create(name: string, userId: number) {
-    const [workspace] = await this.db
-      .insert(schema.workspaces)
-      .values({ name: validateWorkspaceName(name), slug: slugify(name) })
-      .returning();
+  async create(
+    name: string,
+    userId: number,
+    auditActor?: AuditActor,
+  ) {
+    return this.db.transaction(async (tx) => {
+      const [workspace] = await tx
+        .insert(schema.workspaces)
+        .values({ name: validateWorkspaceName(name), slug: slugify(name) })
+        .returning();
 
-    await this.db.insert(schema.workspaceMembers).values({
-      workspaceId: workspace.id,
-      userId,
-      role: 'owner',
+      await tx.insert(schema.workspaceMembers).values({
+        workspaceId: workspace.id,
+        userId,
+        role: 'owner',
+      });
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId: workspace.id,
+            actor: auditActor,
+            action: 'workspace.created',
+            targetType: 'workspace',
+            targetId: workspace.id,
+            metadata: {
+              name: workspace.name,
+              slug: workspace.slug,
+            },
+          },
+          [
+            'audit',
+            'workspace.created',
+            workspace.id,
+            workspace.createdAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return workspace;
     });
-
-    return workspace;
   }
 
   async findAllForUser(userId: number) {
@@ -232,6 +264,7 @@ export class WorkspacesService {
     id: number,
     userId: number,
     input: { name?: string; timezone?: string },
+    auditActor?: AuditActor,
   ) {
     await this.access.requireManager(userId, id);
 
@@ -243,14 +276,44 @@ export class WorkspacesService {
       values.timezone = validateTimezone(input.timezone);
     }
 
-    const [workspace] = await this.db
-      .update(schema.workspaces)
-      .set(values)
-      .where(eq(schema.workspaces.id, id))
-      .returning();
+    return this.db.transaction(async (tx) => {
+      const [workspace] = await tx
+        .update(schema.workspaces)
+        .set(values)
+        .where(eq(schema.workspaces.id, id))
+        .returning();
 
-    if (!workspace) throw new NotFoundException('Workspace not found');
-    return workspace;
+      if (!workspace) throw new NotFoundException('Workspace not found');
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId: id,
+            actor: auditActor,
+            action: 'workspace.settings_updated',
+            targetType: 'workspace',
+            targetId: id,
+            metadata: {
+              changedFields: Object.keys(input).filter(
+                (field) =>
+                  input[field as keyof typeof input] !== undefined,
+              ),
+              name: input.name,
+              timezone: input.timezone,
+            },
+          },
+          [
+            'audit',
+            'workspace.settings_updated',
+            id,
+            workspace.updatedAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return workspace;
+    });
   }
 
   async updateMemberRole(
@@ -258,6 +321,7 @@ export class WorkspacesService {
     actorUserId: number,
     memberId: number,
     role: string,
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
@@ -267,26 +331,52 @@ export class WorkspacesService {
       );
     }
 
-    const member = await this.db.query.workspaceMembers.findFirst({
-      where: and(
-        eq(schema.workspaceMembers.id, memberId),
-        eq(schema.workspaceMembers.workspaceId, workspaceId),
-      ),
+    return this.db.transaction(async (tx) => {
+      const member = await tx.query.workspaceMembers.findFirst({
+        where: and(
+          eq(schema.workspaceMembers.id, memberId),
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+        ),
+      });
+      if (!member) throw new NotFoundException('Workspace member not found');
+      if (member.role === 'owner') {
+        throw new ForbiddenException(
+          'Owner role cannot be changed without an ownership-transfer flow',
+        );
+      }
+
+      const [updated] = await tx
+        .update(schema.workspaceMembers)
+        .set({ role, updatedAt: new Date() })
+        .where(eq(schema.workspaceMembers.id, memberId))
+        .returning();
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'member.role_updated',
+            targetType: 'workspace_member',
+            targetId: memberId,
+            metadata: {
+              userId: updated.userId,
+              role: updated.role,
+            },
+          },
+          [
+            'audit',
+            'member.role_updated',
+            workspaceId,
+            memberId,
+            updated.updatedAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return updated;
     });
-    if (!member) throw new NotFoundException('Workspace member not found');
-    if (member.role === 'owner') {
-      throw new ForbiddenException(
-        'Owner role cannot be changed without an ownership-transfer flow',
-      );
-    }
-
-    const [updated] = await this.db
-      .update(schema.workspaceMembers)
-      .set({ role, updatedAt: new Date() })
-      .where(eq(schema.workspaceMembers.id, memberId))
-      .returning();
-
-    return updated;
   }
 
   async transferOwnership(
@@ -294,6 +384,7 @@ export class WorkspacesService {
     actorUserId: number,
     targetMemberId: number,
     previousOwnerRole: WorkspaceRole = 'admin',
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
@@ -374,6 +465,32 @@ export class WorkspacesService {
         throw new ConflictException('Ownership transfer target changed');
       }
 
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'workspace.ownership_transferred',
+            targetType: 'workspace_member',
+            targetId: newOwner.id,
+            metadata: {
+              previousOwnerUserId: previousOwner.userId,
+              previousOwnerRole: previousOwner.role,
+              newOwnerUserId: newOwner.userId,
+            },
+          },
+          [
+            'audit',
+            'workspace.ownership_transferred',
+            workspaceId,
+            previousOwner.id,
+            newOwner.id,
+            now.toISOString(),
+          ].join(':'),
+        );
+      }
+
       return {
         workspaceId,
         previousOwner: {
@@ -395,51 +512,138 @@ export class WorkspacesService {
     workspaceId: number,
     actorUserId: number,
     memberId: number,
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
-    const member = await this.db.query.workspaceMembers.findFirst({
-      where: and(
-        eq(schema.workspaceMembers.id, memberId),
-        eq(schema.workspaceMembers.workspaceId, workspaceId),
-      ),
+    return this.db.transaction(async (tx) => {
+      const member = await tx.query.workspaceMembers.findFirst({
+        where: and(
+          eq(schema.workspaceMembers.id, memberId),
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+        ),
+      });
+      if (!member) throw new NotFoundException('Workspace member not found');
+      if (member.role === 'owner') {
+        throw new ForbiddenException(
+          'Workspace owners cannot be removed without an ownership-transfer flow',
+        );
+      }
+
+      await tx
+        .delete(schema.workspaceMembers)
+        .where(eq(schema.workspaceMembers.id, memberId));
+
+      const removedAt = new Date();
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'member.removed',
+            targetType: 'workspace_member',
+            targetId: memberId,
+            metadata: {
+              removedUserId: member.userId,
+              previousRole: member.role,
+            },
+          },
+          [
+            'audit',
+            'member.removed',
+            workspaceId,
+            memberId,
+            removedAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return { success: true, id: memberId };
     });
-    if (!member) throw new NotFoundException('Workspace member not found');
-    if (member.role === 'owner') {
-      throw new ForbiddenException(
-        'Workspace owners cannot be removed without an ownership-transfer flow',
-      );
-    }
-
-    await this.db
-      .delete(schema.workspaceMembers)
-      .where(eq(schema.workspaceMembers.id, memberId));
-
-    return { success: true, id: memberId };
   }
 
-  async update(id: number, userId: number, name: string) {
+  async update(
+    id: number,
+    userId: number,
+    name: string,
+    auditActor?: AuditActor,
+  ) {
     await this.access.requireManager(userId, id);
 
-    const [workspace] = await this.db
-      .update(schema.workspaces)
-      .set({ name: validateWorkspaceName(name), updatedAt: new Date() })
-      .where(eq(schema.workspaces.id, id))
-      .returning();
+    return this.db.transaction(async (tx) => {
+      const [workspace] = await tx
+        .update(schema.workspaces)
+        .set({ name: validateWorkspaceName(name), updatedAt: new Date() })
+        .where(eq(schema.workspaces.id, id))
+        .returning();
 
-    if (!workspace) throw new NotFoundException('Workspace not found');
-    return workspace;
+      if (!workspace) throw new NotFoundException('Workspace not found');
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId: id,
+            actor: auditActor,
+            action: 'workspace.name_updated',
+            targetType: 'workspace',
+            targetId: id,
+            metadata: { name: workspace.name },
+          },
+          [
+            'audit',
+            'workspace.name_updated',
+            id,
+            workspace.updatedAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return workspace;
+    });
   }
 
-  async remove(id: number, userId: number) {
+  async remove(
+    id: number,
+    userId: number,
+    auditActor?: AuditActor,
+  ) {
     await this.access.requireOwner(userId, id);
 
-    const [workspace] = await this.db
-      .delete(schema.workspaces)
-      .where(eq(schema.workspaces.id, id))
-      .returning();
+    return this.db.transaction(async (tx) => {
+      const [workspace] = await tx
+        .delete(schema.workspaces)
+        .where(eq(schema.workspaces.id, id))
+        .returning();
 
-    if (!workspace) throw new NotFoundException('Workspace not found');
-    return workspace;
+      if (!workspace) throw new NotFoundException('Workspace not found');
+
+      const deletedAt = new Date();
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId: id,
+            actor: auditActor,
+            action: 'workspace.deleted',
+            targetType: 'workspace',
+            targetId: id,
+            metadata: {
+              name: workspace.name,
+              slug: workspace.slug,
+            },
+          },
+          [
+            'audit',
+            'workspace.deleted',
+            id,
+            deletedAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return workspace;
+    });
   }
 }

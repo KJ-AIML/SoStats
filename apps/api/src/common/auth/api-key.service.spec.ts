@@ -39,16 +39,38 @@ describe('ApiKeyService', () => {
       updatedAt: new Date(),
     };
     const chain = insertChain(base);
-    const db = {
+    const tx = {
       insert: chain.insert,
     };
-    const service = new ApiKeyService(db as never, access as never);
+    const db = {
+      transaction: vi.fn(async (callback: (value: typeof tx) => unknown) =>
+        callback(tx),
+      ),
+    };
+    const audit = {
+      enqueue: vi.fn().mockResolvedValue({ id: 99 }),
+    };
+    const service = new ApiKeyService(
+      db as never,
+      access as never,
+      audit as never,
+    );
+    const actor = {
+      userId: 10,
+      email: 'owner@example.com',
+      authMethod: 'jwt' as const,
+    };
 
-    const result = await service.create(77, 10, {
-      name: 'Reporting',
-      scopes: ['workspace:read'],
-      expiresInDays: 30,
-    });
+    const result = await service.create(
+      77,
+      10,
+      {
+        name: 'Reporting',
+        scopes: ['workspace:read'],
+        expiresInDays: 30,
+      },
+      actor,
+    );
 
     const values = chain.values.mock.calls[0]![0] as {
       publicId: string;
@@ -61,10 +83,27 @@ describe('ApiKeyService', () => {
     expect(values.secretHash).toMatch(/^[a-f0-9]{64}$/);
     expect(values.secretHash).not.toContain(parsed?.secret || '');
     expect(JSON.stringify(values)).not.toContain(result.token);
+    expect(audit.enqueue).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        workspaceId: 77,
+        actor,
+        action: 'api_key.created',
+        metadata: expect.not.objectContaining({
+          token: expect.anything(),
+          secretHash: expect.anything(),
+        }),
+      }),
+      expect.stringContaining('audit:api_key.created:77:'),
+    );
   });
 
   it('rejects malformed API keys before persistence lookup', async () => {
-    const service = new ApiKeyService({} as never, {} as never);
+    const service = new ApiKeyService(
+      {} as never,
+      {} as never,
+      {} as never,
+    );
     await expect(service.authenticate('not-a-key')).rejects.toThrow(
       'Invalid API key',
     );

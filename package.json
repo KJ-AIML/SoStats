@@ -11,7 +11,8 @@
     "build": "pnpm -r --if-present build",
     "lint": "pnpm -r --if-present lint",
     "test": "pnpm -r --if-present test",
-    "typecheck": "pnpm --filter web exec tsc --noEmit && pnpm --filter api exec tsc --noEmit && pnpm --filter worker exec tsc --noEmit"
+    "typecheck": "pnpm --filter web exec tsc --noEmit && pnpm --filter api exec tsc --noEmit && pnpm --filter worker exec tsc --noEmit",
+    "migrations:check": "node scripts/check-migrations.mjs"
   },
   "license": "UNLICENSED"
 }

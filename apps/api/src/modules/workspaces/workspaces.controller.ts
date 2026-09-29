@@ -32,19 +32,11 @@ export class WorkspacesController {
     @Body('name') name: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const workspace = await this.workspacesService.create(name, user.id);
-    await this.audit.record({
-      workspaceId: workspace.id,
-      actor: actorFromUser(user),
-      action: 'workspace.created',
-      targetType: 'workspace',
-      targetId: workspace.id,
-      metadata: {
-        name: workspace.name,
-        slug: workspace.slug,
-      },
-    });
-    return workspace;
+    return this.workspacesService.create(
+      name,
+      user.id,
+      actorFromUser(user),
+    );
   }
 
   @Get()
@@ -133,26 +125,12 @@ export class WorkspacesController {
     @Body() body: { name?: string; timezone?: string },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const workspace = await this.workspacesService.updateSettings(
+    return this.workspacesService.updateSettings(
       id,
       user.id,
       body,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'workspace.settings_updated',
-      targetType: 'workspace',
-      targetId: id,
-      metadata: {
-        changedFields: Object.keys(body).filter(
-          (field) => body[field as keyof typeof body] !== undefined,
-        ),
-        name: body.name,
-        timezone: body.timezone,
-      },
-    });
-    return workspace;
   }
 
   @Post(':id/invitations')
@@ -161,20 +139,12 @@ export class WorkspacesController {
     @Body() body: { email?: string; role?: string },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.invitationsService.create(id, user.id, body);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'invitation.created',
-      targetType: 'workspace_invitation',
-      targetId: result.invitation.id,
-      metadata: {
-        email: result.invitation.email,
-        role: result.invitation.role,
-        expiresAt: result.invitation.expiresAt,
-      },
-    });
-    return result;
+    return this.invitationsService.create(
+      id,
+      user.id,
+      body,
+      actorFromUser(user),
+    );
   }
 
   @Post(':id/invitations/:invitationId/regenerate')
@@ -183,24 +153,12 @@ export class WorkspacesController {
     @Param('invitationId', ParseIntPipe) invitationId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.invitationsService.regenerate(
+    return this.invitationsService.regenerate(
       id,
       user.id,
       invitationId,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'invitation.regenerated',
-      targetType: 'workspace_invitation',
-      targetId: invitationId,
-      metadata: {
-        email: result.invitation.email,
-        role: result.invitation.role,
-        expiresAt: result.invitation.expiresAt,
-      },
-    });
-    return result;
   }
 
   @Delete(':id/invitations/:invitationId')
@@ -209,23 +167,12 @@ export class WorkspacesController {
     @Param('invitationId', ParseIntPipe) invitationId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.invitationsService.revoke(
+    return this.invitationsService.revoke(
       id,
       user.id,
       invitationId,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'invitation.revoked',
-      targetType: 'workspace_invitation',
-      targetId: invitationId,
-      metadata: {
-        email: result.email,
-        role: result.role,
-      },
-    });
-    return result;
   }
 
   @Post(':id/api-keys')
@@ -239,21 +186,12 @@ export class WorkspacesController {
     },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.apiKeys.create(id, user.id, body);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'api_key.created',
-      targetType: 'workspace_api_key',
-      targetId: result.apiKey.id,
-      metadata: {
-        name: result.apiKey.name,
-        publicId: result.apiKey.publicId,
-        scopes: result.apiKey.scopes,
-        expiresAt: result.apiKey.expiresAt,
-      },
-    });
-    return result;
+    return this.apiKeys.create(
+      id,
+      user.id,
+      body,
+      actorFromUser(user),
+    );
   }
 
   @Post(':id/api-keys/:keyId/rotate')
@@ -263,21 +201,13 @@ export class WorkspacesController {
     @Body() body: { expiresInDays?: unknown },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.apiKeys.rotate(id, user.id, keyId, body);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'api_key.rotated',
-      targetType: 'workspace_api_key',
-      targetId: keyId,
-      metadata: {
-        name: result.apiKey.name,
-        publicId: result.apiKey.publicId,
-        scopes: result.apiKey.scopes,
-        expiresAt: result.apiKey.expiresAt,
-      },
-    });
-    return result;
+    return this.apiKeys.rotate(
+      id,
+      user.id,
+      keyId,
+      body,
+      actorFromUser(user),
+    );
   }
 
   @Delete(':id/api-keys/:keyId')
@@ -286,20 +216,12 @@ export class WorkspacesController {
     @Param('keyId', ParseIntPipe) keyId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.apiKeys.revoke(id, user.id, keyId);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'api_key.revoked',
-      targetType: 'workspace_api_key',
-      targetId: keyId,
-      metadata: {
-        name: result.name,
-        publicId: result.publicId,
-        scopes: result.scopes,
-      },
-    });
-    return result;
+    return this.apiKeys.revoke(
+      id,
+      user.id,
+      keyId,
+      actorFromUser(user),
+    );
   }
 
   @Post(':id/ownership-transfer')
@@ -312,25 +234,13 @@ export class WorkspacesController {
     },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.workspacesService.transferOwnership(
+    return this.workspacesService.transferOwnership(
       id,
       user.id,
       Number(body.targetMemberId),
       body.previousOwnerRole || 'admin',
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'workspace.ownership_transferred',
-      targetType: 'workspace_member',
-      targetId: result.owner.id,
-      metadata: {
-        previousOwnerUserId: result.previousOwner.userId,
-        previousOwnerRole: result.previousOwner.role,
-        newOwnerUserId: result.owner.userId,
-      },
-    });
-    return result;
   }
 
   @Put(':id/members/:memberId/role')
@@ -340,24 +250,13 @@ export class WorkspacesController {
     @Body('role') role: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.workspacesService.updateMemberRole(
+    return this.workspacesService.updateMemberRole(
       id,
       user.id,
       memberId,
       role,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'member.role_updated',
-      targetType: 'workspace_member',
-      targetId: memberId,
-      metadata: {
-        userId: result.userId,
-        role: result.role,
-      },
-    });
-    return result;
   }
 
   @Delete(':id/members/:memberId')
@@ -366,22 +265,12 @@ export class WorkspacesController {
     @Param('memberId', ParseIntPipe) memberId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.workspacesService.removeMember(
+    return this.workspacesService.removeMember(
       id,
       user.id,
       memberId,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'member.removed',
-      targetType: 'workspace_member',
-      targetId: memberId,
-      metadata: {
-        removed: true,
-      },
-    });
-    return result;
   }
 
   @Get(':id')
@@ -398,16 +287,12 @@ export class WorkspacesController {
     @Body('name') name: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const workspace = await this.workspacesService.update(id, user.id, name);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'workspace.name_updated',
-      targetType: 'workspace',
-      targetId: id,
-      metadata: { name: workspace.name },
-    });
-    return workspace;
+    return this.workspacesService.update(
+      id,
+      user.id,
+      name,
+      actorFromUser(user),
+    );
   }
 
   @Delete(':id')
@@ -415,18 +300,10 @@ export class WorkspacesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const workspace = await this.workspacesService.remove(id, user.id);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'workspace.deleted',
-      targetType: 'workspace',
-      targetId: id,
-      metadata: {
-        name: workspace.name,
-        slug: workspace.slug,
-      },
-    });
-    return workspace;
+    return this.workspacesService.remove(
+      id,
+      user.id,
+      actorFromUser(user),
+    );
   }
 }

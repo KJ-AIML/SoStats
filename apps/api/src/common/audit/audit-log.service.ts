@@ -5,6 +5,10 @@ import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { WorkspaceAccessService } from '../workspace/workspace-access.service.js';
+import {
+  OutboxService,
+  type OutboxInsertExecutor,
+} from '../outbox/outbox.service.js';
 
 export type AuditActor =
   | {
@@ -85,7 +89,40 @@ export class AuditLogService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly access: WorkspaceAccessService,
+    private readonly outbox: OutboxService,
   ) {}
+
+  async enqueue(
+    executor: OutboxInsertExecutor,
+    input: AuditEventInput,
+    dedupeKey: string,
+  ) {
+    const action = input.action.trim().slice(0, 120);
+    const targetType = input.targetType.trim().slice(0, 80);
+    if (!action || !targetType) {
+      throw new Error('Audit action and target type are required');
+    }
+
+    return this.outbox.enqueue(executor, {
+      workspaceId: input.workspaceId,
+      topic: 'audit.append',
+      dedupeKey,
+      payload: {
+        workspaceId: input.workspaceId,
+        actorUserId: input.actor.userId ?? null,
+        actorEmail: input.actor.email?.slice(0, 255) || null,
+        authMethod: input.actor.authMethod,
+        apiKeyId: input.actor.apiKeyId ?? null,
+        action,
+        targetType,
+        targetId:
+          input.targetId === null || input.targetId === undefined
+            ? null
+            : String(input.targetId).slice(0, 120),
+        metadata: sanitizeAuditMetadata(input.metadata),
+      },
+    });
+  }
 
   async record(input: AuditEventInput) {
     const action = input.action.trim().slice(0, 120);

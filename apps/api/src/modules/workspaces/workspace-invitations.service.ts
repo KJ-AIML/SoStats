@@ -11,6 +11,10 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import { WorkspaceAccessService } from '../../common/workspace/workspace-access.service.js';
+import {
+  AuditLogService,
+  type AuditActor,
+} from '../../common/audit/audit-log.service.js';
 
 function normalizedEmail(value: unknown) {
   const email = String(value || '').trim().toLowerCase();
@@ -64,6 +68,7 @@ export class WorkspaceInvitationsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly access: WorkspaceAccessService,
+    private readonly audit: AuditLogService,
   ) {}
 
   private effectiveStatus(
@@ -126,6 +131,7 @@ export class WorkspaceInvitationsService {
     workspaceId: number,
     actorUserId: number,
     input: { email?: string; role?: string },
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
@@ -191,6 +197,30 @@ export class WorkspaceInvitationsService {
           })
           .where(eq(schema.workspaceInvitations.id, pending.id))
           .returning();
+        if (auditActor) {
+          await this.audit.enqueue(
+            tx,
+            {
+              workspaceId,
+              actor: auditActor,
+              action: 'invitation.created',
+              targetType: 'workspace_invitation',
+              targetId: renewed.id,
+              metadata: {
+                email: renewed.email,
+                role: renewed.role,
+                expiresAt: renewed.expiresAt,
+              },
+            },
+            [
+              'audit',
+              'invitation.created',
+              workspaceId,
+              renewed.id,
+              renewed.updatedAt.toISOString(),
+            ].join(':'),
+          );
+        }
         return renewed;
       }
 
@@ -207,6 +237,31 @@ export class WorkspaceInvitationsService {
         })
         .returning();
 
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'invitation.created',
+            targetType: 'workspace_invitation',
+            targetId: created.id,
+            metadata: {
+              email: created.email,
+              role: created.role,
+              expiresAt: created.expiresAt,
+            },
+          },
+          [
+            'audit',
+            'invitation.created',
+            workspaceId,
+            created.id,
+            created.createdAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
       return created;
     });
 
@@ -220,6 +275,7 @@ export class WorkspaceInvitationsService {
     workspaceId: number,
     actorUserId: number,
     invitationId: number,
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
@@ -263,6 +319,31 @@ export class WorkspaceInvitationsService {
         )
         .returning();
 
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'invitation.regenerated',
+            targetType: 'workspace_invitation',
+            targetId: invitationId,
+            metadata: {
+              email: updated.email,
+              role: updated.role,
+              expiresAt: updated.expiresAt,
+            },
+          },
+          [
+            'audit',
+            'invitation.regenerated',
+            workspaceId,
+            invitationId,
+            updated.updatedAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
       return { status: 'updated' as const, invitation: updated };
     });
 
@@ -285,6 +366,7 @@ export class WorkspaceInvitationsService {
     workspaceId: number,
     actorUserId: number,
     invitationId: number,
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
@@ -320,6 +402,30 @@ export class WorkspaceInvitationsService {
           ),
         )
         .returning();
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'invitation.revoked',
+            targetType: 'workspace_invitation',
+            targetId: invitationId,
+            metadata: {
+              email: updated.email,
+              role: updated.role,
+            },
+          },
+          [
+            'audit',
+            'invitation.revoked',
+            workspaceId,
+            invitationId,
+            updated.updatedAt.toISOString(),
+          ].join(':'),
+        );
+      }
 
       return { status: 'updated' as const, invitation: updated };
     });
@@ -415,15 +521,42 @@ export class WorkspaceInvitationsService {
         })
         .onConflictDoNothing();
 
+      const acceptedAt = new Date();
       await tx
         .update(schema.workspaceInvitations)
         .set({
           status: 'accepted',
           acceptedByUserId: user.id,
-          acceptedAt: new Date(),
-          updatedAt: new Date(),
+          acceptedAt,
+          updatedAt: acceptedAt,
         })
         .where(eq(schema.workspaceInvitations.id, invitation.id));
+
+      await this.audit.enqueue(
+        tx,
+        {
+          workspaceId: invitation.workspaceId,
+          actor: {
+            userId: null,
+            email: null,
+            authMethod: 'invitation_token',
+          },
+          action: 'invitation.accepted',
+          targetType: 'workspace_invitation',
+          targetId: invitation.id,
+          metadata: {
+            invitedEmail: maskedEmail(invitation.email),
+            role: invitation.role,
+          },
+        },
+        [
+          'audit',
+          'invitation.accepted',
+          invitation.workspaceId,
+          invitation.id,
+          acceptedAt.toISOString(),
+        ].join(':'),
+      );
 
       return {
         status: 'accepted' as const,
@@ -481,14 +614,41 @@ export class WorkspaceInvitationsService {
         return 'expired' as const;
       }
 
+      const rejectedAt = new Date();
       await tx
         .update(schema.workspaceInvitations)
         .set({
           status: 'rejected',
-          rejectedAt: new Date(),
-          updatedAt: new Date(),
+          rejectedAt,
+          updatedAt: rejectedAt,
         })
         .where(eq(schema.workspaceInvitations.id, invitation.id));
+
+      await this.audit.enqueue(
+        tx,
+        {
+          workspaceId: invitation.workspaceId,
+          actor: {
+            userId: null,
+            email: null,
+            authMethod: 'invitation_token',
+          },
+          action: 'invitation.rejected',
+          targetType: 'workspace_invitation',
+          targetId: invitation.id,
+          metadata: {
+            invitedEmail: maskedEmail(invitation.email),
+            role: invitation.role,
+          },
+        },
+        [
+          'audit',
+          'invitation.rejected',
+          invitation.workspaceId,
+          invitation.id,
+          rejectedAt.toISOString(),
+        ].join(':'),
+      );
 
       return 'rejected' as const;
     });

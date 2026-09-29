@@ -13,6 +13,10 @@ import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import { WorkspaceAccessService } from '../workspace/workspace-access.service.js';
 import type { AuthenticatedUser } from './auth.types.js';
+import {
+  AuditLogService,
+  type AuditActor,
+} from '../audit/audit-log.service.js';
 
 export const API_KEY_SCOPES = [
   'workspace:read',
@@ -105,6 +109,7 @@ export class ApiKeyService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly access: WorkspaceAccessService,
+    private readonly audit: AuditLogService,
   ) {}
 
   private status(key: typeof schema.workspaceApiKeys.$inferSelect) {
@@ -163,6 +168,7 @@ export class ApiKeyService {
       scopes?: unknown;
       expiresInDays?: unknown;
     },
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
@@ -171,18 +177,48 @@ export class ApiKeyService {
     const days = expiryDays(input.expiresInDays);
     const credential = newCredential();
 
-    const [created] = await this.db
-      .insert(schema.workspaceApiKeys)
-      .values({
-        workspaceId,
-        createdByUserId: actorUserId,
-        publicId: credential.publicId,
-        name,
-        secretHash: credential.secretHash,
-        scopes,
-        expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
-      })
-      .returning();
+    const created = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(schema.workspaceApiKeys)
+        .values({
+          workspaceId,
+          createdByUserId: actorUserId,
+          publicId: credential.publicId,
+          name,
+          secretHash: credential.secretHash,
+          scopes,
+          expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+        })
+        .returning();
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'api_key.created',
+            targetType: 'workspace_api_key',
+            targetId: row.id,
+            metadata: {
+              name: row.name,
+              publicId: row.publicId,
+              scopes: row.scopes,
+              expiresAt: row.expiresAt,
+            },
+          },
+          [
+            'audit',
+            'api_key.created',
+            workspaceId,
+            row.id,
+            row.createdAt.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return row;
+    });
 
     return {
       apiKey: this.serialize(created),
@@ -195,40 +231,71 @@ export class ApiKeyService {
     actorUserId: number,
     keyId: number,
     input: { expiresInDays?: unknown } = {},
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
-
-    const current = await this.db.query.workspaceApiKeys.findFirst({
-      where: and(
-        eq(schema.workspaceApiKeys.id, keyId),
-        eq(schema.workspaceApiKeys.workspaceId, workspaceId),
-      ),
-    });
-    if (!current) throw new NotFoundException('API key not found');
-    if (current.revokedAt) {
-      throw new ConflictException('Revoked API keys cannot be rotated');
-    }
 
     const days = expiryDays(input.expiresInDays);
     const credential = newCredential();
     const now = new Date();
 
-    const [updated] = await this.db
-      .update(schema.workspaceApiKeys)
-      .set({
-        publicId: credential.publicId,
-        secretHash: credential.secretHash,
-        expiresAt: new Date(now.getTime() + days * 24 * 60 * 60 * 1000),
-        rotatedAt: now,
-        updatedAt: now,
-      })
-      .where(
-        and(
+    const updated = await this.db.transaction(async (tx) => {
+      const current = await tx.query.workspaceApiKeys.findFirst({
+        where: and(
           eq(schema.workspaceApiKeys.id, keyId),
           eq(schema.workspaceApiKeys.workspaceId, workspaceId),
         ),
-      )
-      .returning();
+      });
+      if (!current) throw new NotFoundException('API key not found');
+      if (current.revokedAt) {
+        throw new ConflictException('Revoked API keys cannot be rotated');
+      }
+
+      const [row] = await tx
+        .update(schema.workspaceApiKeys)
+        .set({
+          publicId: credential.publicId,
+          secretHash: credential.secretHash,
+          expiresAt: new Date(now.getTime() + days * 24 * 60 * 60 * 1000),
+          rotatedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.workspaceApiKeys.id, keyId),
+            eq(schema.workspaceApiKeys.workspaceId, workspaceId),
+          ),
+        )
+        .returning();
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'api_key.rotated',
+            targetType: 'workspace_api_key',
+            targetId: keyId,
+            metadata: {
+              name: row.name,
+              publicId: row.publicId,
+              scopes: row.scopes,
+              expiresAt: row.expiresAt,
+            },
+          },
+          [
+            'audit',
+            'api_key.rotated',
+            workspaceId,
+            keyId,
+            now.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return row;
+    });
 
     return {
       apiKey: this.serialize(updated),
@@ -240,34 +307,66 @@ export class ApiKeyService {
     workspaceId: number,
     actorUserId: number,
     keyId: number,
+    auditActor?: AuditActor,
   ) {
     await this.access.requireOwner(actorUserId, workspaceId);
 
-    const current = await this.db.query.workspaceApiKeys.findFirst({
-      where: and(
-        eq(schema.workspaceApiKeys.id, keyId),
-        eq(schema.workspaceApiKeys.workspaceId, workspaceId),
-      ),
-    });
-    if (!current) throw new NotFoundException('API key not found');
-    if (current.revokedAt) return this.serialize(current);
-
-    const now = new Date();
-    const [updated] = await this.db
-      .update(schema.workspaceApiKeys)
-      .set({
-        revokedAt: now,
-        updatedAt: now,
-      })
-      .where(
-        and(
+    const result = await this.db.transaction(async (tx) => {
+      const current = await tx.query.workspaceApiKeys.findFirst({
+        where: and(
           eq(schema.workspaceApiKeys.id, keyId),
           eq(schema.workspaceApiKeys.workspaceId, workspaceId),
         ),
-      )
-      .returning();
+      });
+      if (!current) throw new NotFoundException('API key not found');
+      if (current.revokedAt) {
+        return { row: current, changed: false as const };
+      }
 
-    return this.serialize(updated);
+      const now = new Date();
+      const [row] = await tx
+        .update(schema.workspaceApiKeys)
+        .set({
+          revokedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.workspaceApiKeys.id, keyId),
+            eq(schema.workspaceApiKeys.workspaceId, workspaceId),
+          ),
+        )
+        .returning();
+
+      if (auditActor) {
+        await this.audit.enqueue(
+          tx,
+          {
+            workspaceId,
+            actor: auditActor,
+            action: 'api_key.revoked',
+            targetType: 'workspace_api_key',
+            targetId: keyId,
+            metadata: {
+              name: row.name,
+              publicId: row.publicId,
+              scopes: row.scopes,
+            },
+          },
+          [
+            'audit',
+            'api_key.revoked',
+            workspaceId,
+            keyId,
+            now.toISOString(),
+          ].join(':'),
+        );
+      }
+
+      return { row, changed: true as const };
+    });
+
+    return this.serialize(result.row);
   }
 
   async authenticate(token: string): Promise<AuthenticatedUser> {

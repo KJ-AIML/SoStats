@@ -59,16 +59,20 @@ function makeService(options?: { targetMissing?: boolean }) {
       callback(tx),
     ),
   };
+  const audit = {
+    enqueue: vi.fn().mockResolvedValue({ id: 99 }),
+  };
 
   return {
     access,
+    audit,
     tx,
     service: new WorkspacesService(
       db as never,
       access as never,
       {} as never,
       {} as never,
-      {} as never,
+      audit as never,
       {} as never,
       {} as never,
     ),
@@ -90,6 +94,29 @@ describe('WorkspacesService.transferOwnership', () => {
     expect(access.requireOwner).toHaveBeenCalledWith(10, 77);
     expect(tx.execute).toHaveBeenCalledTimes(1);
     expect(tx.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('enqueues ownership audit on the same transaction', async () => {
+    const { service, audit, tx } = makeService();
+    const actor = {
+      userId: 10,
+      email: 'owner@example.com',
+      authMethod: 'jwt' as const,
+    };
+
+    await service.transferOwnership(77, 10, 2, 'admin', actor);
+
+    expect(audit.enqueue).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        workspaceId: 77,
+        actor,
+        action: 'workspace.ownership_transferred',
+        targetType: 'workspace_member',
+        targetId: 2,
+      }),
+      expect.stringContaining('audit:workspace.ownership_transferred:77:'),
+    );
   });
 
   it('cannot transfer ownership to a member outside the scoped workspace', async () => {
