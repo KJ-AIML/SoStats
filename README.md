@@ -54,6 +54,7 @@ Architecture notes:
 - [Stage 11 private document knowledge pipeline](docs/architecture/STAGE_11_PRIVATE_KNOWLEDGE_DOCUMENTS.md)
 - [Stage 12 product UI completion: real Home dashboard](docs/architecture/STAGE_12_PRODUCT_UI_HOME.md)
 - [Stage 12 product UI completion: AI Studio](docs/architecture/STAGE_12_PRODUCT_UI_AI_STUDIO.md)
+- [Stage 12 product UI completion: Content workspace](docs/architecture/STAGE_12_PRODUCT_UI_CONTENT.md)
 
 ## Repository layout
 
