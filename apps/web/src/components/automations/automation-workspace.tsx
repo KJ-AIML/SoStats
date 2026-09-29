@@ -6,6 +6,8 @@ import {
   Check,
   CheckCircle2,
   Clock3,
+  Copy,
+  KeyRound,
   LoaderCircle,
   Play,
   RefreshCw,
@@ -33,7 +35,7 @@ function latestVersion(automation?: AutomationRecord) {
 
 function triggerTypeForDefinition(
   definition: WorkflowDefinitionState,
-): "manual" | "rss" {
+): "manual" | "rss" | "webhook" {
   const trigger = definition.nodes.find(
     (node) => String(node.data?.type || "") === "trigger",
   );
@@ -41,7 +43,9 @@ function triggerTypeForDefinition(
     trigger?.data?.config && typeof trigger.data.config === "object"
       ? (trigger.data.config as Record<string, unknown>)
       : {};
-  return config.mode === "rss" ? "rss" : "manual";
+  if (config.mode === "rss") return "rss";
+  if (config.mode === "webhook") return "webhook";
+  return "manual";
 }
 
 function statusTone(status: string) {
@@ -87,6 +91,7 @@ export function AutomationWorkspace({
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [webhookSecret, setWebhookSecret] = useState<string | null>(null);
 
   const selectedVersion = useMemo(() => latestVersion(selected), [selected]);
   const selectedTrigger = selected?.triggers?.[0];
@@ -233,6 +238,12 @@ export function AutomationWorkspace({
       const payload = (await response.json()) as {
         status?: string;
         triggerType?: string;
+        webhook?: {
+          endpointUrl: string;
+          secret?: string;
+          sourceType: string;
+          eventName: string;
+        };
         error?: string;
       };
       if (!response.ok) throw new Error(payload.error || "Unable to publish workflow");
@@ -249,10 +260,17 @@ export function AutomationWorkspace({
         ),
       );
       await loadAutomations();
+      if (payload.webhook?.secret) {
+        setWebhookSecret(payload.webhook.secret);
+      }
       setMessage(
         payload.triggerType === "rss"
           ? "Workflow published. RSS polling is active and new feed items create versioned runs."
-          : "Workflow published. New runs will use the latest published version.",
+          : payload.triggerType === "webhook"
+            ? payload.webhook?.secret
+              ? "Webhook published. Copy the signing secret now; it will not be shown again unless rotated."
+              : "Webhook published. Existing signing credentials remain active."
+            : "Workflow published. New runs will use the latest published version.",
       );
     } catch (actionError) {
       setError(
@@ -353,6 +371,48 @@ export function AutomationWorkspace({
     }
   };
 
+  const copyValue = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setMessage(`${label} copied.`);
+    } catch {
+      setError(`Unable to copy ${label.toLowerCase()}.`);
+    }
+  };
+
+  const rotateWebhookSecret = async () => {
+    if (!selectedId) return;
+    setBusy("rotate-secret");
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/automations/${selectedId}/trigger/rotate-secret`,
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as {
+        endpointUrl?: string;
+        secret?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.secret) {
+        throw new Error(payload.error || "Unable to rotate webhook secret");
+      }
+      setWebhookSecret(payload.secret);
+      setMessage(
+        "Webhook secret rotated. Update the sender before its next delivery.",
+      );
+      await loadAutomations();
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Unable to rotate webhook secret",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const retryExternalTrigger = async () => {
     if (!selectedId) return;
     setBusy("retry-trigger");
@@ -384,6 +444,7 @@ export function AutomationWorkspace({
     setName("New AI Content Automation");
     setDefinition(defaultWorkflowDefinition(channels));
     setRuns([]);
+    setWebhookSecret(null);
     setMessage(null);
     setError(null);
   };
@@ -419,6 +480,7 @@ export function AutomationWorkspace({
                       defaultWorkflowDefinition(channels),
                   );
                   setRuns(automation.runs || []);
+                  setWebhookSecret(null);
                   setMessage(null);
                   setError(null);
                 }}
@@ -571,6 +633,105 @@ export function AutomationWorkspace({
                     Retry source
                   </Button>
                 )}
+              </div>
+            </div>
+          )}
+
+          {selected?.triggerType === "webhook" && selectedTrigger && (
+            <div className="sostats-card p-4">
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                      <p className="text-[10px] font-semibold">
+                        Signed webhook · {selectedTrigger.status}
+                      </p>
+                    </div>
+                    <p className="mt-1 text-[8px] text-muted-foreground">
+                      {String(selectedTrigger.config?.sourceType || "generic")} ·{" "}
+                      {String(selectedTrigger.config?.eventName || "content.published")}
+                    </p>
+                    <p className="mt-1 text-[8px] text-muted-foreground">
+                      {selectedTrigger.lastReceivedAt
+                        ? `Last delivery ${new Date(selectedTrigger.lastReceivedAt).toLocaleString()}`
+                        : "Waiting for first signed delivery"}
+                      {selectedTrigger.lastTriggeredAt
+                        ? ` · Last run ${new Date(selectedTrigger.lastTriggeredAt).toLocaleString()}`
+                        : ""}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => void rotateWebhookSecret()}
+                    disabled={Boolean(busy)}
+                    className="h-9 rounded-xl text-[8px]"
+                  >
+                    {busy === "rotate-secret" ? (
+                      <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />
+                    ) : (
+                      <KeyRound className="mr-1.5 h-3 w-3" />
+                    )}
+                    Rotate secret
+                  </Button>
+                </div>
+
+                {selectedTrigger.endpointUrl && (
+                  <div className="rounded-xl border border-black/[0.06] bg-neutral-50 p-3">
+                    <p className="text-[8px] font-semibold text-neutral-500">
+                      Endpoint
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <code className="min-w-0 flex-1 truncate text-[8px]">
+                        {selectedTrigger.endpointUrl}
+                      </code>
+                      <button
+                        onClick={() =>
+                          void copyValue(selectedTrigger.endpointUrl!, "Webhook endpoint")
+                        }
+                        className="sostats-icon h-7 w-7 shrink-0"
+                        aria-label="Copy webhook endpoint"
+                      >
+                        <Copy className="h-3 w-3 text-neutral-500" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {webhookSecret ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-[8px] font-semibold text-amber-800">
+                      Signing secret — copy it now
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <code className="min-w-0 flex-1 truncate text-[8px] text-amber-900">
+                        {webhookSecret}
+                      </code>
+                      <button
+                        onClick={() =>
+                          void copyValue(webhookSecret, "Webhook secret")
+                        }
+                        className="sostats-icon h-7 w-7 shrink-0"
+                        aria-label="Copy webhook secret"
+                      >
+                        <Copy className="h-3 w-3 text-amber-700" />
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[8px] leading-4 text-amber-800">
+                      SoStats stores this encrypted and does not return it during normal reads.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[8px] leading-4 text-muted-foreground">
+                    The signing secret is only revealed when the webhook is first created or explicitly rotated.
+                  </p>
+                )}
+
+                <div className="rounded-xl bg-violet-50 p-3 text-[8px] leading-4 text-violet-800">
+                  Sign: timestamp + "." + event name + "." + event ID + "." + exact JSON body.
+                  Send headers x-sostats-timestamp, x-sostats-event,
+                  x-sostats-event-id, and x-sostats-signature.
+                </div>
               </div>
             </div>
           )}
