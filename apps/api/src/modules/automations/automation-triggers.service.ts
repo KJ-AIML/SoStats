@@ -234,7 +234,10 @@ export class AutomationTriggersService {
       for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index];
         const eventKey = createHash('sha256')
-          .update(`${trigger.id}:${entry.externalId}`, 'utf8')
+          .update(
+            `${trigger.id}:${config.feedUrl}:${entry.externalId}`,
+            'utf8',
+          )
           .digest('hex');
 
         const payload = {

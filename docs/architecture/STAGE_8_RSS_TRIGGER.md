@@ -72,8 +72,13 @@ Stores observed external items:
 - sanitized event payload
 - generated run id, when applicable
 
-`trigger_id + event_key` is unique, so repeatedly fetching the same feed item
+`trigger_id + event_key` is unique, and the event key includes the feed URL
+plus the external item id. Repeatedly fetching the same feed item therefore
 cannot create duplicate automation runs.
+
+If a published workflow changes to a different feed URL, SoStats resets the
+source's first-sync state. The new feed gets its own baseline/latest behavior
+instead of being treated as a continuation of the previous feed.
 
 ## First-sync policy
 

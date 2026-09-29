@@ -191,6 +191,14 @@ export class AutomationsService {
         };
 
         if (existingTrigger) {
+          const previousConfig =
+            existingTrigger.config &&
+            typeof existingTrigger.config === 'object'
+              ? (existingTrigger.config as Record<string, unknown>)
+              : {};
+          const feedChanged =
+            String(previousConfig.feedUrl || '').trim() !== rssConfig.feedUrl;
+
           await tx
             .update(schema.automationTriggers)
             .set({
@@ -200,6 +208,12 @@ export class AutomationsService {
               leaseToken: null,
               leaseExpiresAt: null,
               nextPollAt: new Date(),
+              lastPolledAt: feedChanged
+                ? null
+                : existingTrigger.lastPolledAt,
+              lastTriggeredAt: feedChanged
+                ? null
+                : existingTrigger.lastTriggeredAt,
               lastError: null,
               updatedAt: new Date(),
             })
