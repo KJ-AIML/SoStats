@@ -22,7 +22,10 @@ export default async function BrandBrainPage({
   searchParams,
 }: {
   params: Promise<{ workspaceSlug: string }>;
-  searchParams: Promise<{ brandId?: string | string[] }>;
+  searchParams: Promise<{
+    brandId?: string | string[];
+    newBrand?: string | string[];
+  }>;
 }) {
   const { workspaceSlug } = await params;
   const query = await searchParams;
@@ -32,6 +35,8 @@ export default async function BrandBrainPage({
   try {
     snapshot = await loadWorkspaceSnapshot(workspaceSlug);
 
+    const createNew =
+      (Array.isArray(query.newBrand) ? query.newBrand[0] : query.newBrand) === "1";
     const requested = Number.parseInt(
       Array.isArray(query.brandId)
         ? query.brandId[0] || ""
@@ -41,7 +46,9 @@ export default async function BrandBrainPage({
     const requestedBrand = snapshot.brands.find(
       (brand) => brand.id === requested,
     );
-    const selectedId = requestedBrand?.id || snapshot.brands[0]?.id;
+    const selectedId = createNew
+      ? undefined
+      : requestedBrand?.id || snapshot.brands[0]?.id;
 
     if (selectedId) {
       if (snapshot.brand?.id === selectedId) {
@@ -116,6 +123,16 @@ export default async function BrandBrainPage({
                   {brand.name}
                 </Link>
               ))}
+              <Link
+                href={`/${workspaceSlug}/brand-brain?newBrand=1`}
+                className={
+                  !selectedBrand
+                    ? "rounded-xl bg-[#ef2b2d] px-3 py-2 text-[9px] font-semibold text-white"
+                    : "rounded-xl border border-dashed border-black/[0.12] bg-white px-3 py-2 text-[9px] font-semibold text-neutral-500 hover:bg-neutral-50"
+                }
+              >
+                + New Brand Brain
+              </Link>
             </div>
           </div>
           <span className="rounded-lg bg-neutral-100 px-2.5 py-1.5 text-[8px] font-semibold text-neutral-500">
