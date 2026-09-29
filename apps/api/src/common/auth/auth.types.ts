@@ -4,6 +4,11 @@ export interface AuthenticatedUser {
   email: string;
   name: string | null;
   authMethod?: 'jwt' | 'development' | 'api_key';
+  session?: {
+    id: number;
+    authMethod: 'jwt' | 'development';
+    expiresAt?: Date | null;
+  };
   apiKey?: {
     id: number;
     workspaceId: number;

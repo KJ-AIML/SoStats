@@ -200,6 +200,63 @@ export const workspaceAuditEvents = pgTable(
   }),
 );
 
+// auth_sessions
+// Stores a fingerprint of the presented bearer credential, never the raw token.
+export const authSessions = pgTable(
+  'auth_sessions',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+    authMethod: varchar('auth_method', { length: 40 }).notNull(),
+    userAgent: varchar('user_agent', { length: 512 }),
+    expiresAt: timestamp('expires_at'),
+    lastSeenAt: timestamp('last_seen_at').defaultNow().notNull(),
+    revokedAt: timestamp('revoked_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    authSessionUserIdx: index('auth_session_user_idx').on(
+      table.userId,
+      table.lastSeenAt,
+    ),
+    authSessionMethodCheck: check(
+      'auth_session_method_check',
+      sql`${table.authMethod} in ('jwt', 'development')`,
+    ),
+  }),
+);
+
+// workspace_notification_preferences
+// Preferences are persisted policy only. Outbound delivery remains a separate
+// adapter/runtime capability and is not implied by this table.
+export const workspaceNotificationPreferences = pgTable(
+  'workspace_notification_preferences',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    securityEvents: boolean('security_events').notNull().default(true),
+    publishingFailures: boolean('publishing_failures').notNull().default(true),
+    automationFailures: boolean('automation_failures').notNull().default(true),
+    weeklyDigest: boolean('weekly_digest').notNull().default(false),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    workspaceNotificationUserIdx: uniqueIndex(
+      'workspace_notification_user_idx',
+    ).on(table.workspaceId, table.userId),
+  }),
+);
+
 // brands
 export const brands = pgTable(
   'brands',
@@ -966,6 +1023,7 @@ export const workspacesRelations = relations(workspaces, ({ many }) => ({
   members: many(workspaceMembers),
   invitations: many(workspaceInvitations),
   apiKeys: many(workspaceApiKeys),
+  notificationPreferences: many(workspaceNotificationPreferences),
   brands: many(brands),
   socialAccounts: many(socialAccounts),
   assets: many(assets),
@@ -987,6 +1045,8 @@ export const usersRelations = relations(users, ({ many }) => ({
     relationName: 'acceptedBy',
   }),
   apiKeysCreated: many(workspaceApiKeys),
+  authSessions: many(authSessions),
+  notificationPreferences: many(workspaceNotificationPreferences),
 }));
 
 export const workspaceMembersRelations = relations(
@@ -1032,6 +1092,27 @@ export const workspaceApiKeysRelations = relations(
     }),
     createdBy: one(users, {
       fields: [workspaceApiKeys.createdByUserId],
+      references: [users.id],
+    }),
+  }),
+);
+
+export const authSessionsRelations = relations(authSessions, ({ one }) => ({
+  user: one(users, {
+    fields: [authSessions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const workspaceNotificationPreferencesRelations = relations(
+  workspaceNotificationPreferences,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [workspaceNotificationPreferences.workspaceId],
+      references: [workspaces.id],
+    }),
+    user: one(users, {
+      fields: [workspaceNotificationPreferences.userId],
       references: [users.id],
     }),
   }),

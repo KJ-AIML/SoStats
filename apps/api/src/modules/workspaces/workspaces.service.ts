@@ -18,6 +18,8 @@ import {
 import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
 import { ApiKeyService } from '../../common/auth/api-key.service.js';
 import { AuditLogService } from '../../common/audit/audit-log.service.js';
+import { SessionService } from '../../common/auth/session.service.js';
+import { NotificationPreferencesService } from '../../common/notifications/notification-preferences.service.js';
 
 function slugify(name: string) {
   const base = name
@@ -55,6 +57,8 @@ export class WorkspacesService {
     private readonly invitations: WorkspaceInvitationsService,
     private readonly apiKeys: ApiKeyService,
     private readonly audit: AuditLogService,
+    private readonly sessions: SessionService,
+    private readonly notificationPreferences: NotificationPreferencesService,
   ) {}
 
   async create(name: string, userId: number) {
@@ -97,7 +101,11 @@ export class WorkspacesService {
     return { ...membership.workspace, role: membership.role };
   }
 
-  async settings(id: number, userId: number) {
+  async settings(
+    id: number,
+    userId: number,
+    currentSessionId?: number | null,
+  ) {
     const membership = await this.access.requireMembership(userId, id);
     const workspace = await this.db.query.workspaces.findFirst({
       where: eq(schema.workspaces.id, id),
@@ -124,6 +132,9 @@ export class WorkspacesService {
       membership.role === 'owner'
         ? await this.audit.listForWorkspace(id, userId, { limit: 50 })
         : [];
+    const sessions = await this.sessions.listForUser(userId, currentSessionId);
+    const notificationPreferences =
+      await this.notificationPreferences.get(id, userId);
 
     return {
       workspace: {
@@ -137,6 +148,8 @@ export class WorkspacesService {
       },
       apiKeys,
       auditEvents,
+      sessions,
+      notificationPreferences,
       members: workspace.members.map((member) => ({
         id: member.id,
         userId: member.userId,
@@ -154,6 +167,8 @@ export class WorkspacesService {
         canManageInvitations: membership.role === 'owner',
         canManageApiKeys: membership.role === 'owner',
         canViewAuditLog: membership.role === 'owner',
+        canManageOwnSessions: true,
+        canManageOwnNotifications: true,
         canTransferOwnership: membership.role === 'owner',
         canDeleteWorkspace: membership.role === 'owner',
       },
@@ -176,12 +191,41 @@ export class WorkspacesService {
         invitations: true,
         invitationEmailDelivery: false,
         apiKeys: true,
-        notificationPreferences: false,
+        sessionAdministration: true,
+        notificationPreferences: true,
+        notificationDelivery: false,
         auditLog: true,
         ownershipTransfer: true,
         workspacePublishPolicy: false,
       },
     };
+  }
+
+  async revokeOwnSession(
+    workspaceId: number,
+    userId: number,
+    sessionId: number,
+    currentSessionId?: number | null,
+  ) {
+    await this.access.requireMembership(userId, workspaceId);
+    return this.sessions.revokeOtherSession(
+      userId,
+      sessionId,
+      currentSessionId,
+    );
+  }
+
+  async updateOwnNotificationPreferences(
+    workspaceId: number,
+    userId: number,
+    input: {
+      securityEvents?: unknown;
+      publishingFailures?: unknown;
+      automationFailures?: unknown;
+      weeklyDigest?: unknown;
+    },
+  ) {
+    return this.notificationPreferences.update(workspaceId, userId, input);
   }
 
   async updateSettings(
