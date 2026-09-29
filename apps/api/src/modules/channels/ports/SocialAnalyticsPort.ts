@@ -1,6 +1,8 @@
 export type SocialMetricTotals = {
   impressions?: number;
+  views?: number;
   reach?: number;
+  likes?: number;
   shares?: number;
   reactions?: number;
   comments?: number;
