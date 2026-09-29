@@ -19,6 +19,7 @@ import { AutomationsModule } from './modules/automations/automations.module.js';
 import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 import { IntegrationsModule } from './modules/integrations/integrations.module.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
+import { OutboxModule } from './modules/outbox/outbox.module.js';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
     AnalyticsModule,
     IntegrationsModule,
     KnowledgeModule,
+    OutboxModule,
   ],
   controllers: [AppController],
   providers: [
