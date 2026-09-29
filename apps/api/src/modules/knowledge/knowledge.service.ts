@@ -476,6 +476,11 @@ export class KnowledgeService {
 
   async remove(workspaceId: number, sourceId: number) {
     const source = await this.requireSource(workspaceId, sourceId);
+    if (['uploading', 'uploaded', 'processing'].includes(source.status)) {
+      throw new ConflictException(
+        'Knowledge source cannot be deleted while upload or processing is active',
+      );
+    }
     if (source.storageKey) {
       await this.storage.deleteFile(source.storageKey);
     }
@@ -724,7 +729,11 @@ export class KnowledgeService {
     }
 
     const [countRow] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
+      .select({
+        count: sql<number>`count(*)::int`,
+        minIndex: sql<number | null>`min(${schema.knowledgeChunks.chunkIndex})::int`,
+        maxIndex: sql<number | null>`max(${schema.knowledgeChunks.chunkIndex})::int`,
+      })
       .from(schema.knowledgeChunks)
       .where(
         and(
@@ -736,9 +745,13 @@ export class KnowledgeService {
         ),
       );
 
-    if (Number(countRow?.count || 0) !== input.chunkCount) {
+    if (
+      Number(countRow?.count || 0) !== input.chunkCount ||
+      Number(countRow?.minIndex) !== 0 ||
+      Number(countRow?.maxIndex) !== input.chunkCount - 1
+    ) {
       throw new ConflictException(
-        'Knowledge chunk upload is incomplete',
+        'Knowledge chunk upload is incomplete or has invalid indexes',
       );
     }
 

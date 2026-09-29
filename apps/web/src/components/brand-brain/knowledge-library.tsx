@@ -31,6 +31,14 @@ function statusClass(status: string) {
   return "bg-amber-50 text-amber-700";
 }
 
+function documentMime(file: File) {
+  if ([PDF, DOCX].includes(file.type)) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".pdf")) return PDF;
+  if (name.endsWith(".docx")) return DOCX;
+  return "";
+}
+
 function formatBytes(size?: number | null) {
   if (!size) return null;
   if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
@@ -120,7 +128,8 @@ export function KnowledgeLibrary({
 
   const addPrivateFile = async () => {
     if (!file) throw new Error("Choose a PDF or DOCX file.");
-    if (![PDF, DOCX].includes(file.type)) {
+    const mimeType = documentMime(file);
+    if (!mimeType) {
       throw new Error("Private knowledge uploads support PDF and DOCX files.");
     }
 
@@ -133,7 +142,7 @@ export function KnowledgeLibrary({
           brandId,
           title: title.trim(),
           fileName: file.name,
-          mimeType: file.type,
+          mimeType,
           size: file.size,
         }),
       },
@@ -151,7 +160,7 @@ export function KnowledgeLibrary({
 
     const upload = await fetch(initialized.uploadUrl, {
       method: "PUT",
-      headers: { "content-type": file.type },
+      headers: { "content-type": mimeType },
       body: file,
     });
     if (!upload.ok) {
@@ -353,9 +362,15 @@ export function KnowledgeLibrary({
                     ref={fileInputRef}
                     type="file"
                     accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    onChange={(event) =>
-                      setFile(event.target.files?.[0] || null)
-                    }
+                    onChange={(event) => {
+                      const nextFile = event.target.files?.[0] || null;
+                      setFile(nextFile);
+                      if (nextFile && !title.trim()) {
+                        setTitle(
+                          nextFile.name.replace(/\.(pdf|docx)$/i, ""),
+                        );
+                      }
+                    }}
                     className="block w-full rounded-xl border border-dashed border-black/[0.09] bg-neutral-50 p-3 text-[9px] file:mr-3 file:rounded-lg file:border-0 file:bg-neutral-950 file:px-3 file:py-2 file:text-[9px] file:font-semibold file:text-white"
                   />
                   <span className="mt-1.5 block text-[8px] leading-4 text-muted-foreground">
