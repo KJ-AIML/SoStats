@@ -317,65 +317,81 @@ export class ChannelsService {
     if (!brand) throw new NotFoundException('Brand not found');
 
     const adapter = this.providerRegistry.getProvider(state.provider);
-    const tokenData = await adapter.exchangeToken(
-      code,
-      state.redirectUri,
-      state.codeVerifier,
-    );
+    const tokenData = adapter.exchangeAccounts
+      ? await adapter.exchangeAccounts(
+          code,
+          state.redirectUri,
+          state.codeVerifier,
+        )
+      : [
+          await adapter.exchangeToken(
+            code,
+            state.redirectUri,
+            state.codeVerifier,
+          ),
+        ];
 
-    const encryptedAccessToken = encrypt(tokenData.accessToken);
-    const encryptedRefreshToken = tokenData.refreshToken
-      ? encrypt(tokenData.refreshToken)
-      : null;
+    if (!tokenData.length) {
+      throw new BadRequestException(
+        `${adapter.providerName} OAuth returned no connectable accounts`,
+      );
+    }
 
-    const existing = await this.db.query.socialAccounts.findFirst({
-      where: and(
-        eq(schema.socialAccounts.workspaceId, state.workspaceId),
-        eq(schema.socialAccounts.provider, adapter.providerName),
-        eq(
-          schema.socialAccounts.providerAccountId,
-          tokenData.providerAccountId,
+    const accounts: Array<typeof schema.socialAccounts.$inferSelect> = [];
+    for (const connection of tokenData) {
+      const encryptedAccessToken = encrypt(connection.accessToken);
+      const encryptedRefreshToken = connection.refreshToken
+        ? encrypt(connection.refreshToken)
+        : null;
+
+      const existing = await this.db.query.socialAccounts.findFirst({
+        where: and(
+          eq(schema.socialAccounts.workspaceId, state.workspaceId),
+          eq(schema.socialAccounts.provider, adapter.providerName),
+          eq(
+            schema.socialAccounts.providerAccountId,
+            connection.providerAccountId,
+          ),
         ),
-      ),
-    });
+      });
 
-    let account: typeof schema.socialAccounts.$inferSelect;
-    if (existing) {
-      const [updated] = await this.db
-        .update(schema.socialAccounts)
-        .set({
-          brandId: state.brandId,
-          accountName: tokenData.accountName,
-          accessToken: encryptedAccessToken,
-          refreshToken:
-            encryptedRefreshToken || existing.refreshToken,
-          expiresAt: tokenData.expiresAt,
-          status: 'active',
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.socialAccounts.id, existing.id))
-        .returning();
-      account = updated;
-    } else {
-      const [created] = await this.db
-        .insert(schema.socialAccounts)
-        .values({
-          workspaceId: state.workspaceId,
-          brandId: state.brandId,
-          provider: adapter.providerName,
-          providerAccountId: tokenData.providerAccountId,
-          accountName: tokenData.accountName,
-          accessToken: encryptedAccessToken,
-          refreshToken: encryptedRefreshToken,
-          expiresAt: tokenData.expiresAt,
-          status: 'active',
-        })
-        .returning();
-      account = created;
+      if (existing) {
+        const [updated] = await this.db
+          .update(schema.socialAccounts)
+          .set({
+            brandId: state.brandId,
+            accountName: connection.accountName,
+            accessToken: encryptedAccessToken,
+            refreshToken:
+              encryptedRefreshToken || existing.refreshToken,
+            expiresAt: connection.expiresAt,
+            status: 'active',
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.socialAccounts.id, existing.id))
+          .returning();
+        accounts.push(updated);
+      } else {
+        const [created] = await this.db
+          .insert(schema.socialAccounts)
+          .values({
+            workspaceId: state.workspaceId,
+            brandId: state.brandId,
+            provider: adapter.providerName,
+            providerAccountId: connection.providerAccountId,
+            accountName: connection.accountName,
+            accessToken: encryptedAccessToken,
+            refreshToken: encryptedRefreshToken,
+            expiresAt: connection.expiresAt,
+            status: 'active',
+          })
+          .returning();
+        accounts.push(created);
+      }
     }
 
     return {
-      account: {
+      accounts: accounts.map((account) => ({
         id: account.id,
         workspaceId: account.workspaceId,
         brandId: account.brandId,
@@ -386,9 +402,10 @@ export class ChannelsService {
         status: account.status,
         supported: true,
         capabilities: adapter.capabilities,
-      },
+      })),
       redirectUrl: this.returnUrl(state.returnTo, {
         connected: adapter.providerName,
+        connectedCount: String(accounts.length),
       }),
     };
   }
