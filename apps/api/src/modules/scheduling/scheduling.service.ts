@@ -63,7 +63,11 @@ export class SchedulingService {
     });
   }
 
-  async createSchedule(workspaceId: number, data: CreateScheduleDto) {
+  async createSchedule(
+    workspaceId: number,
+    data: CreateScheduleDto,
+    options: { sourceKey?: string } = {},
+  ) {
     const scheduledAt = new Date(data.scheduledAt);
     if (Number.isNaN(scheduledAt.getTime())) {
       throw new BadRequestException('scheduledAt must be a valid date');
@@ -166,17 +170,51 @@ export class SchedulingService {
     }
 
     return this.db.transaction(async (tx) => {
-      const [record] = await tx
-        .insert(schema.scheduledPublications)
-        .values({
-          workspaceId,
-          contentItemId: data.contentItemId,
-          variantId: data.variantId,
-          socialAccountId: data.socialAccountId,
-          scheduledAt,
-          status: 'scheduled',
-        })
-        .returning();
+      const values = {
+        workspaceId,
+        contentItemId: data.contentItemId,
+        variantId: data.variantId,
+        socialAccountId: data.socialAccountId,
+        sourceKey: options.sourceKey?.slice(0, 255) || null,
+        scheduledAt,
+        status: 'scheduled',
+      };
+
+      const [created] = options.sourceKey
+        ? await tx
+            .insert(schema.scheduledPublications)
+            .values(values)
+            .onConflictDoNothing({
+              target: schema.scheduledPublications.sourceKey,
+            })
+            .returning()
+        : await tx
+            .insert(schema.scheduledPublications)
+            .values(values)
+            .returning();
+
+      if (!created && options.sourceKey) {
+        const existing = await tx.query.scheduledPublications.findFirst({
+          where: and(
+            eq(schema.scheduledPublications.workspaceId, workspaceId),
+            eq(
+              schema.scheduledPublications.sourceKey,
+              options.sourceKey.slice(0, 255),
+            ),
+          ),
+        });
+        if (!existing) {
+          throw new BadRequestException(
+            'Schedule source key was claimed by another workspace',
+          );
+        }
+        return existing;
+      }
+
+      const record = created;
+      if (!record) {
+        throw new BadRequestException('Schedule could not be created');
+      }
 
       await tx
         .update(schema.contentItems)
