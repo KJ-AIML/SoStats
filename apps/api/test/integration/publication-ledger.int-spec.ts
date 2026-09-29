@@ -74,6 +74,54 @@ describe('PublicationLedger', () => {
     expect((await attempt(winners[0]!.attemptId)).status).toBe('processing');
   });
 
+  it('claims a scheduled row still carrying a stale attempt pointer exactly once and fences the stale attempt', async () => {
+    const publication = await scheduled();
+    // Rollback residue: pre-32A code rescheduled an unknown row to scheduled
+    // without clearing active_attempt_id.
+    const [stale] = await database.db
+      .insert(pj)
+      .values({
+        scheduledPublicationId: publication.id,
+        status: 'unknown',
+        attemptNumber: 1,
+        providerRequestStartedAt: new Date(Date.now() - 60_000),
+      })
+      .returning();
+    await database.db
+      .update(sp)
+      .set({ activeAttemptId: stale.id })
+      .where(eq(sp.id, publication.id));
+    const residue = await reload(publication.id);
+
+    const claims = await Promise.all([claimOf(residue), claimOf(residue)]);
+    const winners = claims.filter((claim) => claim !== null);
+
+    expect(winners).toHaveLength(1);
+    const winner = winners[0]!;
+    expect(winner.attemptNumber).toBe(2);
+    expect(await reload(publication.id)).toMatchObject({
+      status: 'publishing',
+      activeAttemptId: winner.attemptId,
+    });
+
+    const staleClaim = { ...winner, attemptId: stale.id, attemptNumber: 1 };
+    await expect(
+      ledger.markSideEffect(staleClaim, { operationType: 'x_create_post' }),
+    ).rejects.toBeInstanceOf(LeaseLostError);
+    await expect(
+      ledger.recordSuccess(staleClaim, { postId: 'ghost' }),
+    ).resolves.toBe(false);
+    await expect(
+      ledger.recordFailure(staleClaim, 'terminal', 'invalid_request', 'late'),
+    ).resolves.toBe('ownership_lost');
+    expect(await reload(publication.id)).toMatchObject({
+      status: 'publishing',
+      activeAttemptId: winner.attemptId,
+    });
+    expect((await attempt(winner.attemptId)).status).toBe('processing');
+    expect((await attempt(stale.id)).status).toBe('unknown');
+  });
+
   it('rejects a claim for a stale dispatch generation', async () => {
     const publication = await scheduled();
     await expect(
@@ -433,6 +481,56 @@ describe('PublicationLedger', () => {
     });
 
     await expect(success).resolves.toBe(true);
+  });
+
+  it('locks the content item before the variant in recordSuccess', async () => {
+    const seeded = await seedChannel(database.sql);
+    const [variant] = await database.db
+      .insert(schema.contentVariants)
+      .values({ contentItemId: seeded.contentItemId, content: 'Hello' })
+      .returning();
+    const claim = (await claimOf(
+      await createPublication(database.db, seeded, { variantId: variant.id }),
+    ))!;
+    let success: Promise<boolean> = Promise.resolve(false);
+
+    await database.sql.begin(async (tx) => {
+      await tx`select id from content_items where id = ${seeded.contentItemId} for update`;
+      success = ledger.recordSuccess(claim, { postId: 'lock-order-2' });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // SchedulingService locks content_items then content_variants; if
+      // recordSuccess had already locked the variant this would fail.
+      await database.sql.begin(async (probe) => {
+        await probe`select id from content_variants where id = ${variant.id} for update nowait`;
+      });
+    });
+
+    await expect(success).resolves.toBe(true);
+  });
+
+  it('keeps confirmed post evidence on an attempt that no longer owns the publication', async () => {
+    const claim = (await claimOf(await scheduled()))!;
+    await ledger.markSideEffect(claim, {
+      operationType: 'x_create_post',
+      data: { step: 'publish' },
+    });
+    await expireLease(claim.publicationId);
+    await ledger.sweepExpiredLeases();
+
+    await expect(
+      ledger.recordFailure(claim, 'unknown', 'internal', 'db down', {
+        platformPostId: 'live-1',
+      }),
+    ).resolves.toBe('ownership_lost');
+
+    expect((await attempt(claim.attemptId)).providerCheckpoint).toEqual({
+      step: 'publish',
+      confirmedPlatformPostId: 'live-1',
+      confirmedPlatformPostUrl: null,
+    });
+    expect(
+      (await results(claim.attemptId)).map((row) => row.platformPostId),
+    ).not.toContain('live-1');
   });
 
   it('survives a sweeper and a late success crossing on an expired marked lease', async () => {

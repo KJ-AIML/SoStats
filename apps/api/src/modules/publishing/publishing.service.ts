@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { and, eq, inArray, isNull, lte, or } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -80,6 +81,8 @@ type AttemptOutcome =
       recorded: FailureRecord;
       message: string;
       statusCode: number | null;
+      /** Provider-confirmed post id whose success write failed (an id, never a body). */
+      confirmedPostId?: string;
     };
 
 @Injectable()
@@ -190,16 +193,30 @@ export class PublishingService {
       expectedDispatchGeneration: request.expectedDispatchGeneration,
     });
     if (!claim) {
-      return (
-        this.gate(await this.getPublication(id), request) ?? {
-          status: 'in_progress',
-          scheduledPublicationId: id,
-        }
+      const current = await this.getPublication(id);
+      const regate = this.gate(current, request);
+      if (regate) return regate;
+      // Still `scheduled` under the same generation/version, yet unclaimable:
+      // an invariant violation. Fail the protocol (non-200) so the worker treats
+      // it as a transport failure, never as a completed domain outcome.
+      this.logEvent(
+        'publication.claim_invariant_violation',
+        {
+          workspace_id: current.workspaceId,
+          publication_id: id,
+          dispatch_generation: current.dispatchGeneration,
+          active_attempt_id: current.activeAttemptId,
+          queue_job_id: request.queueJobId ?? null,
+        },
+        'error',
+      );
+      throw new ServiceUnavailableException(
+        'Scheduled publication could not be claimed',
       );
     }
 
     const marker = { set: false };
-    let providerReturned = false;
+    let confirmed: PublishResult | undefined;
     let outcome: AttemptOutcome;
     try {
       const account = publication.socialAccount;
@@ -227,15 +244,20 @@ export class PublishingService {
           marker.set = true;
         },
       });
-      providerReturned = true;
+      confirmed = result;
       outcome = {
         kind: 'success',
         result,
         published: await this.ledger.recordSuccess(claim, result),
       };
     } catch (error) {
-      outcome = providerReturned
-        ? await this.recordUnknownAfterSuccess(claim, error, marker.set)
+      outcome = confirmed
+        ? await this.recordUnknownAfterSuccess(
+            claim,
+            error,
+            marker.set,
+            confirmed,
+          )
         : await this.recordError(claim, error, marker.set);
     }
 
@@ -349,12 +371,14 @@ export class PublishingService {
   /**
    * The provider already returned success: whatever failed afterwards (for
    * example the success write), the post may exist, so it is `unknown`, never
-   * retried. A failing write here rethrows; the row stays `publishing` for the sweeper.
+   * retried. The confirmed post id/url is kept on the attempt as evidence. A
+   * failing write here rethrows; the row stays `publishing` for the sweeper.
    */
   private async recordUnknownAfterSuccess(
     claim: ClaimedAttempt,
     error: unknown,
     markerSet: boolean,
+    confirmed: PublishResult,
   ): Promise<AttemptOutcome> {
     const decision = {
       kind: 'unknown' as const,
@@ -367,8 +391,16 @@ export class PublishingService {
       'unknown',
       decision.errorClass,
       message,
+      { platformPostId: confirmed.postId, platformPostUrl: confirmed.url },
     );
-    return { kind: 'failure', decision, recorded, message, statusCode: null };
+    return {
+      kind: 'failure',
+      decision,
+      recorded,
+      message,
+      statusCode: null,
+      confirmedPostId: confirmed.postId,
+    };
   }
 
   private async finish(
@@ -453,6 +485,9 @@ export class PublishingService {
         outcome.decision.kind === 'unknown'
           ? outcome.decision.contractViolation
           : false,
+      ...(outcome.confirmedPostId
+        ? { platform_post_id: outcome.confirmedPostId }
+        : {}),
     });
 
     if (
@@ -533,7 +568,7 @@ export class PublishingService {
   private logEvent(
     event: string,
     fields: Record<string, unknown>,
-    level: 'log' | 'warn' = 'log',
+    level: 'log' | 'warn' | 'error' = 'log',
   ) {
     this.logger[level](JSON.stringify({ event, ...fields }));
   }

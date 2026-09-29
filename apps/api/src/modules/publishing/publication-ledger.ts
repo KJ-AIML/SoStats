@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, gt, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
@@ -34,6 +34,12 @@ export type ClaimedAttempt = {
   dispatchGeneration: number;
 };
 
+/** A provider-confirmed post that could not be recorded as published (spec §5 step 5). */
+export type ConfirmedPostEvidence = {
+  platformPostId: string;
+  platformPostUrl?: string | null;
+};
+
 export type FailureRecord =
   | 'retry_scheduled'
   | 'retry_exhausted'
@@ -65,6 +71,9 @@ export class PublicationLedger {
   claim(request: ClaimRequest): Promise<ClaimedAttempt | null> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
+      // `scheduled` + generation (or version) is the ownership gate. A stale
+      // active_attempt_id (e.g. rollback residue) is overwritten below, which
+      // fences that attempt out of every later CAS write.
       const [claimed] = await tx
         .update(sp)
         .set({
@@ -77,7 +86,6 @@ export class PublicationLedger {
           and(
             eq(sp.id, request.publicationId),
             eq(sp.status, 'scheduled'),
-            isNull(sp.activeAttemptId),
             request.expectedDispatchGeneration === undefined
               ? sameVersion(sp.updatedAt, request.expectedVersion)
               : eq(sp.dispatchGeneration, request.expectedDispatchGeneration),
@@ -198,13 +206,8 @@ export class PublicationLedger {
           ),
         );
 
-      if (published.variantId) {
-        await tx
-          .update(schema.contentVariants)
-          .set({ status: 'published', publishedAt: now, updatedAt: now })
-          .where(eq(schema.contentVariants.id, published.variantId));
-      }
-
+      // Rollups lock content_items before content_variants, the same order as
+      // SchedulingService, so the two paths cannot deadlock.
       const siblings = await tx.query.scheduledPublications.findMany({
         where: eq(sp.contentItemId, published.contentItemId),
         columns: { id: true, status: true },
@@ -220,15 +223,29 @@ export class PublicationLedger {
           .set({ status: 'published', updatedAt: now })
           .where(eq(schema.contentItems.id, published.contentItemId));
       }
+
+      if (published.variantId) {
+        await tx
+          .update(schema.contentVariants)
+          .set({ status: 'published', publishedAt: now, updatedAt: now })
+          .where(eq(schema.contentVariants.id, published.variantId));
+      }
       return true;
     });
   }
 
+  /**
+   * `evidence` (kind `unknown` only) is a provider-confirmed post that could not
+   * be recorded as published. It is merged into the attempt's checkpoint, never
+   * into `publication_results.platform_post_id` (which analytics ingests), and
+   * is kept even when this attempt no longer owns the publication.
+   */
   recordFailure(
     claim: ClaimedAttempt,
     kind: 'retry' | 'terminal' | 'unknown',
     errorClass: ProviderErrorClass,
     message: string,
+    evidence?: ConfirmedPostEvidence,
   ): Promise<FailureRecord> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
@@ -246,6 +263,19 @@ export class PublicationLedger {
         errorType: errorClass,
         errorMessage: message.slice(0, 1500),
       });
+      if (kind === 'unknown' && evidence) {
+        const confirmed = {
+          confirmedPlatformPostId: evidence.platformPostId,
+          confirmedPlatformPostUrl: evidence.platformPostUrl ?? null,
+        };
+        await tx
+          .update(pj)
+          .set({
+            providerCheckpoint: sql`coalesce(${pj.providerCheckpoint}, '{}'::jsonb) || ${JSON.stringify(confirmed)}::jsonb`,
+            updatedAt: now,
+          })
+          .where(eq(pj.id, claim.attemptId));
+      }
 
       if (
         !current ||

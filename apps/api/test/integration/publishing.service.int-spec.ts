@@ -1,4 +1,8 @@
-import { NotFoundException } from '@nestjs/common';
+import {
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as schema from '../../src/db/schema.js';
@@ -386,8 +390,98 @@ describe('PublishingService.execute', () => {
       ).resolves.toMatchObject({ status: 'outcome_unknown' });
       expect((await reload(publication.id)).status).toBe('unknown');
       expect(adapter.calls).toBe(1);
+      expect((await attempts(publication.id))[0].providerCheckpoint).toEqual({
+        confirmedPlatformPostId: 'landed',
+        confirmedPlatformPostUrl: null,
+      });
     },
   );
+
+  it('keeps the confirmed post id and url on the attempt, not in results, when the success write fails', async () => {
+    const adapter = new ScriptedAdapter(async (context) => {
+      await context.beforeSideEffect({
+        operationType: 'test_create_post',
+        data: { step: 'publish' },
+      });
+      return {
+        postId: 'landed-2',
+        url: 'https://x.com/i/web/status/landed-2',
+      };
+    });
+    const { service, ledger } = buildPublishing(database.db, adapter);
+    vi.spyOn(ledger, 'recordSuccess').mockRejectedValueOnce(
+      new Error('db down'),
+    );
+    const logs = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    const publication = await scheduled();
+
+    try {
+      await expect(
+        service.execute(publication.id, request(publication)),
+      ).resolves.toMatchObject({ status: 'outcome_unknown' });
+
+      const [attempt] = await attempts(publication.id);
+      expect(attempt.providerCheckpoint).toEqual({
+        step: 'publish',
+        confirmedPlatformPostId: 'landed-2',
+        confirmedPlatformPostUrl: 'https://x.com/i/web/status/landed-2',
+      });
+      const results = await database.db
+        .select()
+        .from(schema.publicationResults)
+        .where(eq(schema.publicationResults.publicationJobId, attempt.id));
+      expect(results.map((row) => row.platformPostId)).toEqual([null]);
+      const events = logs.mock.calls.map(
+        ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'publication.attempt',
+          publication_id: publication.id,
+          outcome: 'unknown',
+          platform_post_id: 'landed-2',
+        }),
+      );
+    } finally {
+      logs.mockRestore();
+    }
+  });
+
+  it('fails the protocol, not the domain, when a due scheduled publication cannot be claimed', async () => {
+    const adapter = new ScriptedAdapter(async () => ({ postId: 'never' }));
+    const { service, ledger } = buildPublishing(database.db, adapter);
+    const claim = vi.spyOn(ledger, 'claim').mockResolvedValueOnce(null);
+    const errors = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => {});
+    const publication = await scheduled();
+
+    try {
+      await expect(
+        service.execute(publication.id, request(publication)),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+      expect(claim).toHaveBeenCalledTimes(1);
+      expect(adapter.calls).toBe(0);
+      expect(await reload(publication.id)).toMatchObject({
+        status: 'scheduled',
+        dispatchGeneration: publication.dispatchGeneration,
+        activeAttemptId: null,
+      });
+      const events = errors.mock.calls.map(
+        ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+      );
+      expect(events).toEqual([
+        expect.objectContaining({
+          event: 'publication.claim_invariant_violation',
+          publication_id: publication.id,
+          dispatch_generation: publication.dispatchGeneration,
+        }),
+      ]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
 
   it('keeps the published outcome when the audit write rejects', async () => {
     const adapter = new ScriptedAdapter(async (context, self) => {
