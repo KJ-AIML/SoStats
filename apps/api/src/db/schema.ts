@@ -185,6 +185,18 @@ export const workspaceAuditEvents = pgTable(
       table.workspaceId,
       table.action,
     ),
+    workspaceAuditAuthMethodCheck: check(
+      'workspace_audit_auth_method_check',
+      sql`${table.authMethod} in ('jwt', 'development', 'api_key', 'invitation_token', 'system')`,
+    ),
+    workspaceAuditActionCheck: check(
+      'workspace_audit_action_check',
+      sql`length(trim(${table.action})) between 1 and 120`,
+    ),
+    workspaceAuditTargetTypeCheck: check(
+      'workspace_audit_target_type_check',
+      sql`length(trim(${table.targetType})) between 1 and 80`,
+    ),
   }),
 );
 
