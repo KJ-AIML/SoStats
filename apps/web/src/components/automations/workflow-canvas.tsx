@@ -39,6 +39,31 @@ export type WorkflowChannel = {
   accountName?: string | null;
 };
 
+export type WorkflowProvider = {
+  provider: string;
+  capabilities: {
+    text: boolean;
+    images: boolean;
+    video: boolean;
+    carousel: boolean;
+    analytics: boolean;
+    nativeScheduling: boolean;
+  };
+};
+
+export type WorkflowBrand = {
+  id: number;
+  name: string;
+};
+
+function providerLabel(value: string) {
+  if (value.toLowerCase() === "x") return "X";
+  if (value.toLowerCase() === "linkedin") return "LinkedIn";
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 const defaultNodes: Node[] = [
   {
     id: "trigger",
@@ -66,7 +91,7 @@ const defaultNodes: Node[] = [
       config: {
         goal: "Create a weekly educational content campaign",
         audience: "Startup founders and lean marketing teams",
-        channels: ["linkedin"],
+        channels: [],
       },
     },
   },
@@ -112,9 +137,24 @@ const availableNodes = [
 
 export function defaultWorkflowDefinition(
   channels: WorkflowChannel[] = [],
+  providers: WorkflowProvider[] = [],
+  brands: WorkflowBrand[] = [],
 ): WorkflowDefinitionState {
   const nodes = structuredClone(defaultNodes);
+  const generate = nodes.find((node) => node.id === "generate");
   const schedule = nodes.find((node) => node.id === "schedule");
+
+  if (generate) {
+    generate.data = {
+      ...generate.data,
+      config: {
+        ...(generate.data.config as Record<string, unknown>),
+        channels: providers[0] ? [providers[0].provider] : [],
+        brandId: brands[0]?.id,
+      },
+    };
+  }
+
   if (schedule && channels[0]) {
     schedule.data = {
       ...schedule.data,
@@ -130,14 +170,16 @@ export function defaultWorkflowDefinition(
 function safeDefinition(
   value: unknown,
   channels: WorkflowChannel[],
+  providers: WorkflowProvider[],
+  brands: WorkflowBrand[],
 ): WorkflowDefinitionState {
   if (!value || typeof value !== "object") {
-    return defaultWorkflowDefinition(channels);
+    return defaultWorkflowDefinition(channels, providers, brands);
   }
 
   const candidate = value as Partial<WorkflowDefinitionState>;
   if (!Array.isArray(candidate.nodes) || !Array.isArray(candidate.edges)) {
-    return defaultWorkflowDefinition(channels);
+    return defaultWorkflowDefinition(channels, providers, brands);
   }
 
   return {
@@ -150,16 +192,20 @@ export function WorkflowCanvas({
   definition,
   onDefinitionChange,
   channels = [],
+  providers = [],
+  brands = [],
 }: {
   definition?: unknown;
   onDefinitionChange?: (definition: WorkflowDefinitionState) => void;
   channels?: WorkflowChannel[];
+  providers?: WorkflowProvider[];
+  brands?: WorkflowBrand[];
 }) {
   const [nodes, setNodes] = useState<Node[]>(
-    () => safeDefinition(definition, channels).nodes,
+    () => safeDefinition(definition, channels, providers, brands).nodes,
   );
   const [edges, setEdges] = useState<Edge[]>(
-    () => safeDefinition(definition, channels).edges,
+    () => safeDefinition(definition, channels, providers, brands).edges,
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -216,7 +262,16 @@ export function WorkflowCanvas({
                 delayMinutes: 60,
                 spacingMinutes: 60,
               }
-            : {},
+            : type === "generate"
+              ? {
+                  brandId: brands[0]?.id,
+                  channels: providers[0] ? [providers[0].provider] : [],
+                  goal: "",
+                  audience: "",
+                }
+              : type === "analyze"
+                ? { brandId: brands[0]?.id }
+                : {},
       },
     };
 
@@ -522,6 +577,28 @@ export function WorkflowCanvas({
               {selectedType === "generate" && (
                 <>
                   <label>
+                    <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                      Brand Brain
+                    </span>
+                    <select
+                      value={String(config.brandId || "")}
+                      onChange={(event) =>
+                        updateConfig(
+                          "brandId",
+                          event.target.value ? Number(event.target.value) : undefined,
+                        )
+                      }
+                      className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
+                    >
+                      <option value="">Workspace default / no brand</option>
+                      {brands.map((brand) => (
+                        <option key={brand.id} value={brand.id}>
+                          {brand.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
                     <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">Goal</span>
                     <textarea
                       value={String(config.goal || "")}
@@ -538,23 +615,67 @@ export function WorkflowCanvas({
                       className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
                     />
                   </label>
-                  <label>
-                    <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">Channels</span>
-                    <input
-                      value={Array.isArray(config.channels) ? config.channels.join(", ") : String(config.channels || "")}
-                      onChange={(event) =>
-                        updateConfig(
-                          "channels",
-                          event.target.value
-                            .split(",")
-                            .map((value) => value.trim())
-                            .filter(Boolean),
-                        )
-                      }
-                      placeholder="linkedin, x, instagram"
-                      className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
-                    />
-                  </label>
+                  <div>
+                    <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                      Generation providers
+                    </span>
+                    {providers.length ? (
+                      <div className="space-y-2">
+                        {providers.map((provider) => {
+                          const selectedProviders = Array.isArray(config.channels)
+                            ? config.channels.filter(
+                                (value): value is string => typeof value === "string",
+                              )
+                            : [];
+                          const selected = selectedProviders.includes(provider.provider);
+                          return (
+                            <button
+                              key={provider.provider}
+                              type="button"
+                              onClick={() =>
+                                updateConfig(
+                                  "channels",
+                                  selected
+                                    ? selectedProviders.filter(
+                                        (value) => value !== provider.provider,
+                                      )
+                                    : [...selectedProviders, provider.provider],
+                                )
+                              }
+                              className={
+                                selected
+                                  ? "flex w-full items-center gap-2 rounded-xl border border-[#ef2b2d]/20 bg-[#fff7f7] p-2.5 text-left"
+                                  : "flex w-full items-center gap-2 rounded-xl border border-black/[0.06] bg-neutral-50 p-2.5 text-left"
+                              }
+                            >
+                              <span
+                                className={
+                                  selected
+                                    ? "flex h-5 w-5 items-center justify-center rounded-full bg-[#ef2b2d] text-[9px] text-white"
+                                    : "h-5 w-5 rounded-full border border-black/10 bg-white"
+                                }
+                              >
+                                {selected ? "✓" : ""}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[9px] font-semibold">
+                                  {providerLabel(provider.provider)}
+                                </span>
+                                <span className="block text-[8px] text-muted-foreground">
+                                  {provider.capabilities.images ? "text + images" : "text"}
+                                  {provider.capabilities.analytics ? " · analytics" : ""}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="rounded-xl bg-amber-50 p-3 text-[9px] leading-4 text-amber-800">
+                        No text-capable provider adapters are available from the API.
+                      </p>
+                    )}
+                  </div>
                 </>
               )}
 
@@ -610,9 +731,33 @@ export function WorkflowCanvas({
               )}
 
               {selectedType === "analyze" && (
-                <p className="rounded-xl bg-violet-50 p-3 text-[9px] leading-4 text-violet-700">
-                  Analyze uses the workspace&apos;s persisted analytics plus Brand Brain. It fails intentionally when no real metrics exist.
-                </p>
+                <div className="space-y-3">
+                  <label>
+                    <span className="mb-1.5 block text-[9px] font-semibold text-neutral-500">
+                      Brand Brain context
+                    </span>
+                    <select
+                      value={String(config.brandId || "")}
+                      onChange={(event) =>
+                        updateConfig(
+                          "brandId",
+                          event.target.value ? Number(event.target.value) : undefined,
+                        )
+                      }
+                      className="h-9 w-full rounded-xl border border-black/[0.07] bg-neutral-50 px-3 text-[10px] outline-none"
+                    >
+                      <option value="">Workspace default / no brand</option>
+                      {brands.map((brand) => (
+                        <option key={brand.id} value={brand.id}>
+                          {brand.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="rounded-xl bg-violet-50 p-3 text-[9px] leading-4 text-violet-700">
+                    Analyze uses persisted provider metrics plus the selected Brand Brain. It fails intentionally when no real metrics exist.
+                  </p>
+                </div>
               )}
 
               {selectedType === "review" && (
