@@ -118,11 +118,7 @@ export class OutboxService {
       })
       .returning();
 
-    if (event) return event;
-
-    return this.db.query.outboxEvents.findFirst({
-      where: eq(schema.outboxEvents.dedupeKey, dedupeKey),
-    });
+    return event || null;
   }
 
   async claim(limit = 100): Promise<ClaimedOutboxEvent[]> {
@@ -176,10 +172,7 @@ export class OutboxService {
     }
 
     const current = await this.db.query.outboxEvents.findFirst({
-      where: and(
-        eq(schema.outboxEvents.id, id),
-        eq(schema.outboxEvents.leaseToken, leaseToken),
-      ),
+      where: eq(schema.outboxEvents.id, id),
     });
 
     if (!current) throw new NotFoundException('Outbox event not found');
@@ -191,6 +184,7 @@ export class OutboxService {
     }
     if (
       current.status !== 'processing' ||
+      current.leaseToken !== leaseToken ||
       !current.leaseExpiresAt ||
       current.leaseExpiresAt.getTime() <= Date.now()
     ) {
@@ -251,7 +245,13 @@ export class OutboxService {
           lastError: safeError(error),
           updatedAt: new Date(),
         })
-        .where(eq(schema.outboxEvents.id, id));
+        .where(
+          and(
+            eq(schema.outboxEvents.id, id),
+            eq(schema.outboxEvents.leaseToken, leaseToken),
+            eq(schema.outboxEvents.status, 'processing'),
+          ),
+        );
 
       return {
         status: dead ? 'dead' : 'retry_scheduled',
@@ -263,9 +263,7 @@ export class OutboxService {
   }
 
   private async materializeAudit(
-    tx: Parameters<
-      Parameters<PostgresJsDatabase<typeof schema>['transaction']>[0]
-    >[0],
+    tx: OutboxInsertExecutor,
     event: typeof schema.outboxEvents.$inferSelect,
   ) {
     const payload = event.payload || {};
