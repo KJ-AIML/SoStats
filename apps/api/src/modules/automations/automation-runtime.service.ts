@@ -225,11 +225,6 @@ export class AutomationRuntimeService {
       const step = stepMap.get(node.id);
       if (!step || step.status === 'completed') continue;
 
-      if (workflowNodeKind(node) === 'review') {
-        await this.pauseForReview(run, node, order, index);
-        return { status: 'waiting_approval', runId, stepId: node.id };
-      }
-
       if (
         step.status === 'running' &&
         step.leaseExpiresAt &&
@@ -263,6 +258,17 @@ export class AutomationRuntimeService {
       step.leaseExpiresAt = claimedStep.leaseExpiresAt;
       step.attempts = claimedStep.attempts;
       step.updatedAt = claimedStep.updatedAt;
+
+      if (workflowNodeKind(node) === 'review') {
+        await this.pauseForReview(
+          run,
+          node,
+          order,
+          index,
+          claimedStep,
+        );
+        return { status: 'waiting_approval', runId, stepId: node.id };
+      }
 
       try {
         const output = await this.executeNode(
@@ -1038,9 +1044,8 @@ export class AutomationRuntimeService {
     node: WorkflowNode,
     order: WorkflowNode[],
     index: number,
+    step: typeof schema.automationRunSteps.$inferSelect,
   ) {
-    const step = run.steps.find((candidate) => candidate.stepId === node.id);
-    if (!step) throw new NotFoundException('Automation review step not found');
 
     const contentItemIds = this.sourceContentItemIds(
       run.steps,
@@ -1083,7 +1088,16 @@ export class AutomationRuntimeService {
           leaseExpiresAt: null,
           updatedAt: new Date(),
         })
-        .where(eq(schema.automationRunSteps.id, step.id));
+        .where(
+          and(
+            eq(schema.automationRunSteps.id, step.id),
+            eq(
+              schema.automationRunSteps.executionToken,
+              step.executionToken!,
+            ),
+            eq(schema.automationRunSteps.status, 'running'),
+          ),
+        );
 
       await tx
         .update(schema.automationRuns)
