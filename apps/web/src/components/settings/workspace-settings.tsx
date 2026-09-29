@@ -5,9 +5,12 @@ import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
+  Copy,
   KeyRound,
   LoaderCircle,
   LockKeyhole,
+  MailPlus,
+  RefreshCw,
   Save,
   ShieldCheck,
   Trash2,
@@ -33,6 +36,128 @@ export function WorkspaceSettings({
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("member");
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+
+  const createInvitation = async () => {
+    if (!inviteEmail.trim()) {
+      setError("Add an email address before creating an invitation.");
+      return;
+    }
+
+    setBusy("invite-create");
+    setError(null);
+    setMessage(null);
+    setInviteLink(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/invitations`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            email: inviteEmail.trim(),
+            role: inviteRole,
+          }),
+        },
+      );
+      const payload = (await response.json()) as {
+        inviteUrl?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.inviteUrl) {
+        throw new Error(payload.error || "Unable to create invitation");
+      }
+
+      setInviteLink(payload.inviteUrl);
+      setInviteEmail("");
+      setMessage(
+        "Invitation created. Copy the secure link below and send it to the invited person.",
+      );
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to create invitation",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const regenerateInvitation = async (invitationId: number) => {
+    setBusy(`invite-regenerate-${invitationId}`);
+    setError(null);
+    setMessage(null);
+    setInviteLink(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/invitations/${invitationId}/regenerate`,
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as {
+        inviteUrl?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.inviteUrl) {
+        throw new Error(payload.error || "Unable to regenerate invitation");
+      }
+
+      setInviteLink(payload.inviteUrl);
+      setMessage(
+        "A new invitation link was generated. The previous link is now invalid.",
+      );
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to regenerate invitation",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const revokeInvitation = async (invitationId: number) => {
+    setBusy(`invite-revoke-${invitationId}`);
+    setError(null);
+    setMessage(null);
+    setInviteLink(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/invitations/${invitationId}`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to revoke invitation");
+      }
+
+      setMessage("Invitation revoked.");
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to revoke invitation",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setMessage("Invitation link copied to clipboard.");
+    } catch {
+      setError("Clipboard access failed. Copy the invitation link manually.");
+    }
+  };
 
   const saveWorkspace = async () => {
     setBusy("workspace");
@@ -207,6 +332,187 @@ export function WorkspaceSettings({
       </section>
 
       <section className="sostats-card overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-black/[0.055] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <MailPlus className="h-4 w-4 text-[#ef2b2d]" />
+              <p className="text-sm font-semibold">Workspace invitations</p>
+            </div>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Create expiring bearer links. Raw tokens are shown only when created or regenerated and are stored as hashes in the API.
+            </p>
+          </div>
+          <span className="rounded-lg bg-neutral-100 px-2.5 py-1.5 text-[8px] font-semibold text-neutral-500">
+            {initialSettings.invitations.filter((invite) => invite.status === "pending").length} pending
+          </span>
+        </div>
+
+        {initialSettings.permissions.canManageInvitations ? (
+          <div className="border-b border-black/[0.055] p-5">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px_auto]">
+              <Field label="Invite email">
+                <Input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  placeholder="teammate@example.com"
+                  className="rounded-xl"
+                />
+              </Field>
+
+              <Field label="Role">
+                <select
+                  value={inviteRole}
+                  onChange={(event) => setInviteRole(event.target.value)}
+                  className="h-10 w-full rounded-xl border border-black/[0.06] bg-neutral-50 px-3 text-[9px] font-semibold outline-none"
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </Field>
+
+              <div className="flex items-end">
+                <Button
+                  onClick={() => void createInvitation()}
+                  disabled={Boolean(busy) || !inviteEmail.trim()}
+                  className="h-10 w-full rounded-xl bg-[#ef2b2d] px-4 text-[9px] hover:bg-[#da2427] md:w-auto"
+                >
+                  {busy === "invite-create" ? (
+                    <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <MailPlus className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Create invite
+                </Button>
+              </div>
+            </div>
+
+            {inviteLink && (
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-[9px] font-semibold text-emerald-800">
+                  Secure invitation link
+                </p>
+                <p className="mt-1 break-all text-[8px] leading-4 text-emerald-700">
+                  {inviteLink}
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => void copyInviteLink()}
+                  className="mt-3 h-8 rounded-xl border-emerald-200 bg-white text-[8px] text-emerald-800"
+                >
+                  <Copy className="mr-1.5 h-3 w-3" />
+                  Copy link
+                </Button>
+              </div>
+            )}
+
+            <p className="mt-3 text-[8px] leading-4 text-muted-foreground">
+              Email delivery is not implemented yet. SoStats generates the secure lifecycle and link; send the link through a trusted channel. Regenerating a link invalidates the previous token.
+            </p>
+          </div>
+        ) : (
+          <div className="border-b border-black/[0.055] bg-neutral-50 px-5 py-3 text-[9px] text-muted-foreground">
+            Only the workspace owner can create, regenerate or revoke invitations.
+          </div>
+        )}
+
+        <div className="divide-y divide-black/[0.045]">
+          {initialSettings.invitations.length ? (
+            initialSettings.invitations.map((invitation) => {
+              const actionable = ["pending", "expired"].includes(
+                invitation.status,
+              );
+              return (
+                <div
+                  key={invitation.id}
+                  className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_110px_150px_210px]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-[10px] font-semibold">
+                        {invitation.email}
+                      </p>
+                      <span className="rounded-md bg-neutral-100 px-2 py-1 text-[7px] font-semibold capitalize text-neutral-600">
+                        {invitation.role}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[8px] text-muted-foreground">
+                      Invited by {invitation.invitedBy?.name || invitation.invitedBy?.email || "workspace owner"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                      Status
+                    </p>
+                    <p
+                      className={
+                        invitation.status === "pending"
+                          ? "mt-1 text-[8px] font-semibold text-blue-700"
+                          : invitation.status === "accepted"
+                            ? "mt-1 text-[8px] font-semibold text-emerald-700"
+                            : "mt-1 text-[8px] font-semibold capitalize text-neutral-500"
+                      }
+                    >
+                      {invitation.status}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                      Expires
+                    </p>
+                    <p className="mt-1 text-[8px] font-semibold text-neutral-600">
+                      {new Intl.DateTimeFormat("en", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      }).format(new Date(invitation.expiresAt))}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2">
+                    {initialSettings.permissions.canManageInvitations &&
+                      actionable && (
+                        <>
+                          <Button
+                            variant="outline"
+                            disabled={Boolean(busy)}
+                            onClick={() =>
+                              void regenerateInvitation(invitation.id)
+                            }
+                            className="h-8 rounded-xl text-[8px]"
+                          >
+                            {busy ===
+                            `invite-regenerate-${invitation.id}` ? (
+                              <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="mr-1.5 h-3 w-3" />
+                            )}
+                            New link
+                          </Button>
+                          <Button
+                            variant="outline"
+                            disabled={Boolean(busy)}
+                            onClick={() => void revokeInvitation(invitation.id)}
+                            className="h-8 rounded-xl border-red-100 text-[8px] text-red-700"
+                          >
+                            Revoke
+                          </Button>
+                        </>
+                      )}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="px-5 py-8 text-center text-[9px] text-muted-foreground">
+              No workspace invitations yet.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="sostats-card overflow-hidden">
         <div className="flex items-center justify-between gap-3 border-b border-black/[0.055] px-5 py-4">
           <div>
             <div className="flex items-center gap-2">
@@ -334,7 +640,7 @@ export function WorkspaceSettings({
         </div>
 
         <div className="border-t border-black/[0.055] bg-neutral-50 px-5 py-3 text-[9px] leading-4 text-muted-foreground">
-          Invitations are intentionally not shown as an action because the current data model has no invitation lifecycle. Members shown here already have persisted user + workspace membership records.
+          Accepted invitations become persisted workspace membership. Ownership transfer remains a separate lifecycle and is not implied by invitations.
         </div>
       </section>
 
@@ -422,7 +728,12 @@ export function WorkspaceSettings({
               [
                 "Invitations",
                 initialSettings.productCapabilities.invitations,
-                "No invitation lifecycle table/service yet",
+                "Expiring hashed bearer tokens + accept/reject + membership creation",
+              ],
+              [
+                "Invitation email delivery",
+                initialSettings.productCapabilities.invitationEmailDelivery,
+                "Secure links exist; automated email delivery is not implemented yet",
               ],
               [
                 "API keys",
@@ -485,7 +796,7 @@ export function WorkspaceSettings({
           <div>
             <p className="text-[10px] font-semibold">Administrative boundary</p>
             <p className="mt-1 max-w-4xl text-[9px] leading-5 text-muted-foreground">
-              This Stage 12 surface completes the settings UX over capabilities SoStats already owns. Invitations, API-key lifecycle, notifications, immutable audit logs and ownership transfer belong to the later identity/hardening stage and are deliberately represented as unavailable rather than simulated.
+              Identity/Admin is now extending this surface with real invitation lifecycle state. API-key lifecycle, notification preferences, immutable audit logs and ownership transfer remain later slices and stay unavailable rather than simulated.
             </p>
           </div>
         </div>

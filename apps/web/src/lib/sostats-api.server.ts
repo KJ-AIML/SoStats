@@ -19,11 +19,31 @@ export type WorkspaceRecord = {
   role?: string;
 };
 
+export type WorkspaceInvitationRecord = {
+  id: number;
+  workspaceId: number;
+  email: string;
+  role: string;
+  status: "pending" | "accepted" | "rejected" | "revoked" | "expired" | string;
+  invitedBy?: {
+    id: number;
+    name?: string | null;
+    email: string;
+  } | null;
+  expiresAt: string;
+  acceptedAt?: string | null;
+  rejectedAt?: string | null;
+  revokedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type WorkspaceSettingsRecord = {
   workspace: WorkspaceRecord & {
     createdAt?: string;
     updatedAt?: string;
   };
+  invitations: WorkspaceInvitationRecord[];
   members: Array<{
     id: number;
     userId: number;
@@ -37,6 +57,7 @@ export type WorkspaceSettingsRecord = {
   permissions: {
     canManageWorkspace: boolean;
     canManageMembers: boolean;
+    canManageInvitations: boolean;
     canDeleteWorkspace: boolean;
   };
   security: {
@@ -50,6 +71,7 @@ export type WorkspaceSettingsRecord = {
     teamRoles: boolean;
     workspaceTimezone: boolean;
     invitations: boolean;
+    invitationEmailDelivery: boolean;
     apiKeys: boolean;
     notificationPreferences: boolean;
     auditLog: boolean;

@@ -11,10 +11,14 @@ import {
 import { CurrentUser } from '../../common/auth/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../common/auth/auth.types.js';
 import { WorkspacesService } from './workspaces.service.js';
+import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
 
 @Controller('workspaces')
 export class WorkspacesController {
-  constructor(private readonly workspacesService: WorkspacesService) {}
+  constructor(
+    private readonly workspacesService: WorkspacesService,
+    private readonly invitationsService: WorkspaceInvitationsService,
+  ) {}
 
   @Post()
   create(@Body('name') name: string, @CurrentUser() user: AuthenticatedUser) {
@@ -41,6 +45,37 @@ export class WorkspacesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.workspacesService.updateSettings(id, user.id, body);
+  }
+
+  @Post(':id/invitations')
+  createInvitation(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { email?: string; role?: string },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.invitationsService.create(id, user.id, body);
+  }
+
+  @Post(':id/invitations/:invitationId/regenerate')
+  regenerateInvitation(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('invitationId', ParseIntPipe) invitationId: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.invitationsService.regenerate(
+      id,
+      user.id,
+      invitationId,
+    );
+  }
+
+  @Delete(':id/invitations/:invitationId')
+  revokeInvitation(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('invitationId', ParseIntPipe) invitationId: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.invitationsService.revoke(id, user.id, invitationId);
   }
 
   @Put(':id/members/:memberId/role')
