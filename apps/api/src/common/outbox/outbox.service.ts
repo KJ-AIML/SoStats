@@ -19,7 +19,10 @@ export type OutboxEnqueueInput = {
   availableAt?: Date;
 };
 
-type InsertExecutor = Pick<PostgresJsDatabase<typeof schema>, 'insert'>;
+export type OutboxInsertExecutor = Pick<
+  PostgresJsDatabase<typeof schema>,
+  'insert'
+>;
 
 export type ClaimedOutboxEvent = {
   id: number;
@@ -95,7 +98,7 @@ export class OutboxService {
   ) {}
 
   async enqueue(
-    executor: InsertExecutor,
+    executor: OutboxInsertExecutor,
     input: OutboxEnqueueInput,
   ) {
     const dedupeKey = input.dedupeKey.trim().slice(0, 255);
