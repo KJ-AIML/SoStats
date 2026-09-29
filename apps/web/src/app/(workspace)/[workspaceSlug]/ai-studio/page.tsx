@@ -184,14 +184,14 @@ export default function AiStudioPage() {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [activeTab, setActiveTab] = useState<StudioTab>("strategy");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isLoadingState, setIsLoadingState] = useState(true);
+  const [loadedWorkspaceSlug, setLoadedWorkspaceSlug] = useState<string | null>(
+    null,
+  );
   const [stateError, setStateError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    setIsLoadingState(true);
-    setStateError(null);
 
     fetch(`/api/workspaces/${encodeURIComponent(workspaceSlug)}/state`)
       .then(async (response) => {
@@ -203,6 +203,7 @@ export default function AiStudioPage() {
       .then((state) => {
         if (!active) return;
 
+        setStateError(null);
         const nextBrands = state.brands || [];
         const nextProviders = state.providers || [];
         setBrands(nextBrands);
@@ -235,13 +236,15 @@ export default function AiStudioPage() {
         );
       })
       .finally(() => {
-        if (active) setIsLoadingState(false);
+        if (active) setLoadedWorkspaceSlug(workspaceSlug);
       });
 
     return () => {
       active = false;
     };
   }, [workspaceSlug]);
+
+  const isLoadingState = loadedWorkspaceSlug !== workspaceSlug;
 
   const selectedBrand = useMemo(
     () => brands.find((brand) => brand.id === brandId) || null,
