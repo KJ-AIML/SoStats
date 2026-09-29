@@ -16,6 +16,7 @@ import {
   type WorkspaceRole,
 } from '../../common/workspace/workspace-access.service.js';
 import { WorkspaceInvitationsService } from './workspace-invitations.service.js';
+import { ApiKeyService } from '../../common/auth/api-key.service.js';
 
 function slugify(name: string) {
   const base = name
@@ -51,6 +52,7 @@ export class WorkspacesService {
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly access: WorkspaceAccessService,
     private readonly invitations: WorkspaceInvitationsService,
+    private readonly apiKeys: ApiKeyService,
   ) {}
 
   async create(name: string, userId: number) {
@@ -112,6 +114,10 @@ export class WorkspacesService {
       membership.role === 'owner'
         ? await this.invitations.listForWorkspace(id, userId)
         : [];
+    const apiKeys =
+      membership.role === 'owner'
+        ? await this.apiKeys.listForWorkspace(id, userId)
+        : [];
 
     return {
       workspace: {
@@ -123,6 +129,7 @@ export class WorkspacesService {
         createdAt: workspace.createdAt,
         updatedAt: workspace.updatedAt,
       },
+      apiKeys,
       members: workspace.members.map((member) => ({
         id: member.id,
         userId: member.userId,
@@ -138,6 +145,7 @@ export class WorkspacesService {
         canManageWorkspace: ['owner', 'admin'].includes(membership.role),
         canManageMembers: membership.role === 'owner',
         canManageInvitations: membership.role === 'owner',
+        canManageApiKeys: membership.role === 'owner',
         canTransferOwnership: membership.role === 'owner',
         canDeleteWorkspace: membership.role === 'owner',
       },
@@ -159,7 +167,7 @@ export class WorkspacesService {
         workspaceTimezone: true,
         invitations: true,
         invitationEmailDelivery: false,
-        apiKeys: false,
+        apiKeys: true,
         notificationPreferences: false,
         auditLog: false,
         ownershipTransfer: true,
