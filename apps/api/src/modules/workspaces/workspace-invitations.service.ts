@@ -223,45 +223,60 @@ export class WorkspaceInvitationsService {
   ) {
     await this.access.requireMembership(actorUserId, workspaceId, ['owner']);
 
-    const current = await this.db.query.workspaceInvitations.findFirst({
-      where: and(
-        eq(schema.workspaceInvitations.id, invitationId),
-        eq(schema.workspaceInvitations.workspaceId, workspaceId),
-      ),
-    });
-    if (!current) throw new NotFoundException('Invitation not found');
-
-    const effective = this.effectiveStatus(current);
-    if (!['pending', 'expired'].includes(effective)) {
-      throw new ConflictException(
-        'Only pending or expired invitations can regenerate a link',
-      );
-    }
-
     const token = newToken();
-    const [updated] = await this.db
-      .update(schema.workspaceInvitations)
-      .set({
-        tokenHash: tokenHash(token),
-        status: 'pending',
-        invitedByUserId: actorUserId,
-        expiresAt: new Date(Date.now() + inviteTtlMs()),
-        acceptedByUserId: null,
-        acceptedAt: null,
-        rejectedAt: null,
-        revokedAt: null,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
+    const outcome = await this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(${workspaceId}, ${invitationId})`,
+      );
+
+      const current = await tx.query.workspaceInvitations.findFirst({
+        where: and(
           eq(schema.workspaceInvitations.id, invitationId),
           eq(schema.workspaceInvitations.workspaceId, workspaceId),
         ),
-      )
-      .returning();
+      });
+      if (!current) return { status: 'not_found' as const };
+
+      const effective = this.effectiveStatus(current);
+      if (!['pending', 'expired'].includes(effective)) {
+        return { status: 'not_actionable' as const, effective };
+      }
+
+      const [updated] = await tx
+        .update(schema.workspaceInvitations)
+        .set({
+          tokenHash: tokenHash(token),
+          status: 'pending',
+          invitedByUserId: actorUserId,
+          expiresAt: new Date(Date.now() + inviteTtlMs()),
+          acceptedByUserId: null,
+          acceptedAt: null,
+          rejectedAt: null,
+          revokedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.workspaceInvitations.id, invitationId),
+            eq(schema.workspaceInvitations.workspaceId, workspaceId),
+          ),
+        )
+        .returning();
+
+      return { status: 'updated' as const, invitation: updated };
+    });
+
+    if (outcome.status === 'not_found') {
+      throw new NotFoundException('Invitation not found');
+    }
+    if (outcome.status === 'not_actionable') {
+      throw new ConflictException(
+        `Invitation is ${outcome.effective} and cannot regenerate a link`,
+      );
+    }
 
     return {
-      invitation: this.serialize(updated),
+      invitation: this.serialize(outcome.invitation),
       token,
     };
   }
@@ -273,37 +288,52 @@ export class WorkspaceInvitationsService {
   ) {
     await this.access.requireMembership(actorUserId, workspaceId, ['owner']);
 
-    const current = await this.db.query.workspaceInvitations.findFirst({
-      where: and(
-        eq(schema.workspaceInvitations.id, invitationId),
-        eq(schema.workspaceInvitations.workspaceId, workspaceId),
-      ),
-    });
-    if (!current) throw new NotFoundException('Invitation not found');
-
-    const effective = this.effectiveStatus(current);
-    if (!['pending', 'expired'].includes(effective)) {
-      throw new ConflictException(
-        'Only pending or expired invitations can be revoked',
+    const outcome = await this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(${workspaceId}, ${invitationId})`,
       );
-    }
 
-    const [updated] = await this.db
-      .update(schema.workspaceInvitations)
-      .set({
-        status: 'revoked',
-        revokedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
+      const current = await tx.query.workspaceInvitations.findFirst({
+        where: and(
           eq(schema.workspaceInvitations.id, invitationId),
           eq(schema.workspaceInvitations.workspaceId, workspaceId),
         ),
-      )
-      .returning();
+      });
+      if (!current) return { status: 'not_found' as const };
 
-    return this.serialize(updated);
+      const effective = this.effectiveStatus(current);
+      if (!['pending', 'expired'].includes(effective)) {
+        return { status: 'not_actionable' as const, effective };
+      }
+
+      const [updated] = await tx
+        .update(schema.workspaceInvitations)
+        .set({
+          status: 'revoked',
+          revokedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.workspaceInvitations.id, invitationId),
+            eq(schema.workspaceInvitations.workspaceId, workspaceId),
+          ),
+        )
+        .returning();
+
+      return { status: 'updated' as const, invitation: updated };
+    });
+
+    if (outcome.status === 'not_found') {
+      throw new NotFoundException('Invitation not found');
+    }
+    if (outcome.status === 'not_actionable') {
+      throw new ConflictException(
+        `Invitation is ${outcome.effective} and cannot be revoked`,
+      );
+    }
+
+    return this.serialize(outcome.invitation);
   }
 
   async inspect(token: string) {
