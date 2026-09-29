@@ -41,6 +41,11 @@ export function WorkspaceSettings({
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [apiKeyName, setApiKeyName] = useState("");
+  const [apiKeyRead, setApiKeyRead] = useState(true);
+  const [apiKeyWrite, setApiKeyWrite] = useState(false);
+  const [apiKeyExpiry, setApiKeyExpiry] = useState("90");
+  const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
 
   const createInvitation = async () => {
     if (!inviteEmail.trim()) {
@@ -158,6 +163,141 @@ export function WorkspaceSettings({
       setMessage("Invitation link copied to clipboard.");
     } catch {
       setError("Clipboard access failed. Copy the invitation link manually.");
+    }
+  };
+
+  const createApiKey = async () => {
+    const scopes = [
+      ...(apiKeyRead ? ["workspace:read"] : []),
+      ...(apiKeyWrite ? ["workspace:write"] : []),
+    ];
+
+    if (!apiKeyName.trim()) {
+      setError("Add a name before creating an API key.");
+      return;
+    }
+    if (!scopes.length) {
+      setError("Select at least one API key scope.");
+      return;
+    }
+
+    setBusy("api-key-create");
+    setError(null);
+    setMessage(null);
+    setRevealedApiKey(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/api-keys`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: apiKeyName.trim(),
+            scopes,
+            expiresInDays: Number(apiKeyExpiry),
+          }),
+        },
+      );
+      const payload = (await response.json()) as {
+        token?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.token) {
+        throw new Error(payload.error || "Unable to create API key");
+      }
+
+      setRevealedApiKey(payload.token);
+      setApiKeyName("");
+      setMessage(
+        "API key created. Copy it now — the raw secret will not be shown again.",
+      );
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to create API key",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rotateApiKey = async (keyId: number) => {
+    setBusy(`api-key-rotate-${keyId}`);
+    setError(null);
+    setMessage(null);
+    setRevealedApiKey(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/api-keys/${keyId}/rotate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            expiresInDays: Number(apiKeyExpiry),
+          }),
+        },
+      );
+      const payload = (await response.json()) as {
+        token?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.token) {
+        throw new Error(payload.error || "Unable to rotate API key");
+      }
+
+      setRevealedApiKey(payload.token);
+      setMessage(
+        "API key rotated. The previous token is invalid; copy the new token now.",
+      );
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to rotate API key",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const revokeApiKey = async (keyId: number) => {
+    setBusy(`api-key-revoke-${keyId}`);
+    setError(null);
+    setMessage(null);
+    setRevealedApiKey(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/api-keys/${keyId}`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to revoke API key");
+      }
+
+      setMessage("API key revoked.");
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to revoke API key",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const copyApiKey = async () => {
+    if (!revealedApiKey) return;
+    try {
+      await navigator.clipboard.writeText(revealedApiKey);
+      setMessage("API key copied to clipboard.");
+    } catch {
+      setError("Clipboard access failed. Copy the API key manually.");
     }
   };
 
@@ -552,6 +692,206 @@ export function WorkspaceSettings({
       </section>
 
       <section className="sostats-card overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-black/[0.055] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-[#ef2b2d]" />
+              <p className="text-sm font-semibold">Workspace API keys</p>
+            </div>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Owner-managed credentials for workspace-scoped API access. Secrets are shown only on create or rotate and stored as hashes.
+            </p>
+          </div>
+          <span className="rounded-lg bg-neutral-100 px-2.5 py-1.5 text-[8px] font-semibold text-neutral-500">
+            {initialSettings.apiKeys.filter((key) => key.status === "active").length} active
+          </span>
+        </div>
+
+        {initialSettings.permissions.canManageApiKeys ? (
+          <div className="border-b border-black/[0.055] p-5">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px_minmax(240px,1fr)_auto]">
+              <Field label="Key name">
+                <Input
+                  value={apiKeyName}
+                  onChange={(event) => setApiKeyName(event.target.value)}
+                  placeholder="Reporting integration"
+                  className="rounded-xl"
+                />
+              </Field>
+
+              <Field label="Expiry">
+                <select
+                  value={apiKeyExpiry}
+                  onChange={(event) => setApiKeyExpiry(event.target.value)}
+                  className="h-10 w-full rounded-xl border border-black/[0.06] bg-neutral-50 px-3 text-[9px] font-semibold outline-none"
+                >
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="180">180 days</option>
+                  <option value="365">365 days</option>
+                </select>
+              </Field>
+
+              <Field label="Scopes">
+                <div className="flex min-h-10 flex-wrap items-center gap-4 rounded-xl border border-black/[0.06] bg-neutral-50 px-3 py-2">
+                  <label className="flex items-center gap-2 text-[8px] font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={apiKeyRead}
+                      onChange={(event) => setApiKeyRead(event.target.checked)}
+                    />
+                    workspace:read
+                  </label>
+                  <label className="flex items-center gap-2 text-[8px] font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={apiKeyWrite}
+                      onChange={(event) => setApiKeyWrite(event.target.checked)}
+                    />
+                    workspace:write
+                  </label>
+                </div>
+              </Field>
+
+              <div className="flex items-end">
+                <Button
+                  onClick={() => void createApiKey()}
+                  disabled={Boolean(busy) || !apiKeyName.trim()}
+                  className="h-10 w-full rounded-xl bg-[#ef2b2d] px-4 text-[9px] hover:bg-[#da2427] lg:w-auto"
+                >
+                  {busy === "api-key-create" ? (
+                    <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <KeyRound className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Create key
+                </Button>
+              </div>
+            </div>
+
+            {revealedApiKey && (
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-[9px] font-semibold text-amber-900">
+                  Copy this secret now
+                </p>
+                <p className="mt-1 break-all font-mono text-[8px] leading-4 text-amber-800">
+                  {revealedApiKey}
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => void copyApiKey()}
+                  className="mt-3 h-8 rounded-xl border-amber-200 bg-white text-[8px] text-amber-900"
+                >
+                  <Copy className="mr-1.5 h-3 w-3" />
+                  Copy API key
+                </Button>
+              </div>
+            )}
+
+            <p className="mt-3 text-[8px] leading-4 text-muted-foreground">
+              API keys work only on workspace-scoped endpoints with the matching x-workspace-id header. Read and write permissions are enforced independently.
+            </p>
+          </div>
+        ) : (
+          <div className="border-b border-black/[0.055] bg-neutral-50 px-5 py-3 text-[9px] text-muted-foreground">
+            Only the workspace owner can create, rotate or revoke API keys.
+          </div>
+        )}
+
+        <div className="divide-y divide-black/[0.045]">
+          {initialSettings.apiKeys.length ? (
+            initialSettings.apiKeys.map((key) => (
+              <div
+                key={key.id}
+                className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_170px_160px_220px]"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-[10px] font-semibold">
+                      {key.name}
+                    </p>
+                    <span
+                      className={
+                        key.status === "active"
+                          ? "rounded-md bg-emerald-50 px-2 py-1 text-[7px] font-semibold text-emerald-700"
+                          : "rounded-md bg-neutral-100 px-2 py-1 text-[7px] font-semibold capitalize text-neutral-500"
+                      }
+                    >
+                      {key.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate font-mono text-[8px] text-muted-foreground">
+                    {key.displayPrefix}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {key.scopes.map((scope) => (
+                      <span
+                        key={scope}
+                        className="rounded-md bg-blue-50 px-2 py-1 text-[7px] font-semibold text-blue-700"
+                      >
+                        {scope}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                    Expires
+                  </p>
+                  <p className="mt-1 text-[8px] font-semibold text-neutral-600">
+                    {formatSettingDate(key.expiresAt)}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                    Last used
+                  </p>
+                  <p className="mt-1 text-[8px] font-semibold text-neutral-600">
+                    {key.lastUsedAt ? formatSettingDate(key.lastUsedAt) : "Never"}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  {initialSettings.permissions.canManageApiKeys &&
+                    key.status !== "revoked" && (
+                      <>
+                        <Button
+                          variant="outline"
+                          disabled={Boolean(busy)}
+                          onClick={() => void rotateApiKey(key.id)}
+                          className="h-8 rounded-xl text-[8px]"
+                        >
+                          {busy === `api-key-rotate-${key.id}` ? (
+                            <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />
+                          ) : (
+                            <RefreshCw className="mr-1.5 h-3 w-3" />
+                          )}
+                          Rotate
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={Boolean(busy)}
+                          onClick={() => void revokeApiKey(key.id)}
+                          className="h-8 rounded-xl border-red-100 text-[8px] text-red-700"
+                        >
+                          Revoke
+                        </Button>
+                      </>
+                    )}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="px-5 py-8 text-center text-[9px] text-muted-foreground">
+              No workspace API keys yet.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="sostats-card overflow-hidden">
         <div className="flex items-center justify-between gap-3 border-b border-black/[0.055] px-5 py-4">
           <div>
             <div className="flex items-center gap-2">
@@ -823,7 +1163,7 @@ export function WorkspaceSettings({
               [
                 "API keys",
                 initialSettings.productCapabilities.apiKeys,
-                "Bearer auth exists; user-managed API key lifecycle does not",
+                "Generate-once secret, hash-only storage, scoped auth, expiry, last-used, rotate/revoke",
               ],
               [
                 "Notification preferences",
@@ -888,6 +1228,13 @@ export function WorkspaceSettings({
       </section>
     </div>
   );
+}
+
+function formatSettingDate(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function Field({
