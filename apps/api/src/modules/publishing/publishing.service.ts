@@ -566,6 +566,29 @@ export class PublishingService {
     }
 
     if (publication.status === 'publishing') {
+      const activeJob = [...publication.jobs].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      )[0];
+
+      if (activeJob?.executionPhase === 'provider_confirmed') {
+        const success = activeJob.results.find(
+          (result) => Boolean(result.platformPostId),
+        );
+        if (success?.platformPostId) {
+          await this.finalizeProviderConfirmed(
+            publication,
+            activeJob.id,
+            success,
+          );
+          return {
+            status: 'published',
+            scheduledPublicationId,
+            platformPostId: success.platformPostId,
+            platformPostUrl: success.platformPostUrl,
+          };
+        }
+      }
+
       return { status: 'in_progress', scheduledPublicationId };
     }
 
@@ -573,22 +596,12 @@ export class PublishingService {
       throw new ConflictException('Scheduled publication is not due yet');
     }
 
-    const [claimed] = await this.db
-      .update(schema.scheduledPublications)
-      .set({ status: 'publishing' })
-      .where(
-        and(
-          eq(schema.scheduledPublications.id, scheduledPublicationId),
-          eq(schema.scheduledPublications.status, 'scheduled'),
-          eq(
-            schema.scheduledPublications.updatedAt,
-            new Date(expectedVersion),
-          ),
-        ),
-      )
-      .returning();
+    const job = await this.claimExecution(
+      scheduledPublicationId,
+      expectedVersion,
+    );
 
-    if (!claimed) {
+    if (!job) {
       const current = await this.getPublication(scheduledPublicationId);
       if (current.status === 'published') {
         return { status: 'already_published', scheduledPublicationId };
@@ -599,119 +612,29 @@ export class PublishingService {
       return { status: 'in_progress', scheduledPublicationId };
     }
 
-    const job = await this.beginAttempt(scheduledPublicationId);
+    const account = publication.socialAccount;
+    const adapter = this.providerRegistry.getProvider(account.provider);
+
+    let accessToken: string;
+    let content: string;
+    let media: Awaited<
+      ReturnType<MediaService['getProviderPublishMedia']>
+    >;
 
     try {
-      const account = publication.socialAccount;
-      const adapter = this.providerRegistry.getProvider(account.provider);
-      const accessToken = await this.credentials.getValidAccessToken(
+      accessToken = await this.credentials.getValidAccessToken(
         account,
         adapter,
       );
-
-      const content =
+      content =
         publication.variant?.content ||
         publication.contentItem.description ||
         publication.contentItem.title;
-      const media = await this.mediaService.getProviderPublishMedia(
+      media = await this.mediaService.getProviderPublishMedia(
         publication.workspaceId,
         publication.contentItemId,
         publication.variantId || undefined,
       );
-
-      const result = await adapter.publishPost(
-        content,
-        accessToken,
-        {
-          providerAccountId: account.providerAccountId,
-          media,
-        },
-      );
-
-      await this.db.transaction(async (tx) => {
-        await tx.insert(schema.publicationResults).values({
-          publicationJobId: job.id,
-          platformPostId: result.postId,
-          platformPostUrl: result.url,
-        });
-
-        await tx
-          .update(schema.publicationJobs)
-          .set({
-            status: 'completed',
-            nextAttemptAt: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.publicationJobs.id, job.id));
-
-        await tx
-          .update(schema.scheduledPublications)
-          .set({ status: 'published', updatedAt: new Date() })
-          .where(
-            eq(
-              schema.scheduledPublications.id,
-              scheduledPublicationId,
-            ),
-          );
-
-        if (publication.variantId) {
-          await tx
-            .update(schema.contentVariants)
-            .set({
-              status: 'published',
-              publishedAt: new Date(),
-              updatedAt: new Date(),
-            })
-            .where(eq(schema.contentVariants.id, publication.variantId));
-        }
-
-        const siblings = await tx.query.scheduledPublications.findMany({
-          where: eq(
-            schema.scheduledPublications.contentItemId,
-            publication.contentItemId,
-          ),
-        });
-
-        const allTerminallyPublished = siblings.every((sibling) =>
-          sibling.id === scheduledPublicationId
-            ? true
-            : ['published', 'cancelled'].includes(sibling.status),
-        );
-
-        if (allTerminallyPublished) {
-          await tx
-            .update(schema.contentItems)
-            .set({ status: 'published', updatedAt: new Date() })
-            .where(eq(schema.contentItems.id, publication.contentItemId));
-        }
-      });
-
-      await this.audit.record({
-        workspaceId: publication.workspaceId,
-        actor: {
-          userId: null,
-          email: null,
-          authMethod: 'system',
-        },
-        action: 'publication.published',
-        targetType: 'scheduled_publication',
-        targetId: scheduledPublicationId,
-        metadata: {
-          contentItemId: publication.contentItemId,
-          variantId: publication.variantId,
-          socialAccountId: publication.socialAccountId,
-          provider: account.provider,
-          platformPostId: result.postId,
-          platformPostUrl: result.url,
-        },
-      });
-
-      return {
-        status: 'published',
-        scheduledPublicationId,
-        platformPostId: result.postId,
-        platformPostUrl: result.url,
-      };
     } catch (error) {
       const providerError =
         error instanceof ProviderPublishError ? error : undefined;
@@ -719,44 +642,96 @@ export class PublishingService {
         !providerError ||
         providerError.outcomeUnknown ||
         !providerError.retryable;
-
       const failure = await this.recordFailure(
-        scheduledPublicationId,
+        publication,
         job.id,
         error,
         terminal,
       );
 
       if (terminal) {
-        await this.audit.record({
-          workspaceId: publication.workspaceId,
-          actor: {
-            userId: null,
-            email: null,
-            authMethod: 'system',
-          },
-          action: 'publication.failed',
-          targetType: 'scheduled_publication',
-          targetId: scheduledPublicationId,
-          metadata: {
-            contentItemId: publication.contentItemId,
-            variantId: publication.variantId,
-            socialAccountId: publication.socialAccountId,
-            provider: publication.socialAccount.provider,
-            jobId: job.id,
-            errorType: failure.errorType,
-          },
-        });
-
         return {
           status: 'failed_terminal',
           scheduledPublicationId,
           reason: failure.message,
         };
       }
-
       throw new ServiceUnavailableException(failure.message);
     }
+
+    const requestStarted = await this.markProviderRequestStarted(
+      job.id,
+      job.executionToken!,
+    );
+    if (!requestStarted) {
+      return { status: 'in_progress', scheduledPublicationId };
+    }
+
+    let providerResult: { postId: string; url?: string };
+    try {
+      providerResult = await adapter.publishPost(
+        content,
+        accessToken,
+        {
+          providerAccountId: account.providerAccountId,
+          media,
+        },
+      );
+    } catch (error) {
+      const providerError =
+        error instanceof ProviderPublishError ? error : undefined;
+      const terminal =
+        !providerError ||
+        providerError.outcomeUnknown ||
+        !providerError.retryable;
+      const failure = await this.recordFailure(
+        publication,
+        job.id,
+        error,
+        terminal,
+      );
+
+      if (terminal) {
+        return {
+          status: 'failed_terminal',
+          scheduledPublicationId,
+          reason: failure.message,
+        };
+      }
+      throw new ServiceUnavailableException(failure.message);
+    }
+
+    let checkpoint: typeof schema.publicationResults.$inferSelect;
+    try {
+      checkpoint = await this.checkpointProviderSuccess(
+        job.id,
+        job.executionToken!,
+        providerResult,
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'checkpoint persistence failed';
+      throw new ServiceUnavailableException(
+        `Provider confirmed publication, but SoStats could not persist the provider checkpoint: ${message}. Automatic re-publish is blocked; recovery will not call the provider again without a confirmed checkpoint.`,
+      );
+    }
+
+    try {
+      await this.finalizeProviderConfirmed(publication, job.id, checkpoint);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'finalization failed';
+      throw new ServiceUnavailableException(
+        `Provider confirmation is safely checkpointed, but publication finalization failed: ${message}`,
+      );
+    }
+
+    return {
+      status: 'published',
+      scheduledPublicationId,
+      platformPostId: checkpoint.platformPostId,
+      platformPostUrl: checkpoint.platformPostUrl,
+    };
   }
 
   async deadLetter(
@@ -776,9 +751,50 @@ export class PublishingService {
       };
     }
 
-    const latestJob = publication.jobs.sort(
+    const latestJob = [...publication.jobs].sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
     )[0];
+
+    if (latestJob?.executionPhase === 'provider_confirmed') {
+      const success = latestJob.results.find(
+        (result) => Boolean(result.platformPostId),
+      );
+      if (success?.platformPostId) {
+        await this.finalizeProviderConfirmed(
+          publication,
+          latestJob.id,
+          success,
+        );
+        return {
+          status: 'published',
+          scheduledPublicationId,
+          platformPostId: success.platformPostId,
+          platformPostUrl: success.platformPostUrl,
+        };
+      }
+    }
+
+    if (latestJob?.executionPhase === 'provider_request_started') {
+      const failure = await this.recordFailure(
+        publication,
+        latestJob.id,
+        new ProviderPublishError(
+          'Publishing worker retries exhausted after the provider request started without a durable provider confirmation. Automatic retry was stopped to avoid a duplicate post.',
+          { outcomeUnknown: true },
+        ),
+        true,
+      );
+      return {
+        status: 'failed',
+        scheduledPublicationId,
+        reason: failure.message,
+      };
+    }
+
+    const message = (reason || 'Publishing queue retries exhausted').slice(
+      0,
+      1500,
+    );
 
     await this.db.transaction(async (tx) => {
       await tx
@@ -791,42 +807,58 @@ export class PublishingService {
           .update(schema.publicationJobs)
           .set({
             status: 'failed',
+            executionPhase: 'terminal',
+            executionToken: null,
+            leaseExpiresAt: null,
             nextAttemptAt: null,
             updatedAt: new Date(),
           })
           .where(eq(schema.publicationJobs.id, latestJob.id));
 
-        if (reason) {
-          await tx.insert(schema.publicationResults).values({
-            publicationJobId: latestJob.id,
-            errorType: 'retry_exhausted',
-            errorMessage: reason.slice(0, 1500),
-          });
-        }
+        await tx.insert(schema.publicationResults).values({
+          publicationJobId: latestJob.id,
+          errorType: 'retry_exhausted',
+          errorMessage: message,
+        });
       }
+
+      await this.audit.enqueue(
+        tx,
+        {
+          workspaceId: publication.workspaceId,
+          actor: {
+            userId: null,
+            email: null,
+            authMethod: 'system',
+          },
+          action: 'publication.failed',
+          targetType: 'scheduled_publication',
+          targetId: scheduledPublicationId,
+          metadata: {
+            contentItemId: publication.contentItemId,
+            variantId: publication.variantId,
+            socialAccountId: publication.socialAccountId,
+            provider: publication.socialAccount.provider,
+            jobId: latestJob?.id,
+            errorType: 'retry_exhausted',
+            hasReason: Boolean(reason),
+          },
+        },
+        [
+          'audit',
+          'publication.failed',
+          scheduledPublicationId,
+          latestJob?.id || 'none',
+          'retry_exhausted',
+        ].join(':'),
+      );
     });
 
-    await this.audit.record({
-      workspaceId: publication.workspaceId,
-      actor: {
-        userId: null,
-        email: null,
-        authMethod: 'system',
-      },
-      action: 'publication.failed',
-      targetType: 'scheduled_publication',
-      targetId: scheduledPublicationId,
-      metadata: {
-        contentItemId: publication.contentItemId,
-        variantId: publication.variantId,
-        socialAccountId: publication.socialAccountId,
-        provider: publication.socialAccount.provider,
-        jobId: latestJob?.id,
-        errorType: 'retry_exhausted',
-        hasReason: Boolean(reason),
-      },
-    });
-
-    return { status: 'failed', scheduledPublicationId };
+    return {
+      status: 'failed',
+      scheduledPublicationId,
+      reason: message,
+    };
   }
+
 }
