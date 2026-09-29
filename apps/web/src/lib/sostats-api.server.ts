@@ -19,6 +19,44 @@ export type WorkspaceRecord = {
   role?: string;
 };
 
+export type WorkspaceSettingsRecord = {
+  workspace: WorkspaceRecord & {
+    createdAt?: string;
+    updatedAt?: string;
+  };
+  members: Array<{
+    id: number;
+    userId: number;
+    name?: string | null;
+    email?: string | null;
+    role: string;
+    createdAt?: string;
+    updatedAt?: string;
+    isCurrentUser: boolean;
+  }>;
+  permissions: {
+    canManageWorkspace: boolean;
+    canManageMembers: boolean;
+    canDeleteWorkspace: boolean;
+  };
+  security: {
+    authMode: "development_bypass" | "bearer_jwt" | string;
+    developmentBypassEnabled: boolean;
+    jwtIssuerConfigured: boolean;
+    jwtAudienceConfigured: boolean;
+    productionRequiresBearerToken: boolean;
+  };
+  productCapabilities: {
+    teamRoles: boolean;
+    workspaceTimezone: boolean;
+    invitations: boolean;
+    apiKeys: boolean;
+    notificationPreferences: boolean;
+    auditLog: boolean;
+    workspacePublishPolicy: boolean;
+  };
+};
+
 export type KnowledgeSourceRecord = {
   id: number;
   workspaceId: number;
