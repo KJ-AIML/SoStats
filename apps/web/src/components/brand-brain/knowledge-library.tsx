@@ -158,26 +158,39 @@ export function KnowledgeLibrary({
 
     setSources((current) => [initialized.source!, ...current]);
 
-    const upload = await fetch(initialized.uploadUrl, {
-      method: "PUT",
-      headers: { "content-type": mimeType },
-      body: file,
-    });
-    if (!upload.ok) {
-      throw new Error(`Private document upload failed with HTTP ${upload.status}`);
-    }
+    try {
+      const upload = await fetch(initialized.uploadUrl, {
+        method: "PUT",
+        headers: { "content-type": mimeType },
+        body: file,
+      });
+      if (!upload.ok) {
+        throw new Error(
+          `Private document upload failed with HTTP ${upload.status}`,
+        );
+      }
 
-    const complete = await fetch(
-      `/api/workspaces/${encodeURIComponent(workspaceSlug)}/knowledge/${initialized.source.id}/complete-upload`,
-      { method: "POST" },
-    );
-    const source = (await complete.json()) as KnowledgeSourceRecord & {
-      error?: string;
-    };
-    if (!complete.ok) {
-      throw new Error(source.error || "Unable to finalize document upload");
+      const complete = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/knowledge/${initialized.source.id}/complete-upload`,
+        { method: "POST" },
+      );
+      const source = (await complete.json()) as KnowledgeSourceRecord & {
+        error?: string;
+      };
+      if (!complete.ok) {
+        throw new Error(source.error || "Unable to finalize document upload");
+      }
+      return source;
+    } catch (uploadError) {
+      await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/knowledge/${initialized.source.id}`,
+        { method: "DELETE" },
+      ).catch(() => undefined);
+      setSources((current) =>
+        current.filter((source) => source.id !== initialized.source!.id),
+      );
+      throw uploadError;
     }
-    return source;
   };
 
   const addKnowledge = async () => {
@@ -560,7 +573,10 @@ export function KnowledgeLibrary({
 
                   <button
                     onClick={() => void remove(source.id)}
-                    disabled={Boolean(busy) || pending}
+                    disabled={
+                      Boolean(busy) ||
+                      ["uploaded", "processing"].includes(source.status)
+                    }
                     className="sostats-icon h-8 w-8 disabled:opacity-40"
                     aria-label={`Remove ${source.title}`}
                   >

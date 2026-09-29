@@ -476,9 +476,9 @@ export class KnowledgeService {
 
   async remove(workspaceId: number, sourceId: number) {
     const source = await this.requireSource(workspaceId, sourceId);
-    if (['uploading', 'uploaded', 'processing'].includes(source.status)) {
+    if (['uploaded', 'processing'].includes(source.status)) {
       throw new ConflictException(
-        'Knowledge source cannot be deleted while upload or processing is active',
+        'Knowledge source cannot be deleted while background processing is active',
       );
     }
     if (source.storageKey) {
