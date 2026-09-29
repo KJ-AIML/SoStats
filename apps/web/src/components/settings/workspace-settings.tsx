@@ -12,6 +12,7 @@ import {
   LockKeyhole,
   MailPlus,
   RefreshCw,
+  ScrollText,
   Save,
   ShieldCheck,
   Trash2,
@@ -1064,6 +1065,105 @@ export function WorkspaceSettings({
         </div>
       </section>
 
+      <section className="sostats-card overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-black/[0.055] px-5 py-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <ScrollText className="h-4 w-4 text-[#ef2b2d]" />
+              <p className="text-sm font-semibold">Immutable audit log</p>
+            </div>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Append-only security and administration events. Database triggers reject updates and deletes.
+            </p>
+          </div>
+          <span className="rounded-lg bg-neutral-100 px-2.5 py-1.5 text-[8px] font-semibold text-neutral-500">
+            {initialSettings.auditEvents.length} recent
+          </span>
+        </div>
+
+        {initialSettings.permissions.canViewAuditLog ? (
+          initialSettings.auditEvents.length ? (
+            <div className="divide-y divide-black/[0.045]">
+              {initialSettings.auditEvents.map((event) => (
+                <div
+                  key={event.id}
+                  className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_180px_170px_150px]"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[10px] font-semibold">
+                        {auditActionLabel(event.action)}
+                      </p>
+                      <span className="rounded-md bg-neutral-100 px-2 py-1 text-[7px] font-semibold text-neutral-600">
+                        {event.targetType}
+                        {event.targetId ? ` #${event.targetId}` : ""}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[8px] text-muted-foreground">
+                      {event.actorEmail || auditActorLabel(event.authMethod)}
+                    </p>
+                    {Object.keys(event.metadata || {}).length > 0 && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[8px] font-semibold text-neutral-500">
+                          Event metadata
+                        </summary>
+                        <pre className="mt-2 max-h-40 overflow-auto rounded-xl bg-neutral-950 p-3 text-[7px] leading-4 text-neutral-200">
+                          {JSON.stringify(event.metadata, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                      Actor auth
+                    </p>
+                    <p className="mt-1 text-[8px] font-semibold text-neutral-600">
+                      {auditActorLabel(event.authMethod)}
+                    </p>
+                    {event.apiKeyId && (
+                      <p className="mt-1 text-[7px] text-muted-foreground">
+                        API key #{event.apiKeyId}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                      Action
+                    </p>
+                    <p className="mt-1 break-all font-mono text-[8px] font-semibold text-neutral-600">
+                      {event.action}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                      Recorded
+                    </p>
+                    <p className="mt-1 text-[8px] font-semibold text-neutral-600">
+                      {formatSettingDate(event.createdAt)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="px-5 py-8 text-center text-[9px] text-muted-foreground">
+              No audit events recorded yet.
+            </div>
+          )
+        ) : (
+          <div className="px-5 py-5 text-[9px] text-muted-foreground">
+            Only the workspace owner can inspect the audit log.
+          </div>
+        )}
+
+        <div className="border-t border-black/[0.055] bg-neutral-50 px-5 py-3 text-[8px] leading-4 text-muted-foreground">
+          Audit metadata is sanitized before persistence; fields that look like tokens, secrets, credentials, authorization headers or hashes are redacted.
+        </div>
+      </section>
+
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="sostats-card overflow-hidden">
           <div className="border-b border-black/[0.055] px-5 py-4">
@@ -1173,7 +1273,7 @@ export function WorkspaceSettings({
               [
                 "Audit log",
                 initialSettings.productCapabilities.auditLog,
-                "No immutable audit-event store yet",
+                "Append-only event store with owner-only viewer, actor/auth context, sanitized metadata and DB immutability trigger",
               ],
               [
                 "Workspace publish policy",
@@ -1221,13 +1321,37 @@ export function WorkspaceSettings({
           <div>
             <p className="text-[10px] font-semibold">Administrative boundary</p>
             <p className="mt-1 max-w-4xl text-[9px] leading-5 text-muted-foreground">
-              Identity/Admin now includes invitation lifecycle plus transactional ownership transfer and centralized RBAC roles. API-key lifecycle, notification preferences and immutable audit logs remain later slices and stay unavailable rather than simulated.
+              Identity/Admin now includes invitations, transactional ownership/RBAC, scoped API keys and an immutable audit log. Session administration and notification preferences remain the final Identity/Admin slice before Production Hardening.
             </p>
           </div>
         </div>
       </section>
     </div>
   );
+}
+
+function auditActionLabel(action: string) {
+  return action
+    .split(".")
+    .map((part) => part.replaceAll("_", " "))
+    .join(" · ");
+}
+
+function auditActorLabel(authMethod: string) {
+  switch (authMethod) {
+    case "jwt":
+      return "Bearer JWT";
+    case "development":
+      return "Development auth";
+    case "api_key":
+      return "Workspace API key";
+    case "invitation_token":
+      return "Invitation token";
+    case "system":
+      return "System";
+    default:
+      return authMethod;
+  }
 }
 
 function formatSettingDate(value: string) {
