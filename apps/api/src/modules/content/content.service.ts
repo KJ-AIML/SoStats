@@ -161,6 +161,9 @@ export class ContentService {
       .set({
         ...(title !== undefined ? { title } : {}),
         ...(description !== undefined ? { description } : {}),
+        ...(['in_review', 'approved'].includes(current.status)
+          ? { status: 'draft' }
+          : {}),
         updatedAt: new Date(),
       })
       .where(
@@ -250,6 +253,13 @@ export class ContentService {
         })
         .where(eq(schema.contentVariants.id, variantId))
         .returning();
+
+      if (['in_review', 'approved'].includes(contentItem.status)) {
+        await tx
+          .update(schema.contentItems)
+          .set({ status: 'draft', updatedAt: new Date() })
+          .where(eq(schema.contentItems.id, contentId));
+      }
 
       return updated;
     });
