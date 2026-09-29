@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
@@ -289,68 +289,75 @@ export class MediaService {
     contentItemId: number,
     variantId?: number,
   ) {
-    const asset = await this.requireAsset(workspaceId, assetId);
-    if (asset.status !== 'ready') {
-      throw new ConflictException(
-        'Only ready assets can be attached to content',
-      );
-    }
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${workspaceId}, ${assetId})`);
 
-    const contentItem = await this.db.query.contentItems.findFirst({
-      where: and(
-        eq(schema.contentItems.id, contentItemId),
-        eq(schema.contentItems.workspaceId, workspaceId),
-      ),
-    });
-    if (!contentItem) throw new NotFoundException('Content item not found');
-    if (['scheduled', 'published'].includes(contentItem.status)) {
-      throw new ConflictException(
-        'Media attachments cannot change after content is scheduled or published',
-      );
-    }
-
-    if (variantId) {
-      const variant = await this.db.query.contentVariants.findFirst({
+      const asset = await tx.query.assets.findFirst({
         where: and(
-          eq(schema.contentVariants.id, variantId),
-          eq(schema.contentVariants.contentItemId, contentItemId),
+          eq(schema.assets.id, assetId),
+          eq(schema.assets.workspaceId, workspaceId),
         ),
       });
-      if (!variant) {
-        throw new BadRequestException(
-          'Variant does not belong to the selected content item',
+      if (!asset) throw new NotFoundException('Asset not found');
+      if (asset.status !== 'ready') {
+        throw new ConflictException(
+          'Only ready assets can be attached to content',
         );
       }
-    }
 
-    const existing = await this.db.query.contentAssets.findMany({
-      where: eq(schema.contentAssets.assetId, assetId),
-    });
-    const duplicate = existing.find(
-      (usage) =>
-        usage.contentItemId === contentItemId &&
-        (usage.variantId || null) === (variantId || null),
-    );
-    if (duplicate) {
-      return this.getAsset(workspaceId, assetId);
-    }
-
-    await this.db.transaction(async (tx) => {
-      await tx.insert(schema.contentAssets).values({
-        assetId,
-        contentItemId,
-        variantId,
+      const contentItem = await tx.query.contentItems.findFirst({
+        where: and(
+          eq(schema.contentItems.id, contentItemId),
+          eq(schema.contentItems.workspaceId, workspaceId),
+        ),
       });
+      if (!contentItem) throw new NotFoundException('Content item not found');
+      if (['scheduled', 'published'].includes(contentItem.status)) {
+        throw new ConflictException(
+          'Media attachments cannot change after content is scheduled or published',
+        );
+      }
 
-      if (['in_review', 'approved'].includes(contentItem.status)) {
+      if (variantId) {
+        const variant = await tx.query.contentVariants.findFirst({
+          where: and(
+            eq(schema.contentVariants.id, variantId),
+            eq(schema.contentVariants.contentItemId, contentItemId),
+          ),
+        });
+        if (!variant) {
+          throw new BadRequestException(
+            'Variant does not belong to the selected content item',
+          );
+        }
+      }
+
+      const existing = await tx.query.contentAssets.findMany({
+        where: eq(schema.contentAssets.assetId, assetId),
+      });
+      const duplicate = existing.find(
+        (usage) =>
+          usage.contentItemId === contentItemId &&
+          (usage.variantId || null) === (variantId || null),
+      );
+      if (!duplicate) {
+        await tx.insert(schema.contentAssets).values({
+          assetId,
+          contentItemId,
+          variantId,
+        });
+      }
+
+      if (
+        !duplicate &&
+        ['in_review', 'approved'].includes(contentItem.status)
+      ) {
         await tx
           .update(schema.contentItems)
           .set({ status: 'draft', updatedAt: new Date() })
           .where(eq(schema.contentItems.id, contentItemId));
       }
-    });
-
-    return this.getAsset(workspaceId, assetId);
+    }).then(() => this.getAsset(workspaceId, assetId));
   }
 
   async detachFromContent(
@@ -578,24 +585,72 @@ export class MediaService {
   }
 
   async deleteAsset(workspaceId: number, assetId: number) {
-    const asset = await this.requireAsset(workspaceId, assetId);
+    const prepared = await this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${workspaceId}, ${assetId})`);
 
-    const usage = await this.db.query.contentAssets.findFirst({
-      where: eq(schema.contentAssets.assetId, assetId),
+      const asset = await tx.query.assets.findFirst({
+        where: and(
+          eq(schema.assets.id, assetId),
+          eq(schema.assets.workspaceId, workspaceId),
+        ),
+      });
+      if (!asset) throw new NotFoundException('Asset not found');
+
+      const usage = await tx.query.contentAssets.findFirst({
+        where: eq(schema.contentAssets.assetId, assetId),
+      });
+      if (usage) {
+        throw new ConflictException(
+          'Asset is attached to content. Detach it before deleting the object.',
+        );
+      }
+
+      if (['uploaded', 'processing', 'deleting'].includes(asset.status)) {
+        throw new ConflictException(
+          'Asset processing or deletion is active. Wait for a terminal state before deleting.',
+        );
+      }
+
+      const [claimed] = await tx
+        .update(schema.assets)
+        .set({ status: 'deleting', updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.assets.id, assetId),
+            eq(schema.assets.workspaceId, workspaceId),
+            eq(schema.assets.status, asset.status),
+          ),
+        )
+        .returning();
+
+      if (!claimed) {
+        throw new ConflictException('Asset changed while deletion was starting');
+      }
+
+      return {
+        storageKey: asset.storageKey,
+        previousStatus: asset.status,
+      };
     });
-    if (usage) {
-      throw new ConflictException(
-        'Asset is attached to content. Detach it before deleting the object.',
-      );
-    }
 
-    if (['uploaded', 'processing'].includes(asset.status)) {
-      throw new ConflictException(
-        'Asset processing is active. Delete it after processing reaches a terminal state.',
-      );
+    try {
+      await this.storagePort.deleteFile(prepared.storageKey);
+    } catch (error) {
+      await this.db
+        .update(schema.assets)
+        .set({
+          status: prepared.previousStatus,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.assets.id, assetId),
+            eq(schema.assets.workspaceId, workspaceId),
+            eq(schema.assets.status, 'deleting'),
+          ),
+        );
+      throw error;
     }
-
-    await this.storagePort.deleteFile(asset.storageKey);
 
     await this.db
       .delete(schema.assets)
@@ -603,6 +658,7 @@ export class MediaService {
         and(
           eq(schema.assets.id, assetId),
           eq(schema.assets.workspaceId, workspaceId),
+          eq(schema.assets.status, 'deleting'),
         ),
       );
 
