@@ -3,7 +3,10 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHash, createHmac } from 'crypto';
-import type { ObjectStoragePort } from '../ports/object-storage.port.js';
+import type {
+  ObjectStoragePort,
+  ObjectStorageStat,
+} from '../ports/object-storage.port.js';
 
 function sha256(value: string) {
   return createHash('sha256').update(value).digest('hex');
@@ -147,7 +150,7 @@ export class S3ObjectStorageAdapter implements ObjectStoragePort {
     return this.presign('GET', key, expiresInSeconds);
   }
 
-  async deleteFile(key: string) {
+  private async signedObjectRequest(method: 'HEAD' | 'DELETE', key: string) {
     const now = new Date();
     const amzDate = timestamp(now);
     const dateStamp = amzDate.slice(0, 8);
@@ -162,7 +165,7 @@ export class S3ObjectStorageAdapter implements ObjectStoragePort {
     const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
 
     const canonicalRequest = [
-      'DELETE',
+      method,
       canonicalUri,
       '',
       canonicalHeaders,
@@ -185,15 +188,41 @@ export class S3ObjectStorageAdapter implements ObjectStoragePort {
       `AWS4-HMAC-SHA256 Credential=${this.accessKey}/${scope}, ` +
       `SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
-    const response = await fetch(this.endpoint.origin + canonicalUri, {
-      method: 'DELETE',
+    return fetch(this.endpoint.origin + canonicalUri, {
+      method,
       headers: {
         authorization,
         'x-amz-content-sha256': payloadHash,
         'x-amz-date': amzDate,
       },
     });
+  }
 
+  async statFile(key: string): Promise<ObjectStorageStat> {
+    const response = await this.signedObjectRequest('HEAD', key);
+    if (response.status === 404) {
+      throw new Error('Object storage file not found');
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Object storage stat failed with HTTP ${response.status}`,
+      );
+    }
+
+    const size = Number.parseInt(response.headers.get('content-length') || '', 10);
+    if (!Number.isFinite(size) || size < 0) {
+      throw new Error('Object storage returned an invalid content length');
+    }
+
+    return {
+      size,
+      contentType: response.headers.get('content-type'),
+      etag: response.headers.get('etag'),
+    };
+  }
+
+  async deleteFile(key: string) {
+    const response = await this.signedObjectRequest('DELETE', key);
     if (!response.ok && response.status !== 404) {
       throw new Error(
         `Object storage delete failed with HTTP ${response.status}`,

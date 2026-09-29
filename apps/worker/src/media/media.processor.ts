@@ -1,62 +1,166 @@
-import { Worker, Job } from 'bullmq';
-import IORedis from 'ioredis';
+import { Job, Worker } from 'bullmq';
+import { createRedisConnection } from '../queue/redis';
+import {
+  claimMedia,
+  completeMedia,
+  failMedia,
+  type MediaJobData,
+} from './media.api';
+import { extractMediaMetadata } from './media-metadata';
 
-// Establish Redis connection
-const connection = new IORedis({
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379', 10),
-  maxRetriesPerRequest: null,
-});
+const connection = createRedisConnection();
+const concurrency = Number.parseInt(
+  process.env.MEDIA_CONCURRENCY || '3',
+  10,
+);
+const maxBufferBytes = Number.parseInt(
+  process.env.MEDIA_MAX_UPLOAD_BYTES || String(100 * 1024 * 1024),
+  10,
+);
 
-// Define the job payload interface
-interface MediaJobData {
-  mediaId: string;
-  type: 'image' | 'video';
-  url: string;
+async function downloadSource(url: string, declaredSize: number) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const retryable = response.status === 429 || response.status >= 500;
+    const error = new Error(
+      `Media source download failed with HTTP ${response.status}`,
+    );
+    if (!retryable) {
+      Object.assign(error, { terminal: true });
+    }
+    throw error;
+  }
+
+  const contentLength = Number.parseInt(
+    response.headers.get('content-length') || '',
+    10,
+  );
+  if (
+    Number.isFinite(contentLength) &&
+    (contentLength > maxBufferBytes || contentLength !== declaredSize)
+  ) {
+    const error = new Error('Downloaded object size failed validation');
+    Object.assign(error, { terminal: true });
+    throw error;
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (
+    buffer.length !== declaredSize ||
+    buffer.length > maxBufferBytes
+  ) {
+    const error = new Error('Downloaded object size failed validation');
+    Object.assign(error, { terminal: true });
+    throw error;
+  }
+
+  return buffer;
 }
 
 const mediaWorker = new Worker<MediaJobData>(
   'media-processing',
   async (job: Job<MediaJobData>) => {
-    console.log(`[MediaProcessor] Started processing job ${job.id} for media ${job.data.mediaId}`);
+    const claim = await claimMedia(
+      job.data.assetId,
+      job.data.processingToken,
+    );
 
-    const { type, url } = job.data;
-
-    if (type === 'image') {
-      console.log(`[MediaProcessor] Extracting image dimensions for ${url}...`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      console.log(`[MediaProcessor] Image dimensions: 1920x1080`);
-
-      console.log(`[MediaProcessor] Generating image thumbnail...`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      console.log(`[MediaProcessor] Thumbnail generated.`);
-    } else if (type === 'video') {
-      console.log(`[MediaProcessor] Extracting video duration for ${url}...`);
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      console.log(`[MediaProcessor] Video duration: 120 seconds`);
-
-      console.log(`[MediaProcessor] Generating video thumbnail...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      console.log(`[MediaProcessor] Thumbnail generated.`);
-    } else {
-      console.log(`[MediaProcessor] Unknown media type: ${type}`);
+    if (claim.status !== 'claimed') {
+      console.log(
+        `[MediaProcessor] Asset ${job.data.assetId} finished claim with ${claim.status}`,
+      );
+      return claim;
     }
 
-    console.log(`[MediaProcessor] Completed processing job ${job.id}`);
-    
-    return { success: true, message: 'Processing complete' };
+    if (job.data.processingToken !== claim.processingToken) {
+      await job.updateData({
+        ...job.data,
+        processingToken: claim.processingToken,
+      });
+    }
+
+    try {
+      const source = await downloadSource(
+        claim.sourceUrl,
+        claim.declaredSize,
+      );
+      const metadata = extractMediaMetadata(source, claim.mimeType);
+      const completed = await completeMedia(
+        claim.assetId,
+        claim.processingToken,
+        metadata,
+      );
+
+      console.log(
+        `[MediaProcessor] Asset ${claim.assetId} completed with state ${completed.status}`,
+      );
+      return completed;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      const terminal =
+        Boolean(
+          error &&
+          typeof error === 'object' &&
+          'terminal' in error &&
+          (error as { terminal?: boolean }).terminal,
+        ) ||
+        /Invalid|Unsupported|dimensions|metadata|header|signature|size failed/.test(
+          message,
+        );
+
+      if (terminal) {
+        await failMedia(
+          claim.assetId,
+          claim.processingToken,
+          message,
+        );
+        return {
+          status: 'failed_terminal',
+          assetId: claim.assetId,
+          reason: message,
+        };
+      }
+
+      throw error;
+    }
   },
   {
     connection,
-  }
+    concurrency: Math.max(1, concurrency),
+  },
 );
 
-mediaWorker.on('completed', (job) => {
-  console.log(`[MediaProcessor] Job ${job.id} has completed!`);
+mediaWorker.on('failed', (job, error) => {
+  console.error(
+    `[MediaProcessor] Queue job ${job?.id || 'unknown'} failed: ${error.message}`,
+  );
+
+  if (!job?.data.processingToken) return;
+  const allowedAttempts = Number(job.opts.attempts || 1);
+  if (job.attemptsMade < allowedAttempts) return;
+
+  void failMedia(
+    job.data.assetId,
+    job.data.processingToken,
+    error.message,
+  ).catch((failError) => {
+    console.error(
+      '[MediaProcessor] Failed to persist terminal media state:',
+      failError instanceof Error ? failError.message : failError,
+    );
+  });
 });
 
-mediaWorker.on('failed', (job, err) => {
-  console.log(`[MediaProcessor] Job ${job?.id} has failed with ${err.message}`);
+mediaWorker.on('error', (error) => {
+  console.error('[MediaProcessor] Worker error:', error);
 });
 
-console.log('[MediaProcessor] Worker is running and listening to "media-processing" queue...');
+export async function stopMediaWorker() {
+  await mediaWorker.close();
+  await connection.quit();
+}
+
+console.log(
+  `[MediaProcessor] Listening to "media-processing" with concurrency ${Math.max(1, concurrency)}`,
+);

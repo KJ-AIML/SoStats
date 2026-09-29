@@ -46,6 +46,7 @@ Architecture notes:
 - [Stage 3 automation runtime](docs/architecture/STAGE_3_AUTOMATION_RUNTIME.md)
 - [Stage 4 real analytics ingestion](docs/architecture/STAGE_4_REAL_ANALYTICS.md)
 - [Stage 5 closed AI learning loop](docs/architecture/STAGE_5_CLOSED_AI_LOOP.md)
+- [Stage 6 real media processing](docs/architecture/STAGE_6_REAL_MEDIA.md)
 
 ## Repository layout
 
@@ -63,7 +64,8 @@ cp infra/.env.example .env
 docker compose --env-file .env -f infra/docker-compose.yml up -d
 ```
 
-This starts PostgreSQL + pgvector, Redis, MinIO, and Mailpit.
+This starts PostgreSQL + pgvector, Redis, MinIO, an idempotent private-bucket
+initializer, and Mailpit.
 
 ## Node services
 

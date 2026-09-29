@@ -217,12 +217,23 @@ export type AutomationRecord = {
 
 export type AssetRecord = {
   id: number;
+  workspaceId: number;
   brandId?: number | null;
   fileName: string;
-  fileType: string;
+  fileType: "image" | "video" | string;
   mimeType: string;
   size: number;
   publicUrl?: string | null;
+  viewUrl?: string | null;
+  status: "uploading" | "uploaded" | "processing" | "ready" | "failed" | string;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
+  processingError?: string | null;
+  uploadCompletedAt?: string | null;
+  processedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type WorkspaceSnapshot = {

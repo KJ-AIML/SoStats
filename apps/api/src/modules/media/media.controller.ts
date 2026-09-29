@@ -47,6 +47,22 @@ export class MediaController {
     );
   }
 
+  @Post(':id/complete-upload')
+  completeUpload(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.mediaService.completeUpload(workspaceId, id);
+  }
+
+  @Post(':id/retry')
+  retry(
+    @CurrentWorkspaceId() workspaceId: number,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.mediaService.retryProcessing(workspaceId, id);
+  }
+
   @Delete(':id')
   deleteAsset(
     @CurrentWorkspaceId() workspaceId: number,
