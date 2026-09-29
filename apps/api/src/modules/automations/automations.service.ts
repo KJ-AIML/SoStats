@@ -3,6 +3,7 @@ import {
   Injectable,
   Inject,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { and, desc, eq } from 'drizzle-orm';
@@ -43,14 +44,34 @@ function webhookBaseUrl(required = false) {
 
   if (!configured) {
     if (required) {
-      throw new BadRequestException(
+      throw new ServiceUnavailableException(
         'WEBHOOK_PUBLIC_BASE_URL must be configured for webhook automations',
       );
     }
     return undefined;
   }
 
-  return configured.replace(/\/$/, '');
+  try {
+    const url = new URL(configured);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error('invalid webhook origin');
+    }
+    return url.origin;
+  } catch {
+    if (required) {
+      throw new ServiceUnavailableException(
+        'WEBHOOK_PUBLIC_BASE_URL must be an HTTP(S) origin without a path',
+      );
+    }
+    return undefined;
+  }
 }
 
 function webhookUrl(publicId?: string | null) {
@@ -335,6 +356,16 @@ export class AutomationsService {
               leaseExpiresAt: null,
               nextPollAt: null,
               lastPolledAt: null,
+              lastReceivedAt:
+                existingTrigger.type === 'webhook' &&
+                Boolean(existingTrigger.publicId)
+                  ? existingTrigger.lastReceivedAt
+                  : null,
+              lastTriggeredAt:
+                existingTrigger.type === 'webhook' &&
+                Boolean(existingTrigger.publicId)
+                  ? existingTrigger.lastTriggeredAt
+                  : null,
               lastError: null,
               updatedAt: new Date(),
             })

@@ -3,6 +3,7 @@ import {
   Injectable,
   Inject,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID } from 'crypto';
@@ -112,11 +113,29 @@ function webhookBaseUrl() {
       : undefined);
 
   if (!value) {
-    throw new BadRequestException(
+    throw new ServiceUnavailableException(
       'WEBHOOK_PUBLIC_BASE_URL must be configured for webhook automations',
     );
   }
-  return value.replace(/\/$/, '');
+
+  try {
+    const url = new URL(value);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error('invalid webhook origin');
+    }
+    return url.origin;
+  } catch {
+    throw new ServiceUnavailableException(
+      'WEBHOOK_PUBLIC_BASE_URL must be an HTTP(S) origin without a path',
+    );
+  }
 }
 
 @Injectable()
