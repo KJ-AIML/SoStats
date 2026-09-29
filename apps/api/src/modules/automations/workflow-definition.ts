@@ -29,6 +29,8 @@ export type WorkflowDefinition = {
   edges: WorkflowEdge[];
 };
 
+export type WorkflowTriggerMode = 'manual' | 'rss';
+
 const supportedKinds = new Set<WorkflowNodeKind>([
   'trigger',
   'generate',
@@ -188,4 +190,70 @@ export function nodeConfig(node: WorkflowNode) {
   return node.data.config && typeof node.data.config === 'object'
     ? node.data.config
     : {};
+}
+
+
+export function workflowTriggerMode(
+  definition: WorkflowDefinition,
+): WorkflowTriggerMode {
+  const trigger = definition.nodes.find(
+    (node) => workflowNodeKind(node) === 'trigger',
+  );
+  if (!trigger) {
+    throw new BadRequestException('Workflow trigger node was not found');
+  }
+
+  const config = nodeConfig(trigger);
+  const mode = String(config.mode || 'manual').trim().toLowerCase();
+
+  if (mode === 'manual') return 'manual';
+  if (mode !== 'rss') {
+    throw new BadRequestException(
+      'Trigger mode must be manual or rss',
+    );
+  }
+
+  const feedUrl = String(config.feedUrl || '').trim();
+  if (!feedUrl || feedUrl.length > 2048) {
+    throw new BadRequestException(
+      'RSS trigger requires config.feedUrl',
+    );
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(feedUrl);
+  } catch {
+    throw new BadRequestException('RSS feed URL is invalid');
+  }
+
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password
+  ) {
+    throw new BadRequestException(
+      'RSS feed URL must use HTTP or HTTPS without embedded credentials',
+    );
+  }
+
+  const pollMinutes = Number(config.pollMinutes ?? 15);
+  if (
+    !Number.isInteger(pollMinutes) ||
+    pollMinutes < 5 ||
+    pollMinutes > 1440
+  ) {
+    throw new BadRequestException(
+      'RSS pollMinutes must be an integer between 5 and 1440',
+    );
+  }
+
+  const initialSync = String(config.initialSync || 'baseline');
+  if (!['baseline', 'latest'].includes(initialSync)) {
+    throw new BadRequestException(
+      'RSS initialSync must be baseline or latest',
+    );
+  }
+
+  return 'rss';
 }

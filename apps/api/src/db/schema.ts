@@ -518,6 +518,66 @@ export const automationRunSteps = pgTable('automation_run_steps', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+// automation_triggers
+export const automationTriggers = pgTable(
+  'automation_triggers',
+  {
+    id: serial('id').primaryKey(),
+    automationId: integer('automation_id')
+      .notNull()
+      .references(() => automations.id, { onDelete: 'cascade' }),
+    type: varchar('type', { length: 50 }).notNull(),
+    config: jsonb('config').notNull().default({}),
+    status: varchar('status', { length: 30 }).notNull().default('active'),
+    leaseToken: varchar('lease_token', { length: 64 }),
+    leaseExpiresAt: timestamp('lease_expires_at'),
+    nextPollAt: timestamp('next_poll_at'),
+    lastPolledAt: timestamp('last_polled_at'),
+    lastTriggeredAt: timestamp('last_triggered_at'),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    automationTriggerAutomationUnique: uniqueIndex(
+      'automation_trigger_automation_unique',
+    ).on(table.automationId),
+    automationTriggerDueIdx: index('automation_trigger_due_idx').on(
+      table.status,
+      table.nextPollAt,
+    ),
+  }),
+);
+
+// automation_trigger_events
+export const automationTriggerEvents = pgTable(
+  'automation_trigger_events',
+  {
+    id: serial('id').primaryKey(),
+    triggerId: integer('trigger_id')
+      .notNull()
+      .references(() => automationTriggers.id, { onDelete: 'cascade' }),
+    automationId: integer('automation_id')
+      .notNull()
+      .references(() => automations.id, { onDelete: 'cascade' }),
+    eventKey: varchar('event_key', { length: 64 }).notNull(),
+    externalId: varchar('external_id', { length: 1024 }).notNull(),
+    payload: jsonb('payload').notNull(),
+    runId: integer('run_id').references(() => automationRuns.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    automationTriggerEventUnique: uniqueIndex(
+      'automation_trigger_event_unique',
+    ).on(table.triggerId, table.eventKey),
+    automationTriggerEventAutomationIdx: index(
+      'automation_trigger_event_automation_idx',
+    ).on(table.automationId, table.createdAt),
+  }),
+);
+
 // metric_snapshots
 export const metricSnapshots = pgTable('metric_snapshots', {
   id: serial('id').primaryKey(),
@@ -980,6 +1040,8 @@ export const automationsRelations = relations(automations, ({ one, many }) => ({
   }),
   versions: many(automationVersions),
   runs: many(automationRuns),
+  triggers: many(automationTriggers),
+  triggerEvents: many(automationTriggerEvents),
 }));
 
 export const automationVersionsRelations = relations(
@@ -1013,6 +1075,35 @@ export const automationRunStepsRelations = relations(
   ({ one }) => ({
     run: one(automationRuns, {
       fields: [automationRunSteps.runId],
+      references: [automationRuns.id],
+    }),
+  }),
+);
+
+export const automationTriggersRelations = relations(
+  automationTriggers,
+  ({ one, many }) => ({
+    automation: one(automations, {
+      fields: [automationTriggers.automationId],
+      references: [automations.id],
+    }),
+    events: many(automationTriggerEvents),
+  }),
+);
+
+export const automationTriggerEventsRelations = relations(
+  automationTriggerEvents,
+  ({ one }) => ({
+    trigger: one(automationTriggers, {
+      fields: [automationTriggerEvents.triggerId],
+      references: [automationTriggers.id],
+    }),
+    automation: one(automations, {
+      fields: [automationTriggerEvents.automationId],
+      references: [automations.id],
+    }),
+    run: one(automationRuns, {
+      fields: [automationTriggerEvents.runId],
       references: [automationRuns.id],
     }),
   }),
