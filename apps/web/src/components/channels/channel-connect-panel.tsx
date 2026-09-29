@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Linkedin, LoaderCircle, Plus } from "lucide-react";
+import { Link2, LoaderCircle, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const providers = [
@@ -9,7 +9,7 @@ const providers = [
     id: "linkedin",
     label: "LinkedIn",
     description: "Text publishing + member post analytics",
-    icon: Linkedin,
+    icon: Link2,
   },
   {
     id: "x",
