@@ -11,6 +11,7 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import { encrypt } from '../../utils/encryption.util.js';
+import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 import {
   CreateAutomationDto,
   CreateAutomationVersionDto,
@@ -32,6 +33,15 @@ function recordText(
 ) {
   const candidate = value[key];
   return typeof candidate === 'string' ? candidate : fallback;
+}
+
+function recordStrings(value: Record<string, unknown>, key: string) {
+  const candidate = value[key];
+  if (!Array.isArray(candidate)) return [];
+  return candidate
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function webhookBaseUrl(required = false) {
@@ -95,6 +105,7 @@ function safeTrigger(
 export class AutomationsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
+    private readonly providers: ProviderRegistry,
   ) {}
 
   async findAll(workspaceId: number) {
@@ -122,6 +133,7 @@ export class AutomationsService {
 
   async create(workspaceId: number, dto: CreateAutomationDto) {
     const definition = validateWorkflowDefinition(dto.workflowDefinition);
+    this.validateProviderSelections(definition);
     const triggerType = workflowTriggerMode(definition);
     if (dto.triggerType && dto.triggerType !== triggerType) {
       throw new BadRequestException(
@@ -192,6 +204,7 @@ export class AutomationsService {
   ) {
     await this.requireAutomation(workspaceId, automationId);
     const definition = validateWorkflowDefinition(dto.workflowDefinition);
+    this.validateProviderSelections(definition);
     workflowTriggerMode(definition);
 
     const [latest] = await this.db
@@ -235,6 +248,7 @@ export class AutomationsService {
     const definition = validateWorkflowDefinition(
       latest.workflowDefinition,
     );
+    this.validateProviderSelections(definition);
     const triggerType = workflowTriggerMode(definition);
     const triggerNode = definition.nodes.find(
       (node) => workflowNodeKind(node) === 'trigger',
@@ -520,6 +534,23 @@ export class AutomationsService {
       orderBy: (fields, { desc: orderDesc }) => [orderDesc(fields.createdAt)],
       limit: 50,
     });
+  }
+
+  private validateProviderSelections(
+    definition: ReturnType<typeof validateWorkflowDefinition>,
+  ) {
+    for (const node of definition.nodes) {
+      if (workflowNodeKind(node) !== 'generate') continue;
+      const config = nodeConfig(node);
+      for (const providerName of recordStrings(config, 'channels')) {
+        const description = this.providers.describeProvider(providerName);
+        if (!description.supported || !description.capabilities?.text) {
+          throw new BadRequestException(
+            `Automation generate provider "${providerName}" does not have an enabled text adapter`,
+          );
+        }
+      }
+    }
   }
 
   private async requireAutomation(workspaceId: number, automationId: number) {
