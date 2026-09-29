@@ -4,10 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
+  Bell,
   CheckCircle2,
   Copy,
   Crown,
   KeyRound,
+  Laptop,
   LoaderCircle,
   LockKeyhole,
   MailPlus,
@@ -47,6 +49,18 @@ export function WorkspaceSettings({
   const [apiKeyWrite, setApiKeyWrite] = useState(false);
   const [apiKeyExpiry, setApiKeyExpiry] = useState("90");
   const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
+  const [notifySecurity, setNotifySecurity] = useState(
+    initialSettings.notificationPreferences.securityEvents,
+  );
+  const [notifyPublishing, setNotifyPublishing] = useState(
+    initialSettings.notificationPreferences.publishingFailures,
+  );
+  const [notifyAutomation, setNotifyAutomation] = useState(
+    initialSettings.notificationPreferences.automationFailures,
+  );
+  const [notifyWeeklyDigest, setNotifyWeeklyDigest] = useState(
+    initialSettings.notificationPreferences.weeklyDigest,
+  );
 
   const createInvitation = async () => {
     if (!inviteEmail.trim()) {
@@ -299,6 +313,71 @@ export function WorkspaceSettings({
       setMessage("API key copied to clipboard.");
     } catch {
       setError("Clipboard access failed. Copy the API key manually.");
+    }
+  };
+
+  const revokeSession = async (sessionId: number) => {
+    setBusy(`session-revoke-${sessionId}`);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/sessions/${sessionId}`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to revoke session");
+      }
+
+      setMessage("Session revoked. Further requests using that bearer token will be rejected.");
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to revoke session",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveNotificationPreferences = async () => {
+    setBusy("notification-preferences");
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/settings/notification-preferences`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            securityEvents: notifySecurity,
+            publishingFailures: notifyPublishing,
+            automationFailures: notifyAutomation,
+            weeklyDigest: notifyWeeklyDigest,
+          }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(
+          payload.error || "Unable to update notification preferences",
+        );
+      }
+
+      setMessage("Notification preferences saved.");
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to update notification preferences",
+      );
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -1069,6 +1148,170 @@ export function WorkspaceSettings({
         <div className="flex items-center justify-between gap-3 border-b border-black/[0.055] px-5 py-4">
           <div>
             <div className="flex items-center gap-2">
+              <Laptop className="h-4 w-4 text-[#ef2b2d]" />
+              <p className="text-sm font-semibold">Authentication sessions</p>
+            </div>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              SoStats fingerprints bearer credentials and can reject a revoked session before controllers execute.
+            </p>
+          </div>
+          <span className="rounded-lg bg-neutral-100 px-2.5 py-1.5 text-[8px] font-semibold text-neutral-500">
+            {initialSettings.sessions.filter((session) => session.status === "active").length} active
+          </span>
+        </div>
+
+        <div className="divide-y divide-black/[0.045]">
+          {initialSettings.sessions.length ? (
+            initialSettings.sessions.map((session) => (
+              <div
+                key={session.id}
+                className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1fr)_150px_170px_190px]"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[10px] font-semibold">
+                      {session.authMethod === "development"
+                        ? "Development session"
+                        : "Bearer JWT session"}
+                    </p>
+                    {session.isCurrent && (
+                      <span className="rounded-md bg-blue-50 px-2 py-1 text-[7px] font-semibold text-blue-700">
+                        Current
+                      </span>
+                    )}
+                    <span
+                      className={
+                        session.status === "active"
+                          ? "rounded-md bg-emerald-50 px-2 py-1 text-[7px] font-semibold text-emerald-700"
+                          : "rounded-md bg-neutral-100 px-2 py-1 text-[7px] font-semibold capitalize text-neutral-500"
+                      }
+                    >
+                      {session.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-[8px] text-muted-foreground">
+                    {session.userAgent || "User agent unavailable"}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                    Last seen
+                  </p>
+                  <p className="mt-1 text-[8px] font-semibold text-neutral-600">
+                    {formatSettingDate(session.lastSeenAt)}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[7px] uppercase tracking-[0.08em] text-muted-foreground">
+                    Expires
+                  </p>
+                  <p className="mt-1 text-[8px] font-semibold text-neutral-600">
+                    {session.expiresAt
+                      ? formatSettingDate(session.expiresAt)
+                      : "Provider/session controlled"}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end">
+                  {session.status === "active" && !session.isCurrent ? (
+                    <Button
+                      variant="outline"
+                      disabled={Boolean(busy)}
+                      onClick={() => void revokeSession(session.id)}
+                      className="h-8 rounded-xl border-red-100 text-[8px] text-red-700"
+                    >
+                      {busy === `session-revoke-${session.id}` ? (
+                        <LoaderCircle className="mr-1.5 h-3 w-3 animate-spin" />
+                      ) : (
+                        <XCircle className="mr-1.5 h-3 w-3" />
+                      )}
+                      Revoke session
+                    </Button>
+                  ) : (
+                    <span className="text-right text-[8px] text-muted-foreground">
+                      {session.isCurrent
+                        ? "Current session is managed by the sign-out/identity flow."
+                        : session.status}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="px-5 py-8 text-center text-[9px] text-muted-foreground">
+              No SoStats sessions have been observed yet.
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-black/[0.055] bg-neutral-50 px-5 py-3 text-[8px] leading-4 text-muted-foreground">
+          Only a SHA-256 credential fingerprint is stored. Raw bearer tokens are never persisted. API keys have their own separate revoke/rotate lifecycle.
+        </div>
+      </section>
+
+      <section className="sostats-card overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-black/[0.055] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Bell className="h-4 w-4 text-[#ef2b2d]" />
+              <p className="text-sm font-semibold">Notification preferences</p>
+            </div>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Persisted per-user policy for this workspace. Outbound email/push delivery is not enabled until a real delivery adapter exists.
+            </p>
+          </div>
+          <Button
+            onClick={() => void saveNotificationPreferences()}
+            disabled={Boolean(busy)}
+            className="h-9 rounded-xl bg-[#ef2b2d] text-[9px] hover:bg-[#da2427]"
+          >
+            {busy === "notification-preferences" ? (
+              <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            Save preferences
+          </Button>
+        </div>
+
+        <div className="grid gap-px bg-black/[0.045] sm:grid-cols-2">
+          <NotificationToggle
+            label="Security events"
+            detail="Identity, invitation, session, API-key and ownership security events."
+            checked={notifySecurity}
+            onChange={setNotifySecurity}
+          />
+          <NotificationToggle
+            label="Publishing failures"
+            detail="Provider publication failures that need human attention."
+            checked={notifyPublishing}
+            onChange={setNotifyPublishing}
+          />
+          <NotificationToggle
+            label="Automation failures"
+            detail="Automation runs or triggers that fail and require review."
+            checked={notifyAutomation}
+            onChange={setNotifyAutomation}
+          />
+          <NotificationToggle
+            label="Weekly digest"
+            detail="Preference for a future summary delivery; no outbound delivery adapter is active yet."
+            checked={notifyWeeklyDigest}
+            onChange={setNotifyWeeklyDigest}
+          />
+        </div>
+
+        <div className="border-t border-amber-100 bg-amber-50 px-5 py-3 text-[8px] leading-4 text-amber-800">
+          These preferences are durable policy state only. SoStats does not claim email, push or digest delivery until that runtime is implemented and verified.
+        </div>
+      </section>
+
+      <section className="sostats-card overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-black/[0.055] px-5 py-4">
+          <div>
+            <div className="flex items-center gap-2">
               <ScrollText className="h-4 w-4 text-[#ef2b2d]" />
               <p className="text-sm font-semibold">Immutable audit log</p>
             </div>
@@ -1266,9 +1509,19 @@ export function WorkspaceSettings({
                 "Generate-once secret, hash-only storage, scoped auth, expiry, last-used, rotate/revoke",
               ],
               [
+                "Session administration",
+                initialSettings.productCapabilities.sessionAdministration,
+                "JWT/development bearer fingerprint registry with last-seen, expiry and revoke enforcement",
+              ],
+              [
                 "Notification preferences",
                 initialSettings.productCapabilities.notificationPreferences,
-                "No persisted notification preference model yet",
+                "Persisted per-user/per-workspace security, publishing, automation and digest policy",
+              ],
+              [
+                "Notification delivery",
+                initialSettings.productCapabilities.notificationDelivery,
+                "No outbound email/push delivery adapter is claimed yet",
               ],
               [
                 "Audit log",
@@ -1321,7 +1574,7 @@ export function WorkspaceSettings({
           <div>
             <p className="text-[10px] font-semibold">Administrative boundary</p>
             <p className="mt-1 max-w-4xl text-[9px] leading-5 text-muted-foreground">
-              Identity/Admin now includes invitations, transactional ownership/RBAC, scoped API keys and an immutable audit log. Session administration and notification preferences remain the final Identity/Admin slice before Production Hardening.
+              Identity/Admin now includes invitations, transactional ownership/RBAC, scoped API keys, immutable audit history, revocable SoStats sessions and persisted notification policy. Outbound notification delivery remains an explicit runtime capability for Production Hardening rather than a simulated feature.
             </p>
           </div>
         </div>
@@ -1374,6 +1627,35 @@ function Field({
         {label}
       </span>
       {children}
+    </label>
+  );
+}
+
+function NotificationToggle({
+  label,
+  detail,
+  checked,
+  onChange,
+}: {
+  label: string;
+  detail: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3 bg-white p-5">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5"
+      />
+      <span>
+        <span className="block text-[9px] font-semibold">{label}</span>
+        <span className="mt-1 block text-[8px] leading-4 text-muted-foreground">
+          {detail}
+        </span>
+      </span>
     </label>
   );
 }
