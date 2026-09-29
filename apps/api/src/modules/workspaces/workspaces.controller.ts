@@ -161,20 +161,12 @@ export class WorkspacesController {
     @Body() body: { email?: string; role?: string },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.invitationsService.create(id, user.id, body);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'invitation.created',
-      targetType: 'workspace_invitation',
-      targetId: result.invitation.id,
-      metadata: {
-        email: result.invitation.email,
-        role: result.invitation.role,
-        expiresAt: result.invitation.expiresAt,
-      },
-    });
-    return result;
+    return this.invitationsService.create(
+      id,
+      user.id,
+      body,
+      actorFromUser(user),
+    );
   }
 
   @Post(':id/invitations/:invitationId/regenerate')
@@ -183,24 +175,12 @@ export class WorkspacesController {
     @Param('invitationId', ParseIntPipe) invitationId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.invitationsService.regenerate(
+    return this.invitationsService.regenerate(
       id,
       user.id,
       invitationId,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'invitation.regenerated',
-      targetType: 'workspace_invitation',
-      targetId: invitationId,
-      metadata: {
-        email: result.invitation.email,
-        role: result.invitation.role,
-        expiresAt: result.invitation.expiresAt,
-      },
-    });
-    return result;
   }
 
   @Delete(':id/invitations/:invitationId')
@@ -209,23 +189,12 @@ export class WorkspacesController {
     @Param('invitationId', ParseIntPipe) invitationId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.invitationsService.revoke(
+    return this.invitationsService.revoke(
       id,
       user.id,
       invitationId,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'invitation.revoked',
-      targetType: 'workspace_invitation',
-      targetId: invitationId,
-      metadata: {
-        email: result.email,
-        role: result.role,
-      },
-    });
-    return result;
   }
 
   @Post(':id/api-keys')
