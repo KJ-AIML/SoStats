@@ -66,6 +66,7 @@ Architecture notes:
 - [Stage 13 Meta / Instagram provider expansion](docs/architecture/STAGE_13_META_INSTAGRAM_PROVIDER.md)
 - [Stage 14 Identity/Admin: workspace invitations](docs/architecture/STAGE_14_WORKSPACE_INVITATIONS.md)
 - [Stage 14 Identity/Admin: ownership transfer + RBAC](docs/architecture/STAGE_14_OWNERSHIP_RBAC.md)
+- [Stage 14 Identity/Admin: workspace API keys](docs/architecture/STAGE_14_WORKSPACE_API_KEYS.md)
 
 ## Repository layout
 
