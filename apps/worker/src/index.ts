@@ -1,4 +1,9 @@
 import {
+  startOutboxDispatcher,
+  stopOutboxDispatcher,
+} from './outbox/outbox.dispatcher';
+import { stopOutboxWorker } from './outbox/outbox.processor';
+import {
   startKnowledgeDispatcher,
   stopKnowledgeDispatcher,
 } from './knowledge/knowledge.dispatcher';
@@ -41,6 +46,7 @@ import {
   stopAutomationWorker,
 } from './automations/automation.processor';
 
+startOutboxDispatcher();
 startPublishingDispatcher();
 startAutomationDispatcher();
 startAnalyticsDispatcher();
@@ -56,6 +62,8 @@ async function shutdown(signal: string) {
 
   console.log(`[Worker] Received ${signal}; draining background runtimes`);
   await Promise.all([
+    stopOutboxDispatcher(),
+    stopOutboxWorker(),
     stopPublishingDispatcher(),
     stopPublishingWorker(),
     stopAutomationDispatcher(),
