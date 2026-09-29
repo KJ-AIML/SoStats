@@ -6,6 +6,26 @@ import {
   workspaceRequest,
 } from "@/lib/sostats-api.server";
 
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ workspaceSlug: string }> },
+) {
+  try {
+    const { workspaceSlug } = await context.params;
+    const automations = await workspaceRequest<AutomationRecord[]>(
+      workspaceSlug,
+      "/v1/automations",
+    );
+    return NextResponse.json(automations);
+  } catch (error) {
+    const status = error instanceof SoStatsApiError ? error.status : 500;
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Automation load failed" },
+      { status },
+    );
+  }
+}
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ workspaceSlug: string }> },

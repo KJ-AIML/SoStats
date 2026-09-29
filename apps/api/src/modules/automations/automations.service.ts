@@ -15,8 +15,11 @@ import {
   UpdateAutomationDto,
 } from './automations.dto.js';
 import {
+  nodeConfig,
   orderWorkflow,
   validateWorkflowDefinition,
+  workflowNodeKind,
+  workflowTriggerMode,
 } from './workflow-definition.js';
 
 @Injectable()
@@ -33,6 +36,7 @@ export class AutomationsService {
         runs: {
           with: { steps: true },
         },
+        triggers: true,
       },
       orderBy: (fields, { desc: orderDesc }) => [orderDesc(fields.updatedAt)],
     });
@@ -40,9 +44,10 @@ export class AutomationsService {
 
   async create(workspaceId: number, dto: CreateAutomationDto) {
     const definition = validateWorkflowDefinition(dto.workflowDefinition);
-    if (!['manual', 'schedule', 'webhook'].includes(dto.triggerType)) {
+    const triggerType = workflowTriggerMode(definition);
+    if (dto.triggerType && dto.triggerType !== triggerType) {
       throw new BadRequestException(
-        'triggerType must be manual, schedule, or webhook',
+        'triggerType must match the workflow trigger configuration',
       );
     }
 
@@ -53,7 +58,7 @@ export class AutomationsService {
           workspaceId,
           name: dto.name,
           description: dto.description,
-          triggerType: dto.triggerType,
+          triggerType,
           status: 'draft',
         })
         .returning();
@@ -109,6 +114,7 @@ export class AutomationsService {
   ) {
     await this.requireAutomation(workspaceId, automationId);
     const definition = validateWorkflowDefinition(dto.workflowDefinition);
+    workflowTriggerMode(definition);
 
     const [latest] = await this.db
       .select()
@@ -148,7 +154,14 @@ export class AutomationsService {
       throw new NotFoundException('Automation version not found');
     }
 
-    validateWorkflowDefinition(latest.workflowDefinition);
+    const definition = validateWorkflowDefinition(
+      latest.workflowDefinition,
+    );
+    const triggerType = workflowTriggerMode(definition);
+    const triggerNode = definition.nodes.find(
+      (node) => workflowNodeKind(node) === 'trigger',
+    );
+    const triggerConfig = triggerNode ? nodeConfig(triggerNode) : {};
 
     await this.db.transaction(async (tx) => {
       await tx
@@ -158,8 +171,76 @@ export class AutomationsService {
 
       await tx
         .update(schema.automations)
-        .set({ status: 'active', updatedAt: new Date() })
+        .set({
+          status: 'active',
+          triggerType,
+          updatedAt: new Date(),
+        })
         .where(eq(schema.automations.id, automationId));
+
+      const [existingTrigger] = await tx
+        .select()
+        .from(schema.automationTriggers)
+        .where(eq(schema.automationTriggers.automationId, automationId))
+        .limit(1);
+
+      if (triggerType === 'rss') {
+        const rssConfig = {
+          feedUrl: String(triggerConfig.feedUrl || '').trim(),
+          pollMinutes: Number(triggerConfig.pollMinutes ?? 15),
+          initialSync: String(triggerConfig.initialSync || 'baseline'),
+        };
+
+        if (existingTrigger) {
+          const previousConfig =
+            existingTrigger.config &&
+            typeof existingTrigger.config === 'object'
+              ? (existingTrigger.config as Record<string, unknown>)
+              : {};
+          const feedChanged =
+            String(previousConfig.feedUrl || '').trim() !== rssConfig.feedUrl;
+
+          await tx
+            .update(schema.automationTriggers)
+            .set({
+              type: 'rss',
+              config: rssConfig,
+              status: 'active',
+              leaseToken: null,
+              leaseExpiresAt: null,
+              nextPollAt: new Date(),
+              lastPolledAt: feedChanged
+                ? null
+                : existingTrigger.lastPolledAt,
+              lastTriggeredAt: feedChanged
+                ? null
+                : existingTrigger.lastTriggeredAt,
+              lastError: null,
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.automationTriggers.id, existingTrigger.id));
+        } else {
+          await tx.insert(schema.automationTriggers).values({
+            automationId,
+            type: 'rss',
+            config: rssConfig,
+            status: 'active',
+            nextPollAt: new Date(),
+          });
+        }
+      } else if (existingTrigger) {
+        await tx
+          .update(schema.automationTriggers)
+          .set({
+            status: 'paused',
+            leaseToken: null,
+            leaseExpiresAt: null,
+            nextPollAt: null,
+            lastError: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.automationTriggers.id, existingTrigger.id));
+      }
     });
 
     return {
@@ -167,6 +248,7 @@ export class AutomationsService {
       versionId: latest.id,
       versionNumber: latest.versionNumber,
       status: 'active',
+      triggerType,
     };
   }
 

@@ -518,6 +518,7 @@ export class AutomationRuntimeService {
   ) {
     const config = nodeConfig(node);
     const log = parseStepLog(step.logs);
+    const triggerContext = this.triggerContext(run.steps);
     let campaignId =
       numberConfig(config, 'campaignId') ||
       (typeof log.checkpoint?.campaignId === 'number'
@@ -533,8 +534,15 @@ export class AutomationRuntimeService {
       const channels = stringArrayConfig(config, 'channels');
       const created = await this.campaigns.create(run.automation.workspaceId, {
         brandId: numberConfig(config, 'brandId'),
-        name: stringConfig(config, 'name', goal) || goal,
-        description: stringConfig(config, 'description'),
+        name:
+          stringConfig(config, 'name') ||
+          (triggerContext.title
+            ? `${goal}: ${triggerContext.title}`.slice(0, 255)
+            : goal),
+        description:
+          stringConfig(config, 'description') ||
+          triggerContext.context ||
+          undefined,
         goal,
         channels,
       });
@@ -570,6 +578,55 @@ export class AutomationRuntimeService {
         variantIds: item.variants.map((variant) => variant.id),
       })),
     };
+  }
+
+  private triggerContext(
+    steps: Array<typeof schema.automationRunSteps.$inferSelect>,
+  ) {
+    for (const step of steps) {
+      const payload = parseStepLog(step.logs).triggerPayload;
+      if (!payload || typeof payload !== 'object') continue;
+
+      const source =
+        typeof payload.source === 'string' ? payload.source : 'external';
+      const item =
+        payload.item && typeof payload.item === 'object'
+          ? (payload.item as Record<string, unknown>)
+          : {};
+      const feed =
+        payload.feed && typeof payload.feed === 'object'
+          ? (payload.feed as Record<string, unknown>)
+          : {};
+
+      const title =
+        typeof item.title === 'string' ? item.title.trim() : undefined;
+      const summary =
+        typeof item.summary === 'string' ? item.summary.trim() : undefined;
+      const link =
+        typeof item.link === 'string' ? item.link.trim() : undefined;
+      const publishedAt =
+        typeof item.publishedAt === 'string'
+          ? item.publishedAt.trim()
+          : undefined;
+      const feedTitle =
+        typeof feed.title === 'string' ? feed.title.trim() : undefined;
+
+      const lines = [
+        `External trigger source: ${source}`,
+        feedTitle ? `Feed: ${feedTitle}` : undefined,
+        title ? `Source title: ${title}` : undefined,
+        publishedAt ? `Published at: ${publishedAt}` : undefined,
+        link ? `Source URL: ${link}` : undefined,
+        summary ? `Source summary: ${summary}` : undefined,
+      ].filter((value): value is string => Boolean(value));
+
+      return {
+        title,
+        context: lines.join('\n').slice(0, 14_000),
+      };
+    }
+
+    return { title: undefined, context: undefined };
   }
 
   private async executeSchedule(
