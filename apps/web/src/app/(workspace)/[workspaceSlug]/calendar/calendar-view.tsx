@@ -409,24 +409,25 @@ export function CalendarView({
       .sort((a, b) => a.date.getTime() - b.date.getTime());
 
   const dayPosts = postsForConceptualDay(currentDate);
+  const metricCards = [
+    { label: "Scheduled", value: counts.scheduled, Icon: CalendarClock },
+    { label: "Publishing", value: counts.publishing, Icon: RefreshCw },
+    { label: "Failed", value: counts.failed, Icon: AlertCircle },
+    { label: "Published", value: counts.published, Icon: CheckCircle2 },
+  ];
 
   return (
     <div className="space-y-4">
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ["Scheduled", counts.scheduled, CalendarClock],
-          ["Publishing", counts.publishing, RefreshCw],
-          ["Failed", counts.failed, AlertCircle],
-          ["Published", counts.published, CheckCircle2],
-        ].map(([label, value, Icon]) => (
-          <div key={String(label)} className="sostats-card p-4">
+        {metricCards.map(({ label, value, Icon }) => (
+          <div key={label} className="sostats-card p-4">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-[9px] font-medium text-muted-foreground">
-                  {String(label)}
+                  {label}
                 </p>
                 <p className="mt-1 text-2xl font-semibold tracking-[-0.04em]">
-                  {String(value)}
+                  {value}
                 </p>
               </div>
               <div className="sostats-icon h-8 w-8">
