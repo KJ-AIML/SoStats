@@ -208,21 +208,12 @@ export class WorkspacesController {
     },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.apiKeys.create(id, user.id, body);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'api_key.created',
-      targetType: 'workspace_api_key',
-      targetId: result.apiKey.id,
-      metadata: {
-        name: result.apiKey.name,
-        publicId: result.apiKey.publicId,
-        scopes: result.apiKey.scopes,
-        expiresAt: result.apiKey.expiresAt,
-      },
-    });
-    return result;
+    return this.apiKeys.create(
+      id,
+      user.id,
+      body,
+      actorFromUser(user),
+    );
   }
 
   @Post(':id/api-keys/:keyId/rotate')
@@ -232,21 +223,13 @@ export class WorkspacesController {
     @Body() body: { expiresInDays?: unknown },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.apiKeys.rotate(id, user.id, keyId, body);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'api_key.rotated',
-      targetType: 'workspace_api_key',
-      targetId: keyId,
-      metadata: {
-        name: result.apiKey.name,
-        publicId: result.apiKey.publicId,
-        scopes: result.apiKey.scopes,
-        expiresAt: result.apiKey.expiresAt,
-      },
-    });
-    return result;
+    return this.apiKeys.rotate(
+      id,
+      user.id,
+      keyId,
+      body,
+      actorFromUser(user),
+    );
   }
 
   @Delete(':id/api-keys/:keyId')
@@ -255,20 +238,12 @@ export class WorkspacesController {
     @Param('keyId', ParseIntPipe) keyId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.apiKeys.revoke(id, user.id, keyId);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'api_key.revoked',
-      targetType: 'workspace_api_key',
-      targetId: keyId,
-      metadata: {
-        name: result.name,
-        publicId: result.publicId,
-        scopes: result.scopes,
-      },
-    });
-    return result;
+    return this.apiKeys.revoke(
+      id,
+      user.id,
+      keyId,
+      actorFromUser(user),
+    );
   }
 
   @Post(':id/ownership-transfer')
