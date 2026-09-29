@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import { PageHeading } from "@/components/sostats/page-heading";
 import { MediaLibrary } from "@/components/media/media-library";
 import { loadWorkspaceSnapshot } from "@/lib/sostats-api.server";
@@ -16,12 +18,44 @@ export default async function MediaPage({
     snapshot = null;
   }
 
+  const brands =
+    snapshot?.brands.map((brand) => ({
+      id: brand.id,
+      name: brand.name,
+    })) || [];
+
+  const contentItems =
+    snapshot?.content
+      .filter((item) => !["scheduled", "published"].includes(item.status))
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        status: item.status,
+        brandId: item.brandId,
+        campaign: item.campaign?.name || "Unassigned",
+        variants:
+          item.variants?.map((variant) => ({
+            id: variant.id,
+            platform: variant.platform,
+            status: variant.status,
+          })) || [],
+      })) || [];
+
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6 xl:p-8">
       <PageHeading
         eyebrow="Media"
-        title="Verified media, ready for content"
-        description="Upload directly to private object storage. SoStats verifies the object, extracts real image/video metadata in the worker, and only marks the asset ready after processing succeeds."
+        title="Private assets, ready for real content"
+        description="Upload directly to private object storage, inspect verified metadata, attach ready media to draft/review content, and keep processing/deletion lifecycle safe."
+        actions={
+          <Link
+            href={`/${workspaceSlug}/content`}
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-black/[0.07] bg-white px-4 text-[10px] font-semibold text-neutral-700 transition hover:bg-neutral-50"
+          >
+            Open Content
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        }
       />
 
       {!snapshot && (
@@ -33,7 +67,9 @@ export default async function MediaPage({
       <MediaLibrary
         workspaceSlug={workspaceSlug}
         initialAssets={snapshot?.assets || []}
-        brandId={snapshot?.brand?.id}
+        brands={brands}
+        defaultBrandId={snapshot?.brand?.id}
+        contentItems={contentItems}
       />
     </div>
   );

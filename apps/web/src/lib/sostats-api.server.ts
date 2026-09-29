@@ -325,6 +325,16 @@ export type AssetRecord = {
   processingError?: string | null;
   uploadCompletedAt?: string | null;
   processedAt?: string | null;
+  usageCount?: number;
+  usages?: Array<{
+    id: number;
+    contentItemId?: number | null;
+    contentTitle?: string | null;
+    contentStatus?: string | null;
+    variantId?: number | null;
+    variantPlatform?: string | null;
+  }>;
+  tags?: Array<{ id: number; tag: string }>;
   createdAt?: string;
   updatedAt?: string;
 };

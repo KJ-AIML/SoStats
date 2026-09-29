@@ -58,6 +58,7 @@ Architecture notes:
 - [Stage 12 product UI completion: Calendar](docs/architecture/STAGE_12_PRODUCT_UI_CALENDAR.md)
 - [Stage 12 product UI completion: Automations](docs/architecture/STAGE_12_PRODUCT_UI_AUTOMATIONS.md)
 - [Stage 12 product UI completion: Analytics](docs/architecture/STAGE_12_PRODUCT_UI_ANALYTICS.md)
+- [Stage 12 product UI completion: Media](docs/architecture/STAGE_12_PRODUCT_UI_MEDIA.md)
 
 ## Repository layout
 
