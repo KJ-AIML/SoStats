@@ -343,7 +343,12 @@ Stage 11 extends `knowledge_sources` with:
 
 - `version_number`
 
-and changes its uniqueness contract to:
+For migration compatibility, the schema default for `active_version` is 1.
+Existing Stage 10 sources/chunks therefore remain active as version 1 when the
+new columns are added. All newly created sources explicitly start at
+`activeVersion=0` until their first successful indexing completes.
+
+The chunk uniqueness contract changes to:
 
 ```text
 (source_id, version_number, chunk_index)

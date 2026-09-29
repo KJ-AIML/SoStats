@@ -295,7 +295,7 @@ export const knowledgeSources = pgTable(
     storageKey: varchar('storage_key', { length: 1024 }),
     contentHash: varchar('content_hash', { length: 64 }),
     status: varchar('status', { length: 30 }).notNull().default('processing'),
-    activeVersion: integer('active_version').notNull().default(0),
+    activeVersion: integer('active_version').notNull().default(1),
     processingVersion: integer('processing_version'),
     processingToken: varchar('processing_token', { length: 64 }),
     embeddingModel: varchar('embedding_model', { length: 100 }),

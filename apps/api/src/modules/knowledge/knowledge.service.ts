@@ -199,6 +199,7 @@ export class KnowledgeService {
         mimeType: mediaType,
         contentHash,
         status: 'processing',
+        activeVersion: 0,
         processingVersion: 1,
       })
       .returning();
