@@ -1,35 +1,68 @@
 import {
   ConflictException,
-  Injectable,
   Inject,
+  Injectable,
+  Logger,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
-import { and, eq, lte } from 'drizzle-orm';
+import { and, eq, isNull, lte, or } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
-import { ProviderRegistry } from '../channels/ProviderRegistry.js';
-import { ProviderPublishError } from '../channels/ports/SocialPublisherPort.js';
-import { ChannelCredentialService } from '../channels/channel-credential.service.js';
-import { MediaService } from '../media/media.service.js';
 import { AuditLogService } from '../../common/audit/audit-log.service.js';
+import { ProviderRegistry } from '../channels/ProviderRegistry.js';
+import { ChannelCredentialService } from '../channels/channel-credential.service.js';
+import {
+  ProviderPublishError,
+  type PublishResult,
+} from '../channels/ports/SocialPublisherPort.js';
+import { MediaService } from '../media/media.service.js';
+import {
+  PublicationLedger,
+  type ClaimedAttempt,
+  type FailureRecord,
+} from './publication-ledger.js';
+import {
+  decideFailure,
+  failureMessage,
+  type FailureDecision,
+} from './publication-outcome.js';
+import {
+  PUBLISHING_CONFIG,
+  type PublishingConfig,
+} from './publishing.config.js';
 
-type DispatchablePublication = {
+const sp = schema.scheduledPublications;
+const DUE_TOLERANCE_MS = 10_000;
+
+export type DispatchablePublication = {
   id: number;
   scheduledAt: string;
+  nextAttemptAt: string | null;
   updatedAt: string;
+  dispatchGeneration: number;
 };
 
-type ExecuteResult =
+export type ExecuteRequest = {
+  expectedVersion: string;
+  expectedDispatchGeneration?: number;
+  queueJobId?: string;
+};
+
+export type ExecuteResult =
   | {
-      status: 'published';
+      status: 'published' | 'already_published';
       scheduledPublicationId: number;
       platformPostId?: string | null;
       platformPostUrl?: string | null;
     }
   | {
-      status: 'already_published' | 'stale' | 'terminal' | 'in_progress';
+      status:
+        | 'stale'
+        | 'terminal'
+        | 'in_progress'
+        | 'outcome_unknown'
+        | 'retry_scheduled';
       scheduledPublicationId: number;
     }
   | {
@@ -38,275 +71,111 @@ type ExecuteResult =
       reason: string;
     };
 
+type AttemptOutcome =
+  | { kind: 'success'; result: PublishResult; published: boolean }
+  | { kind: 'lease_lost' }
+  | {
+      kind: 'failure';
+      decision: Exclude<FailureDecision, { kind: 'lease_lost' }>;
+      recorded: FailureRecord;
+      message: string;
+      statusCode: number | null;
+    };
+
 @Injectable()
 export class PublishingService {
+  private readonly logger = new Logger(PublishingService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     private readonly providerRegistry: ProviderRegistry,
     private readonly credentials: ChannelCredentialService,
     private readonly mediaService: MediaService,
     private readonly audit: AuditLogService,
+    private readonly ledger: PublicationLedger,
+    @Inject(PUBLISHING_CONFIG) private readonly config: PublishingConfig,
   ) {}
-
-  private async reconcileStaleClaims() {
-    const cutoff = new Date(Date.now() - 15 * 60_000);
-    const staleJobs = await this.db.query.publicationJobs.findMany({
-      where: and(
-        eq(schema.publicationJobs.status, 'processing'),
-        lte(schema.publicationJobs.lastAttemptAt, cutoff),
-      ),
-      with: {
-        scheduledPublication: true,
-      },
-      limit: 50,
-    });
-
-    for (const job of staleJobs) {
-      const publication = job.scheduledPublication;
-      if (!publication || publication.status !== 'publishing') continue;
-
-      await this.db.transaction(async (tx) => {
-        await tx
-          .update(schema.publicationJobs)
-          .set({
-            status: 'failed',
-            nextAttemptAt: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.publicationJobs.id, job.id));
-
-        await tx.insert(schema.publicationResults).values({
-          publicationJobId: job.id,
-          errorType: 'unknown_outcome',
-          errorMessage:
-            'Publishing execution lease expired before SoStats could confirm the provider outcome. Automatic retry was stopped to avoid duplicate publication.',
-        });
-
-        await tx
-          .update(schema.scheduledPublications)
-          .set({ status: 'failed', updatedAt: new Date() })
-          .where(eq(schema.scheduledPublications.id, publication.id));
-      });
-    }
-  }
 
   async listDispatchable(
     until?: string,
     offset = 0,
     limit = 250,
   ): Promise<DispatchablePublication[]> {
-    await this.reconcileStaleClaims();
+    const swept = await this.ledger.sweepExpiredLeases();
+    for (const decision of swept) {
+      this.logEvent('publication.sweep', {
+        workspace_id: decision.workspaceId,
+        publication_id: decision.publicationId,
+        attempt_id: decision.attemptId,
+        outcome: decision.outcome,
+      });
+      if (decision.outcome !== 'retry_scheduled') {
+        await this.safeAudit(
+          decision.workspaceId,
+          decision.publicationId,
+          decision.outcome === 'unknown'
+            ? 'publication.outcome_unknown'
+            : 'publication.failed',
+          { attemptId: decision.attemptId, errorType: decision.outcome },
+        );
+      }
+    }
 
     const horizon = until ? new Date(until) : new Date(Date.now() + 120_000);
     if (Number.isNaN(horizon.getTime())) {
       throw new ConflictException('Invalid dispatch horizon');
     }
 
-    const safeOffset = Math.max(0, offset);
-    const safeLimit = Math.min(500, Math.max(1, limit));
-
     const records = await this.db.query.scheduledPublications.findMany({
       where: and(
-        eq(schema.scheduledPublications.status, 'scheduled'),
-        lte(schema.scheduledPublications.scheduledAt, horizon),
+        eq(sp.status, 'scheduled'),
+        lte(sp.scheduledAt, horizon),
+        or(isNull(sp.nextAttemptAt), lte(sp.nextAttemptAt, horizon)),
       ),
-      orderBy: (fields, { asc }) => [
-        asc(fields.scheduledAt),
-        asc(fields.id),
-      ],
-      limit: safeLimit,
-      offset: safeOffset,
+      orderBy: (fields, { asc }) => [asc(fields.scheduledAt), asc(fields.id)],
+      limit: Math.min(500, Math.max(1, limit)),
+      offset: Math.max(0, offset),
     });
 
     return records.map((record) => ({
       id: record.id,
       scheduledAt: record.scheduledAt.toISOString(),
+      nextAttemptAt: record.nextAttemptAt?.toISOString() ?? null,
       updatedAt: record.updatedAt.toISOString(),
+      dispatchGeneration: record.dispatchGeneration,
     }));
   }
 
-  private async getPublication(id: number) {
-    const publication = await this.db.query.scheduledPublications.findFirst({
-      where: eq(schema.scheduledPublications.id, id),
-      with: {
-        contentItem: true,
-        variant: true,
-        socialAccount: true,
-        jobs: {
-          with: { results: true },
-        },
-      },
-    });
+  async execute(id: number, request: ExecuteRequest): Promise<ExecuteResult> {
+    const publication = await this.getPublication(id);
+    const gate = this.gate(publication, request);
+    if (gate) return gate;
 
-    if (!publication) {
-      throw new NotFoundException('Scheduled publication not found');
-    }
-
-    return publication;
-  }
-
-  private latestResult(
-    publication: Awaited<ReturnType<PublishingService['getPublication']>>,
-  ) {
-    return publication.jobs
-      .flatMap((job) => job.results)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
-  }
-
-  private async beginAttempt(scheduledPublicationId: number) {
-    const existing = await this.db.query.publicationJobs.findFirst({
-      where: eq(
-        schema.publicationJobs.scheduledPublicationId,
-        scheduledPublicationId,
-      ),
-      orderBy: (fields, { desc }) => [desc(fields.createdAt)],
-    });
-
-    if (!existing) {
-      const [created] = await this.db
-        .insert(schema.publicationJobs)
-        .values({
-          scheduledPublicationId,
-          status: 'processing',
-          attempts: 1,
-          lastAttemptAt: new Date(),
-        })
-        .returning();
-      return created;
-    }
-
-    const [updated] = await this.db
-      .update(schema.publicationJobs)
-      .set({
-        status: 'processing',
-        attempts: existing.attempts + 1,
-        lastAttemptAt: new Date(),
-        nextAttemptAt: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.publicationJobs.id, existing.id))
-      .returning();
-
-    return updated;
-  }
-
-  private retryAt(attempts: number) {
-    const delay = Math.min(15 * 60_000, 30_000 * 2 ** Math.max(0, attempts - 1));
-    return new Date(Date.now() + delay);
-  }
-
-  private async recordFailure(
-    scheduledPublicationId: number,
-    jobId: number,
-    error: unknown,
-    terminal: boolean,
-  ) {
-    const providerError =
-      error instanceof ProviderPublishError ? error : undefined;
-    const errorType = providerError
-      ? providerError.outcomeUnknown
-        ? 'unknown_outcome'
-        : providerError.retryable
-          ? 'provider_retryable'
-          : 'provider_rejected'
-      : 'unexpected_error';
-    const message =
-      error instanceof Error ? error.message.slice(0, 1500) : String(error);
-
-    const job = await this.db.query.publicationJobs.findFirst({
-      where: eq(schema.publicationJobs.id, jobId),
-    });
-
-    await this.db.transaction(async (tx) => {
-      await tx.insert(schema.publicationResults).values({
-        publicationJobId: jobId,
-        errorType,
-        errorMessage: message,
-      });
-
-      await tx
-        .update(schema.publicationJobs)
-        .set({
-          status: 'failed',
-          nextAttemptAt:
-            terminal || !job ? null : this.retryAt(job.attempts),
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.publicationJobs.id, jobId));
-
-      await tx
-        .update(schema.scheduledPublications)
-        .set({ status: terminal ? 'failed' : 'scheduled' })
-        .where(eq(schema.scheduledPublications.id, scheduledPublicationId));
-    });
-
-    return { errorType, message };
-  }
-
-  async execute(
-    scheduledPublicationId: number,
-    expectedVersion: string,
-  ): Promise<ExecuteResult> {
-    const publication = await this.getPublication(scheduledPublicationId);
-
-    if (publication.updatedAt.toISOString() !== expectedVersion) {
-      return { status: 'stale', scheduledPublicationId };
-    }
-
-    if (publication.status === 'published') {
-      const result = this.latestResult(publication);
-      return {
-        status: 'already_published',
-        scheduledPublicationId,
-        ...(result
-          ? {
-              platformPostId: result.platformPostId,
-              platformPostUrl: result.platformPostUrl,
-            }
-          : {}),
-      } as ExecuteResult;
-    }
-
-    if (publication.status === 'failed' || publication.status === 'cancelled') {
-      return { status: 'terminal', scheduledPublicationId };
-    }
-
-    if (publication.status === 'publishing') {
-      return { status: 'in_progress', scheduledPublicationId };
-    }
-
-    if (publication.scheduledAt.getTime() > Date.now() + 10_000) {
+    const dueLimit = Date.now() + DUE_TOLERANCE_MS;
+    if (
+      publication.scheduledAt.getTime() > dueLimit ||
+      (publication.nextAttemptAt &&
+        publication.nextAttemptAt.getTime() > dueLimit)
+    ) {
       throw new ConflictException('Scheduled publication is not due yet');
     }
 
-    const [claimed] = await this.db
-      .update(schema.scheduledPublications)
-      .set({ status: 'publishing' })
-      .where(
-        and(
-          eq(schema.scheduledPublications.id, scheduledPublicationId),
-          eq(schema.scheduledPublications.status, 'scheduled'),
-          eq(
-            schema.scheduledPublications.updatedAt,
-            new Date(expectedVersion),
-          ),
-        ),
-      )
-      .returning();
-
-    if (!claimed) {
-      const current = await this.getPublication(scheduledPublicationId);
-      if (current.status === 'published') {
-        return { status: 'already_published', scheduledPublicationId };
-      }
-      if (current.updatedAt.toISOString() !== expectedVersion) {
-        return { status: 'stale', scheduledPublicationId };
-      }
-      return { status: 'in_progress', scheduledPublicationId };
+    const claim = await this.ledger.claim({
+      publicationId: id,
+      expectedVersion: request.expectedVersion,
+      expectedDispatchGeneration: request.expectedDispatchGeneration,
+    });
+    if (!claim) {
+      return (
+        this.gate(await this.getPublication(id), request) ?? {
+          status: 'in_progress',
+          scheduledPublicationId: id,
+        }
+      );
     }
 
-    const job = await this.beginAttempt(scheduledPublicationId);
-
+    const marker = { set: false };
+    let outcome: AttemptOutcome;
     try {
       const account = publication.socialAccount;
       const adapter = this.providerRegistry.getProvider(account.provider);
@@ -314,7 +183,6 @@ export class PublishingService {
         account,
         adapter,
       );
-
       const content =
         publication.variant?.content ||
         publication.contentItem.description ||
@@ -328,210 +196,265 @@ export class PublishingService {
       const result = await adapter.publishPost(content, accessToken, {
         providerAccountId: account.providerAccountId,
         media,
-        signal: AbortSignal.timeout(120_000),
-        // Transitional (Task 3 → Task 5): Task 5 replaces this with the lease-checked marker.
-        beforeSideEffect: () => Promise.resolve(),
-      });
-
-      await this.db.transaction(async (tx) => {
-        await tx.insert(schema.publicationResults).values({
-          publicationJobId: job.id,
-          platformPostId: result.postId,
-          platformPostUrl: result.url,
-        });
-
-        await tx
-          .update(schema.publicationJobs)
-          .set({
-            status: 'completed',
-            nextAttemptAt: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.publicationJobs.id, job.id));
-
-        await tx
-          .update(schema.scheduledPublications)
-          .set({ status: 'published', updatedAt: new Date() })
-          .where(
-            eq(
-              schema.scheduledPublications.id,
-              scheduledPublicationId,
-            ),
-          );
-
-        if (publication.variantId) {
-          await tx
-            .update(schema.contentVariants)
-            .set({
-              status: 'published',
-              publishedAt: new Date(),
-              updatedAt: new Date(),
-            })
-            .where(eq(schema.contentVariants.id, publication.variantId));
-        }
-
-        const siblings = await tx.query.scheduledPublications.findMany({
-          where: eq(
-            schema.scheduledPublications.contentItemId,
-            publication.contentItemId,
-          ),
-        });
-
-        const allTerminallyPublished = siblings.every((sibling) =>
-          sibling.id === scheduledPublicationId
-            ? true
-            : ['published', 'cancelled'].includes(sibling.status),
-        );
-
-        if (allTerminallyPublished) {
-          await tx
-            .update(schema.contentItems)
-            .set({ status: 'published', updatedAt: new Date() })
-            .where(eq(schema.contentItems.id, publication.contentItemId));
-        }
-      });
-
-      await this.audit.record({
-        workspaceId: publication.workspaceId,
-        actor: {
-          userId: null,
-          email: null,
-          authMethod: 'system',
-        },
-        action: 'publication.published',
-        targetType: 'scheduled_publication',
-        targetId: scheduledPublicationId,
-        metadata: {
-          contentItemId: publication.contentItemId,
-          variantId: publication.variantId,
-          socialAccountId: publication.socialAccountId,
-          provider: account.provider,
-          platformPostId: result.postId,
-          platformPostUrl: result.url,
+        signal: AbortSignal.timeout(this.config.providerBudgetMs),
+        beforeSideEffect: async (checkpoint) => {
+          await this.ledger.markSideEffect(claim, checkpoint);
+          marker.set = true;
         },
       });
+      outcome = {
+        kind: 'success',
+        result,
+        published: await this.ledger.recordSuccess(claim, result),
+      };
+    } catch (error) {
+      outcome = await this.recordError(claim, error, marker.set);
+    }
 
+    return this.finish(
+      publication,
+      claim,
+      outcome,
+      request.queueJobId,
+      marker.set,
+    );
+  }
+
+  async deadLetter(id: number) {
+    const publication = await this.db.query.scheduledPublications.findFirst({
+      where: eq(sp.id, id),
+      columns: { id: true, status: true },
+    });
+    if (!publication) {
+      throw new NotFoundException('Scheduled publication not found');
+    }
+    // Spec I8 / §5.3: transport exhaustion never changes publication state.
+    this.logEvent('publication.transport_exhausted', {
+      publication_id: id,
+      status: publication.status,
+      source: 'legacy_dead_letter',
+    });
+    return { status: publication.status, scheduledPublicationId: id };
+  }
+
+  private async getPublication(id: number) {
+    const publication = await this.db.query.scheduledPublications.findFirst({
+      where: eq(sp.id, id),
+      with: {
+        contentItem: true,
+        variant: true,
+        socialAccount: true,
+        jobs: { with: { results: true } },
+      },
+    });
+    if (!publication) {
+      throw new NotFoundException('Scheduled publication not found');
+    }
+    return publication;
+  }
+
+  private gate(
+    publication: Awaited<ReturnType<PublishingService['getPublication']>>,
+    request: ExecuteRequest,
+  ): ExecuteResult | null {
+    const scheduledPublicationId = publication.id;
+    switch (publication.status) {
+      case 'published': {
+        const result = publication.jobs
+          .flatMap((job) => job.results)
+          .filter((row) => row.platformPostId)
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+        return {
+          status: 'already_published',
+          scheduledPublicationId,
+          platformPostId: result?.platformPostId ?? null,
+          platformPostUrl: result?.platformPostUrl ?? null,
+        };
+      }
+      case 'failed':
+      case 'cancelled':
+        return { status: 'terminal', scheduledPublicationId };
+      case 'unknown':
+      case 'needs_review':
+        return { status: 'outcome_unknown', scheduledPublicationId };
+      case 'publishing':
+        return { status: 'in_progress', scheduledPublicationId };
+    }
+
+    const stale =
+      request.expectedDispatchGeneration === undefined
+        ? publication.updatedAt.toISOString() !== request.expectedVersion
+        : publication.dispatchGeneration !== request.expectedDispatchGeneration;
+    return stale ? { status: 'stale', scheduledPublicationId } : null;
+  }
+
+  private async recordError(
+    claim: ClaimedAttempt,
+    error: unknown,
+    markerSet: boolean,
+  ): Promise<AttemptOutcome> {
+    const decision = decideFailure(error, markerSet);
+    if (decision.kind === 'lease_lost') return { kind: 'lease_lost' };
+
+    const message = failureMessage(error);
+    const recorded = await this.ledger.recordFailure(
+      claim,
+      decision.kind,
+      decision.errorClass,
+      message,
+    );
+    return {
+      kind: 'failure',
+      decision,
+      recorded,
+      message,
+      statusCode:
+        error instanceof ProviderPublishError
+          ? (error.statusCode ?? null)
+          : null,
+    };
+  }
+
+  private async finish(
+    publication: Awaited<ReturnType<PublishingService['getPublication']>>,
+    claim: ClaimedAttempt,
+    outcome: AttemptOutcome,
+    queueJobId: string | undefined,
+    markerSet: boolean,
+  ): Promise<ExecuteResult> {
+    const scheduledPublicationId = publication.id;
+    const fields = {
+      workspace_id: publication.workspaceId,
+      publication_id: scheduledPublicationId,
+      attempt_id: claim.attemptId,
+      attempt_number: claim.attemptNumber,
+      attempt_count: claim.attemptCount,
+      dispatch_generation: claim.dispatchGeneration,
+      provider: publication.socialAccount.provider,
+      social_account_id: publication.socialAccountId,
+      queue_job_id: queueJobId ?? null,
+      marker_set: markerSet,
+    };
+    const auditBase = {
+      contentItemId: publication.contentItemId,
+      variantId: publication.variantId,
+      socialAccountId: publication.socialAccountId,
+      provider: publication.socialAccount.provider,
+      attemptId: claim.attemptId,
+    };
+
+    if (outcome.kind === 'success') {
+      this.logEvent('publication.attempt', {
+        ...fields,
+        outcome: outcome.published
+          ? 'published'
+          : 'ownership_lost_after_success',
+        error_class: null,
+        status_code: null,
+      });
+      if (!outcome.published) {
+        return { status: 'in_progress', scheduledPublicationId };
+      }
+      await this.safeAudit(
+        publication.workspaceId,
+        scheduledPublicationId,
+        'publication.published',
+        {
+          ...auditBase,
+          platformPostId: outcome.result.postId,
+          platformPostUrl: outcome.result.url,
+        },
+      );
       return {
         status: 'published',
         scheduledPublicationId,
-        platformPostId: result.postId,
-        platformPostUrl: result.url,
+        platformPostId: outcome.result.postId,
+        platformPostUrl: outcome.result.url,
       };
-    } catch (error) {
-      const providerError =
-        error instanceof ProviderPublishError ? error : undefined;
-      const terminal =
-        !providerError ||
-        providerError.outcomeUnknown ||
-        !providerError.retryable;
+    }
 
-      const failure = await this.recordFailure(
-        scheduledPublicationId,
-        job.id,
-        error,
-        terminal,
-      );
+    if (outcome.kind === 'lease_lost') {
+      this.logEvent('publication.attempt', {
+        ...fields,
+        outcome: 'lease_lost',
+        error_class: null,
+        status_code: null,
+      });
+      return { status: 'in_progress', scheduledPublicationId };
+    }
 
-      if (terminal) {
-        await this.audit.record({
-          workspaceId: publication.workspaceId,
-          actor: {
-            userId: null,
-            email: null,
-            authMethod: 'system',
+    this.logEvent('publication.attempt', {
+      ...fields,
+      outcome: outcome.recorded,
+      error_class: outcome.decision.errorClass,
+      status_code: outcome.statusCode,
+      contract_violation:
+        outcome.decision.kind === 'unknown'
+          ? outcome.decision.contractViolation
+          : false,
+    });
+
+    switch (outcome.recorded) {
+      case 'retry_scheduled':
+        return { status: 'retry_scheduled', scheduledPublicationId };
+      case 'unknown':
+        await this.safeAudit(
+          publication.workspaceId,
+          scheduledPublicationId,
+          'publication.outcome_unknown',
+          { ...auditBase, errorType: outcome.decision.errorClass },
+        );
+        return { status: 'outcome_unknown', scheduledPublicationId };
+      case 'failed':
+      case 'retry_exhausted':
+        await this.safeAudit(
+          publication.workspaceId,
+          scheduledPublicationId,
+          'publication.failed',
+          {
+            ...auditBase,
+            errorType:
+              outcome.recorded === 'retry_exhausted'
+                ? 'retry_exhausted'
+                : outcome.decision.errorClass,
           },
-          action: 'publication.failed',
-          targetType: 'scheduled_publication',
-          targetId: scheduledPublicationId,
-          metadata: {
-            contentItemId: publication.contentItemId,
-            variantId: publication.variantId,
-            socialAccountId: publication.socialAccountId,
-            provider: publication.socialAccount.provider,
-            jobId: job.id,
-            errorType: failure.errorType,
-          },
-        });
-
+        );
         return {
           status: 'failed_terminal',
           scheduledPublicationId,
-          reason: failure.message,
+          reason: outcome.message,
         };
-      }
-
-      throw new ServiceUnavailableException(failure.message);
+      case 'ownership_lost':
+        return { status: 'in_progress', scheduledPublicationId };
     }
   }
 
-  async deadLetter(
+  /** Audit is post-commit until #33; its failure must never change the committed outcome. */
+  private async safeAudit(
+    workspaceId: number,
     scheduledPublicationId: number,
-    expectedVersion: string,
-    reason?: string,
+    action: string,
+    metadata: Record<string, unknown>,
   ) {
-    const publication = await this.getPublication(scheduledPublicationId);
-
-    if (
-      publication.status === 'published' ||
-      publication.updatedAt.toISOString() !== expectedVersion
-    ) {
-      return {
-        status: publication.status,
-        scheduledPublicationId,
-      };
+    try {
+      await this.audit.record({
+        workspaceId,
+        actor: { userId: null, email: null, authMethod: 'system' },
+        action,
+        targetType: 'scheduled_publication',
+        targetId: scheduledPublicationId,
+        metadata,
+      });
+    } catch {
+      this.logEvent('publication.audit_failed', {
+        workspace_id: workspaceId,
+        publication_id: scheduledPublicationId,
+        action,
+      });
     }
+  }
 
-    const latestJob = publication.jobs.sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-    )[0];
-
-    await this.db.transaction(async (tx) => {
-      await tx
-        .update(schema.scheduledPublications)
-        .set({ status: 'failed', updatedAt: new Date() })
-        .where(eq(schema.scheduledPublications.id, scheduledPublicationId));
-
-      if (latestJob) {
-        await tx
-          .update(schema.publicationJobs)
-          .set({
-            status: 'failed',
-            nextAttemptAt: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.publicationJobs.id, latestJob.id));
-
-        if (reason) {
-          await tx.insert(schema.publicationResults).values({
-            publicationJobId: latestJob.id,
-            errorType: 'retry_exhausted',
-            errorMessage: reason.slice(0, 1500),
-          });
-        }
-      }
-    });
-
-    await this.audit.record({
-      workspaceId: publication.workspaceId,
-      actor: {
-        userId: null,
-        email: null,
-        authMethod: 'system',
-      },
-      action: 'publication.failed',
-      targetType: 'scheduled_publication',
-      targetId: scheduledPublicationId,
-      metadata: {
-        contentItemId: publication.contentItemId,
-        variantId: publication.variantId,
-        socialAccountId: publication.socialAccountId,
-        provider: publication.socialAccount.provider,
-        jobId: latestJob?.id,
-        errorType: 'retry_exhausted',
-        hasReason: Boolean(reason),
-      },
-    });
-
-    return { status: 'failed', scheduledPublicationId };
+  private logEvent(event: string, fields: Record<string, unknown>) {
+    this.logger.log(JSON.stringify({ event, ...fields }));
   }
 }

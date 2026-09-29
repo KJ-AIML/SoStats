@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Post,
@@ -11,7 +13,49 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../../common/auth/public.decorator.js';
 import { WorkerTokenGuard } from '../../common/internal/worker-token.guard.js';
-import { PublishingService } from './publishing.service.js';
+import {
+  PublishingService,
+  type ExecuteRequest,
+} from './publishing.service.js';
+
+export function parseExecuteBody(body: unknown): ExecuteRequest {
+  const input = (body && typeof body === 'object' ? body : {}) as Record<
+    string,
+    unknown
+  >;
+  if (
+    typeof input.expectedVersion !== 'string' ||
+    Number.isNaN(Date.parse(input.expectedVersion))
+  ) {
+    throw new BadRequestException('expectedVersion must be an ISO timestamp');
+  }
+
+  let expectedDispatchGeneration: number | undefined;
+  const raw = input.expectedDispatchGeneration;
+  if (raw !== undefined && raw !== null) {
+    const parsed =
+      typeof raw === 'number'
+        ? raw
+        : typeof raw === 'string' && /^\d+$/.test(raw)
+          ? Number(raw)
+          : Number.NaN;
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new BadRequestException(
+        'expectedDispatchGeneration must be a positive integer',
+      );
+    }
+    expectedDispatchGeneration = parsed;
+  }
+
+  return {
+    expectedVersion: input.expectedVersion,
+    expectedDispatchGeneration,
+    queueJobId:
+      typeof input.queueJobId === 'string'
+        ? input.queueJobId.slice(0, 200)
+        : undefined,
+  };
+}
 
 @Public()
 @SkipThrottle()
@@ -34,19 +78,15 @@ export class PublishingController {
   }
 
   @Post(':id/execute')
-  execute(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('expectedVersion') expectedVersion: string,
-  ) {
-    return this.publishingService.execute(id, expectedVersion);
+  @HttpCode(200)
+  execute(@Param('id', ParseIntPipe) id: number, @Body() body: unknown) {
+    return this.publishingService.execute(id, parseExecuteBody(body));
   }
 
+  /** Legacy workers only; a no-op per spec §5.3. */
   @Post(':id/dead-letter')
-  deadLetter(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('expectedVersion') expectedVersion: string,
-    @Body('reason') reason?: string,
-  ) {
-    return this.publishingService.deadLetter(id, expectedVersion, reason);
+  @HttpCode(200)
+  deadLetter(@Param('id', ParseIntPipe) id: number) {
+    return this.publishingService.deadLetter(id);
   }
 }
