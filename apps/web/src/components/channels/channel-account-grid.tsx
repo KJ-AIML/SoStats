@@ -340,8 +340,9 @@ export function ChannelAccountGrid({
 
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {account.capabilities &&
-                    Object.entries(account.capabilities).map(
-                      ([capability, enabled]) => (
+                    Object.entries(account.capabilities)
+                      .filter(([, enabled]) => typeof enabled === "boolean")
+                      .map(([capability, enabled]) => (
                         <span
                           key={capability}
                           className={
@@ -353,8 +354,12 @@ export function ChannelAccountGrid({
                           {capability.replaceAll("_", " ")} ·{" "}
                           {enabled ? "yes" : "no"}
                         </span>
-                      ),
-                    )}
+                      ))}
+                  {account.capabilities?.requiresMedia && (
+                    <span className="rounded-md bg-amber-50 px-2 py-1 text-[7px] font-medium text-amber-700">
+                      media required
+                    </span>
+                  )}
                 </div>
               </section>
             );
