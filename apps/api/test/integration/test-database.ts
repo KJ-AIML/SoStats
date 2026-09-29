@@ -53,53 +53,70 @@ export async function createTestDatabase(
     await admin.end();
   }
 
-  const url = new URL(adminUrl());
-  url.pathname = `/${name}`;
-  const sql = postgres(url.toString(), { max: 10, onnotice: () => {} });
-  await sql
-    .unsafe(readSql(path.join(repoRoot, 'infra/postgres/init/001-pgvector.sql')))
-    .simple();
-  await sql.unsafe(readSql(path.join(here, 'pre-007-schema.sql'))).simple();
+  let pool: postgres.Sql | undefined;
+  try {
+    const url = new URL(adminUrl());
+    url.pathname = `/${name}`;
+    const sql = (pool = postgres(url.toString(), {
+      max: 10,
+      onnotice: () => {},
+    }));
+    await sql
+      .unsafe(
+        readSql(path.join(repoRoot, 'infra/postgres/init/001-pgvector.sql')),
+      )
+      .simple();
+    await sql.unsafe(readSql(path.join(here, 'pre-007-schema.sql'))).simple();
 
-  const applyPostBaselineMigrations: TestDatabase['applyPostBaselineMigrations'] =
-    async (migrationOptions = {}) => {
-      const connection = await sql.reserve();
-      try {
-        if (migrationOptions.inflightPublications) {
-          await connection.unsafe(
-            `set sostats.inflight_publications = '${migrationOptions.inflightPublications}'`,
-          );
-        }
-        for (const file of postBaselineMigrationFiles()) {
-          try {
-            await connection.unsafe(readSql(file)).simple();
-          } catch (error) {
-            await connection.unsafe('rollback');
-            throw error;
+    const applyPostBaselineMigrations: TestDatabase['applyPostBaselineMigrations'] =
+      async (migrationOptions = {}) => {
+        const connection = await sql.reserve();
+        try {
+          if (migrationOptions.inflightPublications) {
+            await connection.unsafe(
+              `set sostats.inflight_publications = '${migrationOptions.inflightPublications}'`,
+            );
           }
+          for (const file of postBaselineMigrationFiles()) {
+            try {
+              await connection.unsafe(readSql(file)).simple();
+            } catch (error) {
+              await connection.unsafe('rollback');
+              throw error;
+            }
+          }
+        } finally {
+          if (migrationOptions.inflightPublications) {
+            await connection.unsafe(`set sostats.inflight_publications = ''`);
+          }
+          connection.release();
         }
-      } finally {
-        if (migrationOptions.inflightPublications) {
-          await connection.unsafe(`set sostats.inflight_publications = ''`);
+      };
+
+    if (options.migrate !== false) await applyPostBaselineMigrations();
+
+    return {
+      db: drizzle(sql, { schema }),
+      sql,
+      applyPostBaselineMigrations,
+      async drop() {
+        await sql.end();
+        const cleanup = postgres(adminUrl(), { max: 1, onnotice: () => {} });
+        try {
+          await cleanup.unsafe(`drop database if exists ${name} with (force)`);
+        } finally {
+          await cleanup.end();
         }
-        connection.release();
-      }
+      },
     };
-
-  if (options.migrate !== false) await applyPostBaselineMigrations();
-
-  return {
-    db: drizzle(sql, { schema }),
-    sql,
-    applyPostBaselineMigrations,
-    async drop() {
-      await sql.end();
-      const cleanup = postgres(adminUrl(), { max: 1, onnotice: () => {} });
-      try {
-        await cleanup.unsafe(`drop database if exists ${name} with (force)`);
-      } finally {
-        await cleanup.end();
-      }
-    },
-  };
+  } catch (error) {
+    await pool?.end().catch(() => {});
+    const cleanup = postgres(adminUrl(), { max: 1, onnotice: () => {} });
+    try {
+      await cleanup.unsafe(`drop database if exists ${name} with (force)`);
+    } finally {
+      await cleanup.end();
+    }
+    throw error;
+  }
 }
