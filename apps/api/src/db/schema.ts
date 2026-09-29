@@ -360,6 +360,10 @@ export const campaigns = pgTable('campaigns', {
   description: text('description'),
   goal: varchar('goal', { length: 255 }),
   status: varchar('status', { length: 50 }).notNull().default('draft'), // draft, active, completed, archived
+  generationContext: jsonb('generation_context')
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   startDate: timestamp('start_date'),
   endDate: timestamp('end_date'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
