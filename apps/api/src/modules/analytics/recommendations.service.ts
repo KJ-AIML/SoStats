@@ -105,8 +105,30 @@ export class RecommendationsService {
   async generate(
     workspaceId: number,
     brandId?: number,
-    options: { supersedePending?: boolean } = {},
+    options: {
+      supersedePending?: boolean;
+      generationId?: string;
+    } = {},
   ) {
+    const requestedGenerationId = options.generationId?.trim().slice(0, 64);
+    if (requestedGenerationId) {
+      const existing = await this.db.query.aiInsights.findMany({
+        where: and(
+          eq(schema.aiInsights.workspaceId, workspaceId),
+          eq(schema.aiInsights.generationId, requestedGenerationId),
+        ),
+        orderBy: (fields, { asc }) => [asc(fields.id)],
+      });
+
+      if (existing.length) {
+        return {
+          generationId: requestedGenerationId,
+          summary: existing[0]?.summary || '',
+          insights: existing,
+        };
+      }
+    }
+
     const evidence = await this.buildEvidence(workspaceId);
     if (!evidence.metrics.length || !evidence.contentPerformance.length) {
       throw new BadRequestException(
@@ -148,7 +170,7 @@ export class RecommendationsService {
       clearTimeout(timer);
     }
 
-    const generationId = randomUUID();
+    const generationId = requestedGenerationId || randomUUID();
     const safeInsights = (generated.insights || [])
       .slice(0, 5)
       .map((insight) => {
