@@ -32,19 +32,11 @@ export class WorkspacesController {
     @Body('name') name: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const workspace = await this.workspacesService.create(name, user.id);
-    await this.audit.record({
-      workspaceId: workspace.id,
-      actor: actorFromUser(user),
-      action: 'workspace.created',
-      targetType: 'workspace',
-      targetId: workspace.id,
-      metadata: {
-        name: workspace.name,
-        slug: workspace.slug,
-      },
-    });
-    return workspace;
+    return this.workspacesService.create(
+      name,
+      user.id,
+      actorFromUser(user),
+    );
   }
 
   @Get()
@@ -133,26 +125,12 @@ export class WorkspacesController {
     @Body() body: { name?: string; timezone?: string },
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const workspace = await this.workspacesService.updateSettings(
+    return this.workspacesService.updateSettings(
       id,
       user.id,
       body,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'workspace.settings_updated',
-      targetType: 'workspace',
-      targetId: id,
-      metadata: {
-        changedFields: Object.keys(body).filter(
-          (field) => body[field as keyof typeof body] !== undefined,
-        ),
-        name: body.name,
-        timezone: body.timezone,
-      },
-    });
-    return workspace;
   }
 
   @Post(':id/invitations')
@@ -272,24 +250,13 @@ export class WorkspacesController {
     @Body('role') role: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.workspacesService.updateMemberRole(
+    return this.workspacesService.updateMemberRole(
       id,
       user.id,
       memberId,
       role,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'member.role_updated',
-      targetType: 'workspace_member',
-      targetId: memberId,
-      metadata: {
-        userId: result.userId,
-        role: result.role,
-      },
-    });
-    return result;
   }
 
   @Delete(':id/members/:memberId')
@@ -298,22 +265,12 @@ export class WorkspacesController {
     @Param('memberId', ParseIntPipe) memberId: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const result = await this.workspacesService.removeMember(
+    return this.workspacesService.removeMember(
       id,
       user.id,
       memberId,
+      actorFromUser(user),
     );
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'member.removed',
-      targetType: 'workspace_member',
-      targetId: memberId,
-      metadata: {
-        removed: true,
-      },
-    });
-    return result;
   }
 
   @Get(':id')
@@ -330,16 +287,12 @@ export class WorkspacesController {
     @Body('name') name: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const workspace = await this.workspacesService.update(id, user.id, name);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'workspace.name_updated',
-      targetType: 'workspace',
-      targetId: id,
-      metadata: { name: workspace.name },
-    });
-    return workspace;
+    return this.workspacesService.update(
+      id,
+      user.id,
+      name,
+      actorFromUser(user),
+    );
   }
 
   @Delete(':id')
@@ -347,18 +300,10 @@ export class WorkspacesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const workspace = await this.workspacesService.remove(id, user.id);
-    await this.audit.record({
-      workspaceId: id,
-      actor: actorFromUser(user),
-      action: 'workspace.deleted',
-      targetType: 'workspace',
-      targetId: id,
-      metadata: {
-        name: workspace.name,
-        slug: workspace.slug,
-      },
-    });
-    return workspace;
+    return this.workspacesService.remove(
+      id,
+      user.id,
+      actorFromUser(user),
+    );
   }
 }
