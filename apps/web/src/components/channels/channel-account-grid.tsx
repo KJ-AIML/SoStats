@@ -320,7 +320,7 @@ export function ChannelAccountGrid({
                       className="h-9 rounded-xl border-red-100 text-[8px] text-red-700 hover:bg-red-50"
                       title={
                         disconnectBlockers > 0
-                          ? "Resolve or cancel scheduled publications before disconnecting. Unconfirmed publications need a provider check first."
+                          ? "Resolve scheduled or in-progress publications before disconnecting. Unconfirmed publications need a provider check first."
                           : "Disconnect credentials and preserve history"
                       }
                     >

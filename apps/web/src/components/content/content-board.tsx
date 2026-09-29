@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { statusLabel } from "@/lib/publication-status";
 import { addHours, format } from "date-fns";
 import {
   DndContext,
@@ -1242,7 +1243,7 @@ export function ContentBoard({
                             </p>
                           </div>
                           <span className="text-[8px] font-semibold capitalize text-neutral-500">
-                            {schedule.status}
+                            {statusLabel(schedule.status)}
                           </span>
                         </div>
                       ))}

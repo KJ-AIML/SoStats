@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { statusLabel, statusTone } from "@/lib/publication-status";
 import {
   addDays,
   addMonths,
@@ -65,24 +66,6 @@ type Post = {
 const initialToday = new Date();
 const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function statusTone(status: string) {
-  switch (status) {
-    case "published":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "failed":
-      return "border-red-200 bg-red-50 text-red-700";
-    case "publishing":
-      return "border-amber-200 bg-amber-50 text-amber-700";
-    case "cancelled":
-      return "border-neutral-200 bg-neutral-100 text-neutral-500";
-    case "unknown":
-    case "needs_review":
-      return "border-orange-200 bg-orange-50 text-orange-700";
-    default:
-      return "border-[#ef2b2d]/10 bg-[#fff7f7] text-[#d92023]";
-  }
-}
-
 function StatusIcon({ status }: { status: string }) {
   if (status === "published") return <CheckCircle2 className="h-3 w-3" />;
   if (status === "failed") return <AlertCircle className="h-3 w-3" />;
@@ -92,12 +75,6 @@ function StatusIcon({ status }: { status: string }) {
     return <AlertCircle className="h-3 w-3" />;
   }
   return <Clock3 className="h-3 w-3" />;
-}
-
-function statusLabel(status: string) {
-  if (status === "unknown") return "Unconfirmed";
-  if (status === "needs_review") return "Needs review";
-  return status.replaceAll("_", " ");
 }
 
 function providerLabel(value: string) {
