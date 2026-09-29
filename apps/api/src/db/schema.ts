@@ -168,7 +168,7 @@ export const workspaceAuditEvents = pgTable(
     actorEmail: varchar('actor_email', { length: 255 }),
     authMethod: varchar('auth_method', { length: 40 }).notNull(),
     apiKeyId: integer('api_key_id'),
-    sourceOutboxEventId: integer('source_outbox_event_id').unique(),
+    sourceOutboxEventId: integer('source_outbox_event_id'),
     action: varchar('action', { length: 120 }).notNull(),
     targetType: varchar('target_type', { length: 80 }).notNull(),
     targetId: varchar('target_id', { length: 120 }),
@@ -186,6 +186,11 @@ export const workspaceAuditEvents = pgTable(
       table.workspaceId,
       table.action,
     ),
+    workspaceAuditSourceOutboxIdx: uniqueIndex(
+      'workspace_audit_source_outbox_idx',
+    )
+      .on(table.sourceOutboxEventId)
+      .where(sql`${table.sourceOutboxEventId} is not null`),
     workspaceAuditAuthMethodCheck: check(
       'workspace_audit_auth_method_check',
       sql`${table.authMethod} in ('jwt', 'development', 'api_key', 'invitation_token', 'system')`,
