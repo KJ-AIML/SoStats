@@ -31,7 +31,7 @@ export class ChannelsOAuthController {
       errorDescription,
     );
 
-    if (result.accounts?.length) {
+    if ('accounts' in result && result.accounts?.length) {
       for (const account of result.accounts) {
         await this.audit.record({
           workspaceId: account.workspaceId,
