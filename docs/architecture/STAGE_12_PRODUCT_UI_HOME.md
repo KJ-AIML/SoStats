@@ -93,8 +93,8 @@ the dashboard falls back to saved workflow configuration.
 
 ### Upcoming content
 
-Shows only future scheduled publications and limits the visual preview to four
-items. The KPI count remains the complete upcoming count.
+Shows scheduled publication state ordered by scheduled time and limits the visual
+preview to four items. The KPI count remains the complete scheduled queue.
 
 ### Connected channels
 
