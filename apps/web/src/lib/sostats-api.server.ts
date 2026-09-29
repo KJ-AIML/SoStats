@@ -75,6 +75,7 @@ export type CampaignRecord = {
       sourceId: number;
       sourceTitle: string;
       sourceUrl?: string | null;
+      versionNumber?: number;
       similarity: number;
     }>;
   } | Record<string, unknown>;

@@ -111,6 +111,7 @@ export class CampaignsService {
       sourceId: number;
       sourceTitle: string;
       sourceUrl: string | null;
+      versionNumber: number;
       content: string;
       similarity: number;
     }>;
@@ -141,6 +142,7 @@ export class CampaignsService {
       knowledgeEvidence: knowledgeEvidence.map((item) => ({
         source: item.sourceTitle,
         sourceUrl: item.sourceUrl,
+        version: item.versionNumber,
         similarity: Math.round(item.similarity * 1000) / 1000,
         evidence: item.content,
       })),
@@ -261,6 +263,7 @@ export class CampaignsService {
               sourceId: item.sourceId,
               sourceTitle: item.sourceTitle,
               sourceUrl: item.sourceUrl,
+              versionNumber: item.versionNumber,
               similarity: Math.round(item.similarity * 1000) / 1000,
             })),
           },
