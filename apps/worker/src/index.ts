@@ -1,4 +1,10 @@
-import './media/media.processor';
+import {
+  startMediaDispatcher,
+  stopMediaDispatcher,
+} from './media/media.dispatcher';
+import {
+  stopMediaWorker,
+} from './media/media.processor';
 import {
   startAnalyticsDispatcher,
   stopAnalyticsDispatcher,
@@ -24,6 +30,7 @@ import {
 startPublishingDispatcher();
 startAutomationDispatcher();
 startAnalyticsDispatcher();
+startMediaDispatcher();
 
 let stopping = false;
 
@@ -39,6 +46,8 @@ async function shutdown(signal: string) {
     stopAutomationWorker(),
     stopAnalyticsDispatcher(),
     stopAnalyticsWorker(),
+    stopMediaDispatcher(),
+    stopMediaWorker(),
   ]);
   process.exit(0);
 }
