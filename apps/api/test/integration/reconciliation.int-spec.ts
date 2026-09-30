@@ -285,9 +285,21 @@ describe('automatic reconciliation (32B-1 §4)', () => {
     ]);
   });
 
-  it("never duplicates the success result when reconciliation races the same attempt's late success", async () => {
-    for (let round = 0; round < 10; round += 1) {
-      const postId = `race-${round}`;
+  /** Rows currently waiting on a lock; lets a test order transactions deterministically. */
+  async function waitUntilBlocked(count: number) {
+    for (let tries = 0; tries < 200; tries += 1) {
+      const [{ n }] = await database.sql<{ n: number }[]>`
+        select count(*)::int as n from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'`;
+      if (n >= count) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`fewer than ${count} statements blocked on a lock`);
+  }
+
+  for (const order of ['reconcile', 'late_success'] as const) {
+    it(`never duplicates the success result when ${order} commits first`, async () => {
+      const postId = `race-${order}`;
       const url = `https://instagram.example/p/${postId}`;
       const row = await ambiguous({
         status: 'unknown',
@@ -304,14 +316,27 @@ describe('automatic reconciliation (32B-1 §4)', () => {
         attemptCount: 1,
         dispatchGeneration: row.dispatchGeneration,
       };
+      const reconcile = () => service.reconcileDue();
+      const success = () => ledger.recordSuccess(claim, { postId, url });
+      let first!: Promise<unknown>;
+      let second!: Promise<unknown>;
 
-      const [, late] = await Promise.all([
-        service.reconcileDue(),
-        ledger.recordSuccess(claim, { postId, url }),
-      ]);
+      // The holder pins the publication row; Postgres grants the lock FIFO on release.
+      await database.sql.begin(async (holder) => {
+        await holder`select id from scheduled_publications where id = ${row.id} for update`;
+        first = order === 'reconcile' ? reconcile() : success();
+        await waitUntilBlocked(1);
+        second = order === 'reconcile' ? success() : reconcile();
+        await waitUntilBlocked(2);
+      });
+      const [summary, late] = (
+        order === 'reconcile' ? [await first, await second] : [await second, await first]
+      ) as [Awaited<ReturnType<typeof reconcile>>, boolean];
 
-      // The same outcome whichever transaction commits first.
       expect(late).toBe(true);
+      expect(summary.results.map((result) => result.outcome)).toEqual([
+        order === 'reconcile' ? 'published' : 'lost',
+      ]);
       expect(await reload(row.id)).toMatchObject({ status: 'published', reconcileAfter: null });
       expect(await jobOf(row.activeAttemptId!)).toMatchObject({ status: 'completed' });
       expect(
@@ -323,7 +348,70 @@ describe('automatic reconciliation (32B-1 §4)', () => {
       expect(await auditActions(database.sql, row.id)).toEqual([
         'publication.reconciled_published',
       ]);
+    });
+  }
+
+  it('lets concurrent reconcilers of a needs_review row write one inconclusive pass (R2, R7)', async () => {
+    const row = await ambiguous({ status: 'needs_review', reconcileAfter: past() });
+    const bothLookedUp = deferred();
+    let lookups = 0;
+    const adapter = lookupAdapter(async () => {
+      lookups += 1;
+      if (lookups === 2) bothLookedUp.resolve();
+      await bothLookedUp.promise;
+      return NOT_PUBLISHED;
+    });
+    const first = buildReconciler(database.db, adapter).service;
+    const second = buildReconciler(database.db, adapter).service;
+
+    const summaries = await Promise.all([first.reconcileDue(), second.reconcileDue()]);
+
+    expect(lookups).toBe(2);
+    expect(
+      summaries.flatMap((summary) => summary.results.map((result) => result.outcome)).sort(),
+    ).toEqual(['lost', 'needs_review']);
+    expect(await reconciliationsOf(database.db, row.id)).toHaveLength(1);
+    expect(await auditActions(database.sql, row.id)).toEqual([
+      'publication.reconciliation_inconclusive',
+    ]);
+  });
+
+  describe('reconcile_after CAS', () => {
+    const inconclusive = {
+      kind: 'inconclusive',
+      evidenceType: 'container_not_published',
+      attemptId: null,
+    } as const;
+
+    async function expectRefused(
+      actual: Date | null,
+      observed: (actual: Date | null) => Date | null,
+    ) {
+      const row = await ambiguous({ status: 'needs_review', reconcileAfter: actual });
+      const { ledger } = buildReconciler(database.db, never);
+
+      await expect(
+        ledger.reconcile(
+          {
+            publicationId: row.id,
+            status: 'needs_review',
+            reconcileAfter: observed(row.reconcileAfter),
+            activeAttemptId: row.activeAttemptId,
+          },
+          inconclusive,
+        ),
+      ).resolves.toBeNull();
+      expect(await reconciliationsOf(database.db, row.id)).toEqual([]);
+      expect(await auditActions(database.sql, row.id)).toEqual([]);
+      expect((await reload(row.id)).reconcileAfter).toEqual(row.reconcileAfter);
     }
+
+    it('refuses an observed value that differs from the actual one', () =>
+      expectRefused(past(), (actual) => new Date(actual!.getTime() - 5_000)));
+    it('refuses an observed null while the actual value is set', () =>
+      expectRefused(past(), () => null));
+    it('refuses an observed value while the actual value is null', () =>
+      expectRefused(null, () => new Date(Date.now() - 5_000)));
   });
 
   it('escalates an unknown row with no attempt without creating one (R8)', async () => {
