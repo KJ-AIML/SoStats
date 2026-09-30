@@ -134,7 +134,9 @@ describe('operator resolution (32B-1 §7)', () => {
 
     expect(await resultsOf(mine.row.activeAttemptId!)).toHaveLength(1);
     expect(
-      (await resultsOf(theirs.row.activeAttemptId!)).map((row) => row.platformPostId).sort(),
+      (await resultsOf(theirs.row.activeAttemptId!))
+        .map((row) => String(row.platformPostId))
+        .sort((a, b) => a.localeCompare(b)),
     ).toEqual(['shared-1', 'shared-2']);
   });
 

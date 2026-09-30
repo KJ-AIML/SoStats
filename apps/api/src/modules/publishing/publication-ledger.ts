@@ -742,6 +742,7 @@ export class PublicationLedger {
       }
 
       if (resolution.action === 'confirm_absent') {
+        // Known ceiling: the account row is read without a lock, so a disconnect racing this can land after commit; the next attempt then fails as a known `authentication` error. Nothing is posted twice.
         const [account] = await tx
           .select({
             status: schema.socialAccounts.status,

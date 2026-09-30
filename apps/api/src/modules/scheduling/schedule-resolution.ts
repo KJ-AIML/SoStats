@@ -24,7 +24,23 @@ import { SchedulingService } from './scheduling.service.js';
 
 const sp = schema.scheduledPublications;
 const ISO_WITH_ZONE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/** Calendar-valid, Postgres-safe (year 2000-9999); JS Date.parse rolls Feb 30 over. */
+function isValidScheduledAt(raw: unknown): raw is string {
+  if (typeof raw !== 'string') return false;
+  const m = ISO_WITH_ZONE.exec(raw);
+  if (!m) return false;
+  const [year, month, day, hour, minute, second] = m
+    .slice(1, 7)
+    .map((part) => Number(part ?? 0));
+  if (year < 2000 || month < 1 || month > 12) return false;
+  if (day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) {
+    return false;
+  }
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  return !Number.isNaN(Date.parse(raw));
+}
 const OPERATOR_OUTCOME = {
   mark_published: 'confirmed_published',
   confirm_absent: 'confirmed_absent',
@@ -75,11 +91,7 @@ export function parseResolutionBody(body: unknown): ResolutionAction {
       };
     case 'confirm_absent': {
       const raw = input.scheduledAt;
-      if (
-        typeof raw !== 'string' ||
-        !ISO_WITH_ZONE.test(raw) ||
-        Number.isNaN(Date.parse(raw))
-      ) {
+      if (!isValidScheduledAt(raw)) {
         throw new BadRequestException(
           'scheduledAt must be an ISO timestamp with a timezone',
         );

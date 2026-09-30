@@ -29,6 +29,18 @@ describe('parseResolutionBody (32B-1 §7.1)', () => {
     expect(parseResolutionBody({ action: 'cancel' })).toEqual({ action: 'cancel' });
   });
 
+  it('accepts a valid leap day and an offset timestamp', () => {
+    expect(
+      parseResolutionBody({ action: 'confirm_absent', scheduledAt: '2028-02-29T09:00:00Z' }),
+    ).toEqual({
+      action: 'confirm_absent',
+      scheduledAt: new Date('2028-02-29T09:00:00Z'),
+    });
+    expect(
+      parseResolutionBody({ action: 'confirm_absent', scheduledAt: '2026-12-31T23:59:59-05:00' }),
+    ).toMatchObject({ scheduledAt: new Date('2027-01-01T04:59:59Z') });
+  });
+
   it('treats whitespace-only optional text as absent (Review Focus 4)', () => {
     expect(
       parseResolutionBody({ action: 'mark_published', platformPostId: '   ', note: '' }),
@@ -41,6 +53,12 @@ describe('parseResolutionBody (32B-1 §7.1)', () => {
     [{ action: 'confirm_absent' }, /scheduledAt/],
     [{ action: 'confirm_absent', scheduledAt: 'tomorrow' }, /scheduledAt/],
     [{ action: 'confirm_absent', scheduledAt: '2026-10-01T09:00' }, /scheduledAt/],
+    [{ action: 'confirm_absent', scheduledAt: '2026-02-30T09:00:00Z' }, /scheduledAt/],
+    [{ action: 'confirm_absent', scheduledAt: '2026-04-31T09:00:00Z' }, /scheduledAt/],
+    [{ action: 'confirm_absent', scheduledAt: '2026-02-29T09:00:00Z' }, /scheduledAt/],
+    [{ action: 'confirm_absent', scheduledAt: '2026-13-01T09:00:00Z' }, /scheduledAt/],
+    [{ action: 'confirm_absent', scheduledAt: '2026-10-01T24:00:00Z' }, /scheduledAt/],
+    [{ action: 'confirm_absent', scheduledAt: '0000-01-01T00:00:00.000Z' }, /scheduledAt/],
     [{ action: 'mark_published', platformPostId: 'x'.repeat(256) }, /platformPostId/],
     [{ action: 'mark_published', platformPostId: 42 }, /platformPostId/],
     [{ action: 'mark_published', platformPostUrl: 'http://x.com/p/1' }, /platformPostUrl/],
