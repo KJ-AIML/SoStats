@@ -150,3 +150,21 @@ export async function executePublication(
   }
   return result;
 }
+
+export type ReconcileDueResponse = {
+  selected: number;
+  results: Array<{
+    publicationId: number;
+    outcome: 'published' | 'needs_review' | 'lost' | 'error';
+    evidenceType: string | null;
+  }>;
+};
+
+/** 32B-1 §4.3: the API does the lookups and commits; the worker is only the clock. */
+export function reconcileDue(timeoutMs: number) {
+  return request<ReconcileDueResponse>(
+    '/internal/publications/reconcile-due',
+    { method: 'POST' },
+    timeoutMs,
+  );
+}
