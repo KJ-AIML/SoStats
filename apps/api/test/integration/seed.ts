@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type postgres from 'postgres';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../src/db/schema.js';
+import type { AuthenticatedUser } from '../../src/common/auth/auth.types.js';
 
 export type SeededChannel = {
   workspaceId: number;
@@ -139,4 +140,26 @@ export function reconciliationsOf(
       eq(schema.publicationReconciliations.scheduledPublicationId, publicationId),
     )
     .orderBy(schema.publicationReconciliations.id);
+}
+
+export async function seedMember(
+  sql: postgres.Sql,
+  workspaceId: number,
+  role: 'owner' | 'admin' | 'member',
+): Promise<AuthenticatedUser> {
+  counter += 1;
+  const key = `${process.pid}-${Date.now()}-${counter}`;
+  const [user] = await sql<{ id: number; email: string; name: string }[]>`
+    insert into users (email, name) values (${`user-${key}@example.test`}, ${`User ${key}`})
+    returning id, email, name`;
+  await sql`
+    insert into workspace_members (workspace_id, user_id, role)
+    values (${workspaceId}, ${user!.id}, ${role})`;
+  return {
+    id: user!.id,
+    subject: `test|${user!.id}`,
+    email: user!.email,
+    name: user!.name,
+    authMethod: 'jwt',
+  };
 }

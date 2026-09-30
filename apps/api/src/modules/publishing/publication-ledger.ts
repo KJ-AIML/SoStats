@@ -1,7 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, gt, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { AuditLogService } from '../../common/audit/audit-log.service.js';
+import {
+  AuditLogService,
+  type AuditActor,
+} from '../../common/audit/audit-log.service.js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import type {
@@ -16,8 +19,14 @@ import {
   reuseOrInsertResult,
   SYSTEM_ACTOR,
   type ReconcileEvidence,
+  type ResolutionAction,
 } from './publication-resolution.js';
-import { rollupPublished, type Tx } from './publication-rollup.js';
+import {
+  rollupCancelled,
+  rollupPublished,
+  rollupRearmed,
+  type Tx,
+} from './publication-rollup.js';
 import {
   isStatusIn,
   rearmSet,
@@ -86,6 +95,19 @@ export type ReconcileResult = {
   workspaceId: number;
   status: 'published' | 'needs_review';
 };
+
+export type ResolveRequest = {
+  publicationId: number;
+  workspaceId: number;
+  actor: AuditActor;
+  resolution: ResolutionAction;
+};
+
+export type ResolveResult =
+  | { kind: 'resolved'; reconciliationId: number; attemptId: number | null }
+  | { kind: 'not_found' }
+  | { kind: 'status_conflict'; status: string }
+  | { kind: 'channel_unusable' };
 
 /** Every publication state write for execution lives here (spec §5, I1/I4). */
 @Injectable()
@@ -645,6 +667,122 @@ export class PublicationLedger {
         workspaceId: row.workspaceId,
         status: confirmed ? 'published' : 'needs_review',
       };
+    });
+  }
+
+  /**
+   * 32B-1 §7.2. One transaction per action: the CAS on `needs_review` under the
+   * row lock, the history row, any result, the rollup and the audit (R2, R5).
+   */
+  resolve(request: ResolveRequest): Promise<ResolveResult> {
+    const { publicationId, workspaceId, resolution } = request;
+    return this.db.transaction(async (tx): Promise<ResolveResult> => {
+      const now = new Date();
+      const [current] = await tx
+        .select({
+          id: sp.id,
+          status: sp.status,
+          activeAttemptId: sp.activeAttemptId,
+          contentItemId: sp.contentItemId,
+          variantId: sp.variantId,
+          socialAccountId: sp.socialAccountId,
+        })
+        .from(sp)
+        .where(and(eq(sp.id, publicationId), eq(sp.workspaceId, workspaceId)))
+        .for('update');
+      if (!current) return { kind: 'not_found' };
+      if (current.status !== 'needs_review') {
+        return { kind: 'status_conflict', status: current.status };
+      }
+
+      const [latest] =
+        current.activeAttemptId === null
+          ? await tx
+              .select({ id: pj.id })
+              .from(pj)
+              .where(eq(pj.scheduledPublicationId, publicationId))
+              .orderBy(desc(pj.createdAt), desc(pj.id))
+              .limit(1)
+          : [{ id: current.activeAttemptId }];
+      const attemptId = latest?.id ?? null;
+      const base = {
+        publicationId,
+        workspaceId,
+        attemptId,
+        source: 'operator' as const,
+        evidenceType: 'operator_attested',
+        previousStatus: current.status,
+        actor: request.actor,
+        note: resolution.note ?? null,
+      };
+
+      if (resolution.action === 'mark_published') {
+        await tx
+          .update(sp)
+          .set({ status: 'published', leaseExpiresAt: null, reconcileAfter: null, updatedAt: now })
+          .where(eq(sp.id, publicationId));
+        if (resolution.platformPostId && attemptId !== null) {
+          await reuseOrInsertResult(
+            tx,
+            publicationId,
+            attemptId,
+            resolution.platformPostId,
+            resolution.platformPostUrl ?? null,
+          );
+        }
+        await rollupPublished(tx, current, now);
+        const reconciliationId = await appendReconciliation(tx, this.audit, {
+          ...base,
+          outcome: 'confirmed_published',
+          platformPostId: resolution.platformPostId ?? null,
+          platformPostUrl: resolution.platformPostUrl ?? null,
+          auditAction: 'publication.resolution_marked_published',
+        });
+        return { kind: 'resolved', reconciliationId, attemptId };
+      }
+
+      if (resolution.action === 'confirm_absent') {
+        const [account] = await tx
+          .select({
+            status: schema.socialAccounts.status,
+            hasToken: sql<boolean>`${schema.socialAccounts.accessToken} is not null`,
+          })
+          .from(schema.socialAccounts)
+          .where(eq(schema.socialAccounts.id, current.socialAccountId));
+        if (account?.status !== 'active' || !account.hasToken) {
+          return { kind: 'channel_unusable' };
+        }
+        // R4: 32A's rearmSet plus the resolution fields; the identity index may reject it.
+        await tx
+          .update(sp)
+          .set({
+            ...rearmSet(now, null),
+            attemptCount: 0,
+            scheduledAt: resolution.scheduledAt,
+            reconcileAfter: null,
+          })
+          .where(eq(sp.id, publicationId));
+        await rollupRearmed(tx, current, resolution.scheduledAt, now);
+        const reconciliationId = await appendReconciliation(tx, this.audit, {
+          ...base,
+          outcome: 'confirmed_absent',
+          scheduledAt: resolution.scheduledAt,
+          auditAction: 'publication.resolution_confirmed_absent',
+        });
+        return { kind: 'resolved', reconciliationId, attemptId };
+      }
+
+      await tx
+        .update(sp)
+        .set({ status: 'cancelled', leaseExpiresAt: null, reconcileAfter: null, updatedAt: now })
+        .where(eq(sp.id, publicationId));
+      await rollupCancelled(tx, current, now);
+      const reconciliationId = await appendReconciliation(tx, this.audit, {
+        ...base,
+        outcome: 'cancelled',
+        auditAction: 'publication.resolution_cancelled',
+      });
+      return { kind: 'resolved', reconciliationId, attemptId };
     });
   }
 }

@@ -56,7 +56,8 @@ export class SchedulingService {
     private readonly mediaService: MediaService,
   ) {}
 
-  private async identityConflict(
+  /** Also used by ScheduleResolutionService for `confirm_absent` (32B-1 §7.2). */
+  async identityConflict(
     workspaceId: number,
     contentItemId: number,
     socialAccountId: number,
