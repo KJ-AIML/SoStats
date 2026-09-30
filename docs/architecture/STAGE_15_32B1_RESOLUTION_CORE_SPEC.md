@@ -1,6 +1,6 @@
 # Stage 15 · PR 32B-1 — Resolution Core (spec)
 
-Status: draft for review · Baseline: `main` @ `72dfe38` (32A + credential-projection hotfix merged) ·
+Status: approved for planning · Baseline: `main` @ `72dfe38` (32A + credential-projection hotfix merged) ·
 Roadmap: Stage 15 PR #32, slice B-1 (32B-2 = provider lookup enrichment, then 32C)
 
 This spec is the implementation and review contract for 32B-1. It builds on
@@ -52,6 +52,18 @@ exit:
 - **R6 — No raw internals leave the API.** The new evidence and history fields use
   explicit safe projections. Raw `provider_checkpoint`, `raw_response` and arbitrary
   evidence JSON are never serialized to clients.
+- **R7 — An accepted automatic pass consumes its opportunity.** Every accepted
+  automatic reconciliation pass sets `reconcile_after = null` in its winning
+  compare-and-set: positive, escalating, or inconclusive on a row that is already
+  `needs_review`. A row gets another automatic pass only if a future workflow
+  explicitly schedules one. That makes "exactly one history row per accepted pass"
+  precise, and stops a `needs_review` row from collecting repeated `inconclusive`
+  rows on every poll.
+- **R8 — `publication_jobs` means real provider attempts.** Nothing in 32B-1 creates
+  a `publication_jobs` row. A `publication_results` row is materialized or reused only
+  on an attempt that actually exists. When there is no attempt, a known post id lives
+  only on the reconciliation row, and analytics stays unavailable for that
+  publication.
 
 ## 3. State model
 
@@ -94,17 +106,32 @@ New column `scheduled_publications.reconcile_after timestamp null`.
   - Otherwise use `now + RECONCILE_GRACE_SECONDS` (default 600).
 - **Leaving `unknown` / `needs_review`.** Every transition out of these states, and
   every inconclusive pass on `needs_review`, sets `reconcile_after = null`.
-- **Legacy rows.** Migration 008 sets `reconcile_after = now` for every existing
-  `unknown` and `needs_review` row. That gives all frozen 007 rows exactly one
-  automatic strong-evidence pass right after deployment.
-- **Safety net.** A row that is `unknown` with `reconcile_after is null` (for
-  example, entered `unknown` through the pre-32B-1 API during rollout) is eligible
-  once `updated_at <= now - grace`.
-- **Due set:**
-  - `status in ('unknown','needs_review') and reconcile_after <= now`, or
-  - the safety-net rows, `status = 'unknown' and reconcile_after is null and updated_at <= now - grace`.
+- **Legacy rows.** Migration 008 only makes existing rows **eligible**: it sets
+  `reconcile_after = now` for every `unknown` and `needs_review` row and changes no
+  status. The new API runtime then performs the evidence inspection, compare-and-set,
+  reconciliation record, result reuse or materialization, rollup and transactional
+  audit. Historical repair takes the same audited path as every other reconciliation.
+- **Rollout and rollback compatibility.** Between 008 and the new API deploy, or
+  during a later rollback to the 32A API, an `unknown` row can be created with
+  `reconcile_after is null`. It becomes due once `updated_at <= now - grace`, so no
+  row is stranded. `needs_review` needs no such fallback: 008 gives each existing row
+  its one pass, and every `needs_review` created afterwards comes from an accepted
+  reconciliation that has already consumed its opportunity (R7).
+- **Due predicate (exact):**
 
-  It is ordered by `reconcile_after nulls first, id`.
+  ```sql
+  (
+    status = 'unknown'
+    and (
+      reconcile_after <= $now
+      or (reconcile_after is null and updated_at <= $now - $grace)
+    )
+  )
+  or (status = 'needs_review' and reconcile_after <= $now)
+  ```
+
+  `$now` is a JS `Date` (32A timestamp rule). Rows are ordered by
+  `reconcile_after nulls first, id`.
 
 ### 4.2 Strong evidence (checked in this order; first match wins)
 
@@ -155,10 +182,17 @@ internal routes). The API does the work, because credentials live in the API.
      never serializes the batch.
    - A lookup error is converted to `inconclusive`, never thrown.
 3. **Decide and commit, one transaction per row.**
-   - Compare-and-set on the observed state: `status = <observed>`, and
-     `reconcile_after` still equal to the observed value (or still null, for
-     safety-net rows).
+   - Compare-and-set on the observed state:
+
+     ```sql
+     where id = $id
+       and status = $observedStatus
+       and reconcile_after is not distinct from $observedReconcileAfter
+     ```
+
+     This also works for null-`reconcile_after` rollout rows.
    - On `confirmed_published`, also require `active_attempt_id` to be unchanged.
+   - Every winning update sets `reconcile_after = null` (R7).
    - If the compare-and-set loses, write nothing (R2).
    - If it wins, the same transaction:
      - applies the transition (§3);
@@ -173,10 +207,15 @@ internal routes). The API does the work, because credentials live in the API.
    log line per accepted decision (§10).
 
 `unknown` + inconclusive → `needs_review`. `needs_review` + inconclusive → stays,
-with `reconcile_after = null` (one pass only). An inconclusive pass on `needs_review`
-still writes an `inconclusive` reconciliation row and audit event, so the history
-shows the pass happened. That happens exactly once per pass, and only for the
-compare-and-set winner.
+with `reconcile_after = null` (one pass only, R7). An inconclusive pass on
+`needs_review` still writes an `inconclusive` reconciliation row and audit event, so
+the history shows the pass happened. That happens exactly once per pass, and only
+for the compare-and-set winner.
+
+A publication with no attempt row can never satisfy an automatic evidence source.
+Sources 1–3 all need an attempt: a result row, a checkpoint or a container id. Such
+a publication is inconclusive and goes to `needs_review` (R8). A legacy
+`mark_unknown` row whose job was never created is the typical case.
 
 ### 4.4 Adapter capability
 
@@ -248,7 +287,8 @@ It never holds tokens, URLs with query strings, provider messages or response bo
 
 - Wrapped in `begin; … commit;`, forward-only, additive.
 - **Backfill:** `reconcile_after = now() at time zone 'utc'` for every row in
-  `unknown` or `needs_review`.
+  `unknown` or `needs_review`. That is the only data change: **008 changes no
+  status** and writes no reconciliation or result rows (§4.1).
 - There is no drain precondition. 008 does not change the claim or execution
   protocol, and in-flight rows are unaffected.
 - `schema.ts` declares every table, column, check, FK and index. The migrations
@@ -312,9 +352,11 @@ The body is a discriminated union:
   - otherwise insert one on the publication's `active_attempt_id` job, or its latest
     job if that is null.
   - Analytics then ingests it.
-  - If the publication has no attempt rows at all, a result row cannot exist (it
-    needs a job). The id is then kept only on the reconciliation row, and analytics
-    stays unavailable.
+  - If the publication has no attempt rows at all (R8), no `publication_jobs` row is
+    synthesized.
+    - The id and url are stored only on the reconciliation row.
+    - The publication becomes `published`, and analytics stays unavailable for it.
+    - 32B-2 may later add general id recovery or analytics linkage.
 - Without an id, the publication becomes `published` with no platform post id
   (nothing is fabricated), and analytics is unavailable for it.
 - Record: `source = 'operator'`, `outcome = 'confirmed_published'`,
@@ -478,12 +520,24 @@ It never holds provider text.
 | `RECONCILE_POLL_MS` | 30 000 (min 5 000) | Worker |
 | `RECONCILE_REQUEST_TIMEOUT_MS` | 120 000 | Worker, `fetch` to `reconcile-due` |
 
-Boot checks:
+Required ordering (reconciliation clocks only; independent of 32A's publish lease):
 
-- **API:** refuses to boot if the grace period is shorter than the execute lease
-  (`RECONCILE_GRACE_SECONDS·1000 < PUBLISH_LEASE_SECONDS·1000`), or if
-  `RECONCILE_LOOKUP_BUDGET_MS < PROVIDER_HTTP_TIMEOUT_MS`.
-- **Worker:** clamps the request timeout to at least the lookup budget plus 30 s.
+```text
+PROVIDER_HTTP_TIMEOUT_MS  ≤  RECONCILE_LOOKUP_BUDGET_MS  <  RECONCILE_REQUEST_TIMEOUT_MS (with ≥ 30 s margin)
+```
+
+The API processes a batch's lookups concurrently. The worker's request therefore
+has to cover one lookup budget plus API overhead, not `limit × budget`.
+
+- **API:** refuses to boot if `RECONCILE_LOOKUP_BUDGET_MS < PROVIDER_HTTP_TIMEOUT_MS`,
+  or if `RECONCILE_GRACE_SECONDS < 1`.
+- **Worker:** reads `RECONCILE_LOOKUP_BUDGET_MS`, which must be the same value the API
+  uses. It refuses to start the reconciliation dispatcher if
+  `RECONCILE_REQUEST_TIMEOUT_MS < RECONCILE_LOOKUP_BUDGET_MS + 30 000`, and logs the
+  reason.
+- `RECONCILE_GRACE_SECONDS` defaults to 600 and is deliberately **not** coupled to
+  `PUBLISH_LEASE_SECONDS`. The grace clock starts when a publication enters
+  `unknown`, which is a different clock from the one that bounds the publish request.
 
 ## 12. Tests
 
@@ -505,6 +559,9 @@ Boot checks:
 | Late success after the operator re-armed or cancelled | No state change; result row kept as evidence. |
 | `mark_published` with an id | → `published`; result row inserted or reused; analytics-visible. |
 | `mark_published` without an id | → `published`; no result row with an id. |
+| `needs_review` with **no attempt row** + `mark_published(platformPostId)` | → `published`; the reconciliation row carries the id; no `publication_jobs` row is created; no `publication_results` FK violation (R8). |
+| `unknown` with no attempt row, due | → `needs_review` (inconclusive); no attempt created. |
+| Accepted inconclusive pass on `needs_review`, then several more polls | Exactly one `inconclusive` row; the row is never selected again (R7). |
 | `confirm_absent` | → `scheduled`, generation +1, `attempt_count` 0, owner and lease cleared, `scheduled_at` = supplied, and claimable. |
 | `confirm_absent` without `scheduledAt` | 400 |
 | `confirm_absent` on a disconnected channel | 409; nothing changes. |
@@ -516,7 +573,8 @@ Boot checks:
 | `PATCH /schedules` on `needs_review` | Still 409. |
 | Migration 008 on the post-007 schema | Applies; backfills `reconcile_after` for `unknown` and `needs_review`; constraints and indexes exist. |
 | Calendar projection | No `providerCheckpoint`, `rawResponse` or unknown evidence keys; `attemptEvidence` and `reconciliations` shaped as §8; at most 20 reconciliations. |
-| Safety net | `unknown` with null `reconcile_after` becomes due once `updated_at <= now - grace`. |
+| Rollout/rollback compatibility | `unknown` with null `reconcile_after` is not due before `updated_at <= now - grace`, is due after, and is consumed on acceptance. `needs_review` with null `reconcile_after` is never due. |
+| Migration 008 changes no status | Existing `unknown` and `needs_review` rows keep their status after 008. Only the runtime pass changes them, and it writes audit and a reconciliation row. |
 
 **Unit tests:**
 
@@ -524,7 +582,12 @@ Boot checks:
   `ERROR`, `EXPIRED`, unknown values, network error, abort, 429 and 5xx →
   inconclusive, each with a fixed reason code. It is bounded by the signal and never
   reads the free-text `status`.
-- Resolution body validation; config boot checks.
+- Resolution body validation.
+- Config checks:
+  - The API rejects a lookup budget below the provider timeout.
+  - The API accepts any grace ≥ 1 s, independent of `PUBLISH_LEASE_SECONDS`.
+  - The worker refuses to start the dispatcher when the request timeout is below
+    the budget plus 30 s.
 
 **Worker:**
 
@@ -557,7 +620,7 @@ them after roll-forward.
 
 ## 14. Acceptance gate (32B-1)
 
-- [ ] R1–R6 each have tests from §12 that would fail if the rule broke.
+- [ ] R1–R8 each have tests from §12 that would fail if the rule broke.
 - [ ] No automatic path turns inconclusive evidence into `published`, `scheduled` or a retry.
 - [ ] Reconciliation never changes a `publication_jobs` status. The only attempt change is 32A's same-attempt late success.
 - [ ] Every transition is a ledger compare-and-set. Reconciliation row, result, rollup and audit are in the same transaction, and losers write nothing.
