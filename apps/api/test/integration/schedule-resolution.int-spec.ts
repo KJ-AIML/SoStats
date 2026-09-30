@@ -371,4 +371,127 @@ describe('operator resolution (32B-1 §7)', () => {
       }
     }
   });
+
+  /** Waits (bounded) until `count` statements are blocked on a lock in this database. */
+  async function waitUntilBlocked(count: number) {
+    for (let tries = 0; tries < 200; tries += 1) {
+      const [{ n }] = await database.sql<{ n: number }[]>`
+        select count(*)::int as n from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock'`;
+      if (n >= count) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`fewer than ${count} statements blocked on a lock`);
+  }
+
+  /** A resolution whose audit write parks inside the transaction, holding the row lock. */
+  function latchedResolution() {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const real = testAudit(database.db);
+    const { resolution } = buildResolution(database.db, {
+      enqueue: async (...args: Parameters<AuditLogService['enqueue']>) => {
+        entered();
+        await gate;
+        return real.enqueue(...args);
+      },
+    });
+    return { resolution, reached, release };
+  }
+
+  it('gives an operator that holds the row first the win over a confirming reconciler (§7.3)', async () => {
+    const { seeded, owner, row } = await needsReview(
+      { reconcileAfter: new Date(Date.now() - 1_000) },
+      'instagram',
+    );
+    const latched = latchedResolution();
+    const operator = latched.resolution.resolve(seeded.workspaceId, row.id, owner, {
+      action: 'cancel',
+    });
+    operator.catch(() => undefined);
+    try {
+      await Promise.race([
+        latched.reached,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('operator never reached its audit write')), 10_000),
+        ),
+      ]);
+      const automatic = built.ledger.reconcile(
+        {
+          publicationId: row.id,
+          status: 'needs_review',
+          reconcileAfter: row.reconcileAfter,
+          activeAttemptId: row.activeAttemptId,
+        },
+        {
+          kind: 'confirmed',
+          evidenceType: 'instagram_container_published',
+          attemptId: row.activeAttemptId!,
+          platformPostId: 'late-1',
+          platformPostUrl: null,
+          duplicatePlatformPostIds: [],
+        },
+      );
+      automatic.catch(() => undefined);
+      await waitUntilBlocked(1);
+      latched.release();
+
+      await expect(operator).resolves.toMatchObject({ status: 'cancelled' });
+      expect(await automatic).toBeNull();
+    } finally {
+      latched.release();
+    }
+
+    expect((await reload(row.id)).status).toBe('cancelled');
+    expect(await reconciliationsOf(database.db, row.id)).toHaveLength(1);
+    expect(await auditActions(database.sql, row.id)).toEqual([
+      'publication.resolution_cancelled',
+    ]);
+    expect(await resultsOf(row.activeAttemptId!)).toEqual([]);
+  });
+
+  it('gives two operators on one row exactly one winner (§7.3)', async () => {
+    const { seeded, owner, row } = await needsReview();
+    const admin = await seedMember(database.sql, seeded.workspaceId, 'admin');
+    const latched = latchedResolution();
+    const first = latched.resolution.resolve(seeded.workspaceId, row.id, owner, {
+      action: 'cancel',
+    });
+    first.catch(() => undefined);
+    try {
+      await Promise.race([
+        latched.reached,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('first operator never reached its audit write')), 10_000),
+        ),
+      ]);
+      const second = built.resolution.resolve(seeded.workspaceId, row.id, admin, {
+        action: 'mark_published',
+        platformPostId: 'loser-1',
+      });
+      second.catch(() => undefined);
+      await waitUntilBlocked(1);
+      latched.release();
+
+      await expect(first).resolves.toMatchObject({ status: 'cancelled' });
+      const error = await second.catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({ status: 'cancelled' });
+    } finally {
+      latched.release();
+    }
+
+    expect((await reload(row.id)).status).toBe('cancelled');
+    expect(await reconciliationsOf(database.db, row.id)).toHaveLength(1);
+    expect(await auditActions(database.sql, row.id)).toEqual([
+      'publication.resolution_cancelled',
+    ]);
+    expect(await resultsOf(row.activeAttemptId!)).toEqual([]);
+  });
 });
