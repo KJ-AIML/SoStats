@@ -138,7 +138,8 @@ export function CalendarView({
   }
   const [channelFilter, setChannelFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [selectedPostId, setSelectedPostId] = useState<number | null>(null);
+  const selectedPost = posts.find((post) => post.id === selectedPostId) ?? null;
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -186,14 +187,14 @@ export function CalendarView({
   });
 
   const openPost = (post: Post) => {
-    setSelectedPost(post);
+    setSelectedPostId(post.id);
     setEditDate(dateKeyInZone(post.date, timezone));
     setEditTime(timeInZone(post.date, timezone));
     setError(null);
   };
 
   const closePost = () => {
-    if (!isSaving && !isCancelling) setSelectedPost(null);
+    if (!isSaving && !isCancelling) setSelectedPostId(null);
   };
 
   const canReschedule =
@@ -243,7 +244,7 @@ export function CalendarView({
             : post,
         ),
       );
-      setSelectedPost(null);
+      setSelectedPostId(null);
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -283,7 +284,7 @@ export function CalendarView({
             : post,
         ),
       );
-      setSelectedPost(null);
+      setSelectedPostId(null);
     } catch (cancelError) {
       setError(
         cancelError instanceof Error
@@ -762,15 +763,19 @@ export function CalendarView({
                 {(selectedPost.status === "unknown" ||
                   selectedPost.status === "needs_review") && (
                   <ResolutionPanel
+                    key={`${selectedPost.id}:${selectedPost.status}`}
                     workspaceSlug={workspaceSlug}
                     timezone={timezone}
                     canResolve={canResolve}
                     post={selectedPost}
                     onResolved={() => {
-                      setSelectedPost(null);
+                      setSelectedPostId(null);
                       router.refresh();
                     }}
-                    onConflict={() => router.refresh()}
+                    onConflict={(message) => {
+                      setError(message);
+                      router.refresh();
+                    }}
                   />
                 )}
 

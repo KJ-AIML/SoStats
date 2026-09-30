@@ -59,7 +59,7 @@ export function ResolutionPanel({
     reconciliations: ReconciliationRecord[];
   };
   onResolved: () => void;
-  onConflict: () => void;
+  onConflict: (message: string) => void;
 }) {
   const [action, setAction] = useState<Action | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -119,8 +119,13 @@ export function ResolutionPanel({
         error?: string;
       };
       if (!response.ok) {
-        setError(payload.error || "Unable to resolve this publication");
-        if (response.status === 403 || response.status === 409) onConflict();
+        const message = payload.error || "Unable to resolve this publication";
+        if (response.status === 403 || response.status === 409) {
+          // The dialog shows the message: this panel may unmount on refresh.
+          onConflict(message);
+        } else {
+          setError(message);
+        }
         return;
       }
       onResolved();
