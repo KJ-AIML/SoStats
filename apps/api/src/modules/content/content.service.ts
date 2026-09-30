@@ -8,6 +8,7 @@ import { DRIZZLE } from '../../db/db.module.js';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
 import { and, eq } from 'drizzle-orm';
+import { PUBLIC_SOCIAL_ACCOUNT_COLUMNS } from '../channels/social-account.projection.js';
 
 export interface CreateContentInput {
   workspaceId: number;
@@ -103,7 +104,7 @@ export class ContentService {
         scheduledPublications: {
           with: {
             variant: true,
-            socialAccount: true,
+            socialAccount: { columns: PUBLIC_SOCIAL_ACCOUNT_COLUMNS },
           },
         },
       },
@@ -126,7 +127,7 @@ export class ContentService {
         scheduledPublications: {
           with: {
             variant: true,
-            socialAccount: true,
+            socialAccount: { columns: PUBLIC_SOCIAL_ACCOUNT_COLUMNS },
           },
         },
       },

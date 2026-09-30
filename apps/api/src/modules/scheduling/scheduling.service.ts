@@ -16,6 +16,7 @@ import {
 } from './scheduling.dto.js';
 import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 import { MediaService } from '../media/media.service.js';
+import { PUBLIC_SOCIAL_ACCOUNT_COLUMNS } from '../channels/social-account.projection.js';
 import { isUniqueViolation } from '../../db/pg-errors.js';
 import {
   ACTIVE_IDENTITY_INDEX,
@@ -97,7 +98,7 @@ export class SchedulingService {
       with: {
         contentItem: { with: { campaign: true } },
         variant: true,
-        socialAccount: true,
+        socialAccount: { columns: PUBLIC_SOCIAL_ACCOUNT_COLUMNS },
         jobs: { with: { results: true } },
       },
       orderBy: (fields, { asc }) => [asc(fields.scheduledAt)],
