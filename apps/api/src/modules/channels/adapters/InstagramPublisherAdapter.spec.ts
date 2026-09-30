@@ -618,4 +618,134 @@ describe('InstagramPublisherAdapter', () => {
       });
     });
   });
+
+  describe('lookupPublication (32B-1 §4.4)', () => {
+    const attempt = {
+      operationType: 'instagram_media_publish',
+      operationId: 'container-9',
+    };
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    const lookup = (
+      value: { operationType: string; operationId: string | null } = attempt,
+      signal: AbortSignal = AbortSignal.timeout(5_000),
+    ) =>
+      new InstagramPublisherAdapter(new MetaGraphClient()).lookupPublication(
+        value,
+        'token',
+        signal,
+      );
+
+    it('confirms only on status_code PUBLISHED, reading status_code alone', async () => {
+      const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+        json({ id: 'container-9', status_code: 'PUBLISHED', status: 'Published' }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(lookup()).resolves.toEqual({
+        kind: 'confirmed',
+        evidenceType: 'instagram_container_published',
+      });
+      const url = new URL(String(fetchMock.mock.calls[0]![0]));
+      expect(url.pathname).toBe('/v26.0/container-9');
+      expect(url.searchParams.get('fields')).toBe('status_code');
+      expect(fetchMock.mock.calls[0]![1]?.method ?? 'GET').toBe('GET');
+    });
+
+    it.each(['FINISHED', 'IN_PROGRESS', 'ERROR', 'EXPIRED', 'SOMETHING_NEW'])(
+      'treats %s as inconclusive and never reads the free-text status',
+      async (statusCode) => {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () => json({ status_code: statusCode, status: 'PUBLISHED' })),
+        );
+        await expect(lookup()).resolves.toEqual({
+          kind: 'inconclusive',
+          reason: 'container_not_published',
+        });
+      },
+    );
+
+    it('treats an unreadable body as lookup_failed', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>', { status: 200 })));
+      await expect(lookup()).resolves.toEqual({
+        kind: 'inconclusive',
+        reason: 'lookup_failed',
+      });
+    });
+
+    it('maps 429 and Meta throttle codes to rate_limited', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => json({}, 429)));
+      await expect(lookup()).resolves.toEqual({
+        kind: 'inconclusive',
+        reason: 'rate_limited',
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          json({ error: { code: 4, message: 'Application request limit reached' } }, 400),
+        ),
+      );
+      await expect(lookup()).resolves.toEqual({
+        kind: 'inconclusive',
+        reason: 'rate_limited',
+      });
+    });
+
+    it('maps 5xx, 404 and network failures to lookup_failed', async () => {
+      for (const status of [500, 404]) {
+        vi.stubGlobal('fetch', vi.fn(async () => json({}, status)));
+        await expect(lookup()).resolves.toEqual({
+          kind: 'inconclusive',
+          reason: 'lookup_failed',
+        });
+      }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new TypeError('fetch failed');
+        }),
+      );
+      await expect(lookup()).resolves.toEqual({
+        kind: 'inconclusive',
+        reason: 'lookup_failed',
+      });
+    });
+
+    it('is bounded by the caller signal', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url: string | URL, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () =>
+                reject(init.signal?.reason),
+              );
+            }),
+        ),
+      );
+      const controller = new AbortController();
+      const pending = lookup(attempt, controller.signal);
+      controller.abort();
+      await expect(pending).resolves.toEqual({
+        kind: 'inconclusive',
+        reason: 'lookup_failed',
+      });
+    });
+
+    it('declines attempts that are not an Instagram media publish with a container id', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(
+        lookup({ operationType: 'facebook_page_feed', operationId: 'x' }),
+      ).resolves.toEqual({ kind: 'inconclusive', reason: 'lookup_unavailable' });
+      await expect(
+        lookup({ operationType: 'instagram_media_publish', operationId: null }),
+      ).resolves.toEqual({ kind: 'inconclusive', reason: 'lookup_unavailable' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });
