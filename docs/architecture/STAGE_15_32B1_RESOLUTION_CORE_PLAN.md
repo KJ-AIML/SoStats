@@ -32,6 +32,7 @@
 **Code conventions**
 - Timestamps: app code uses JS `Date` only; columns are UTC wall-clock `timestamp`. Compare versions and `reconcile_after` truncated to milliseconds (`sameVersion`, and `sameReconcileAfter` from Task 4). SQL-written values carry microseconds; JS values carry milliseconds.
 - Lock order everywhere: publication row → attempt row → content item → content variant.
+- Success result rows are idempotent per publication and platform post id. Every success-result write, whether reconciliation, late success or operator, goes through `reuseOrInsertResult` while holding the publication row lock. Reuse is scoped to this publication's attempts and never matches another publication's rows. There is no global uniqueness on `platform_post_id`.
 - API code: ESM, so relative imports end in `.js`.
   - Prettier: single quotes, trailing commas.
   - oxlint `no-floating-promises` is an error.
@@ -98,6 +99,38 @@ These five inputs are implied by the spec but no spec test covers them. Each is 
 - **Late success logging.** 32A's `publication.attempt` line still covers late success. The reconciliation row and the audit event are the new records. Automatic decisions are logged by `ReconciliationService`, operator decisions by `ScheduleResolutionService`.
 - **Known ceiling: `confirm_absent` channel check.** It reads the account inside the resolution transaction but does not lock it. A disconnect racing it can land after commit. The next attempt then fails as a known `authentication` failure; nothing is posted twice.
 - **Batch size.** The worker sends no `limit`, so the API default (`RECONCILE_BATCH_LIMIT`) applies.
+- **Late success versus reconciliation (user requirement, 2026-09-30).**
+  - When a reconciler and the same attempt's late success race on post id X, the outcome must be the same whichever commits first:
+    - the publication is `published`;
+    - the attempt is `completed`;
+    - there is one success result row for X;
+    - there is one history row;
+    - there is one `reconciled_published` audit event.
+  - Both paths lock the publication row first. `recordSuccess` writes its result through `reuseOrInsertResult` under that lock.
+  - If the publication is already `published` and `active_attempt_id` is still this attempt (reconciliation or an operator got there first), the attempt's own late success completes the attempt and returns `true`. Nothing else changes; history and audit are already recorded. This is 32A §3.3's single exception, not a new one: R3 still holds because reconciliation itself never changes an attempt.
+
+## Review checkpoints (user-approved, 2026-09-30)
+
+| Task | Strict review emphasis |
+|---|---|
+| 1 | Migration 008: backfill, FK and delete semantics, "no status change" |
+| 3 | Transaction boundaries, result idempotence, rollup locks, late success |
+| 4 | Reconciliation races, `reconcile_after` consumption, losers write nothing |
+| 6 | Manager authorization, operator-vs-reconciler CAS, transactional audit, re-arm safety |
+| 7 | Worker timeout and poll semantics: a failure only defers to the next poll |
+| Final | The whole branch against the frozen 32B-1 spec |
+
+- **Task 3 reviewer check.** One global lock order holds: publication row → attempt row → content item → content variant. Check it across:
+  - `PublicationLedger`: `claim`, `markSideEffect`, `recordSuccess`, `recordFailure`, `sweepExpiredLeases`, `reconcile`, `resolve`;
+  - `SchedulingService`: `updateSchedule`, `cancelSchedule`;
+  - the three rollups.
+- **Final review grep.** Every write that moves a publication into, within or out of `unknown` / `needs_review` goes through `PublicationLedger` (`recordFailure`, `sweepExpiredLeases`, `recordSuccess`, `reconcile`, `resolve`). Migrations 007 and 008 are the only other writers. `SchedulingService` may only CAS from `scheduled` / `failed`. Inspect every hit of:
+
+  ```bash
+  rg -n "update\((sp|schema\.scheduledPublications)\)|scheduled_publications" apps/api/src
+  ```
+
+  Any other direct write is a defect: it would bypass the history and audit invariants.
 
 ## File map
 
@@ -859,6 +892,10 @@ git commit -m "feat(publishing): reconciliation config and Instagram lookupPubli
     - `ReconciliationEntry`
     - `appendReconciliation(tx, audit, entry): Promise<number>`
   - **Ledger constructor:** `new PublicationLedger(db, config, audit: AuditLogService)`.
+  - **`recordSuccess` semantics:**
+    - the result goes through `reuseOrInsertResult`;
+    - it returns `true` when it publishes, and also when the publication is already `published` and still owned by this attempt (the attempt is then completed);
+    - it returns `false` for non-owners and for other statuses.
   - **Test helpers:**
     - `testAudit(db)`
     - `createAmbiguousPublication(db, seeded, options)`
@@ -1114,6 +1151,34 @@ Append this block inside the outer `describe`:
       }
     });
 
+    it('completes the attempt without a second result when reconciliation already published its post', async () => {
+      const seeded = await seedChannel(database.sql);
+      const row = await createAmbiguousPublication(database.db, seeded, {
+        status: 'unknown',
+        attempt: { postIds: ['same-1'] },
+      });
+      // What an accepted reconciliation leaves: published, still owned by the attempt.
+      await database.db
+        .update(sp)
+        .set({ status: 'published', reconcileAfter: null })
+        .where(eq(sp.id, row.id));
+      const claim = {
+        publicationId: row.id,
+        attemptId: row.activeAttemptId!,
+        attemptNumber: 1,
+        attemptCount: 1,
+        dispatchGeneration: row.dispatchGeneration,
+      };
+
+      await expect(ledger.recordSuccess(claim, { postId: 'same-1' })).resolves.toBe(true);
+
+      expect((await reload(row.id)).status).toBe('published');
+      expect(await attempt(claim.attemptId)).toMatchObject({ status: 'completed' });
+      expect(await results(claim.attemptId)).toHaveLength(1);
+      expect(await reconciliationsOf(database.db, row.id)).toEqual([]);
+      expect(await auditActions(database.sql, row.id)).toEqual([]);
+    });
+
     it('rolls a content item up to published when sibling publications succeed concurrently', async () => {
       for (let round = 0; round < 10; round += 1) {
         const seeded = await seedChannel(database.sql);
@@ -1146,7 +1211,8 @@ Append this block inside the outer `describe`:
 Run (with the integration env exported): `pnpm --filter api exec vitest run --config ./vitest.config.int.ts test/integration/publication-ledger.int-spec.ts`
 Expected: FAIL.
 - `reconcileAfter` is `null` in the first three tests.
-- `recordSuccess` resolves `false` from `needs_review`.
+- `recordSuccess` resolves `false` from `needs_review` and from an already-published row it owns.
+- The already-published case also inserts a second result row.
 - The sibling test is a race. It usually fails in at least one round with `scheduled` instead of `published`. If it happens to pass before the fix, continue: Review Focus 2 still requires the lock.
 
 - [ ] **Step 4: Create `publication-rollup.ts`**
@@ -1491,6 +1557,7 @@ import { rollupPublished, type Tx } from './publication-rollup.js';
 import {
   appendReconciliation,
   loadLocalEvidence,
+  reuseOrInsertResult,
   SYSTEM_ACTOR,
 } from './publication-resolution.js';
 ```
@@ -1511,6 +1578,14 @@ import {
     return (await loadLocalEvidence(tx, publicationId))
       ? now
       : new Date(now.getTime() + this.config.reconcileGraceMs);
+  }
+
+  /** 32A §3.3: the owning attempt's own call returned success. */
+  private completeAttempt(tx: Tx, attemptId: number, now: Date) {
+    return tx
+      .update(pj)
+      .set({ status: 'completed', completedAt: now, updatedAt: now })
+      .where(and(eq(pj.id, attemptId), inArray(pj.status, ['processing', 'unknown'])));
   }
 ```
 
@@ -1540,17 +1615,26 @@ import {
         .where(eq(sp.id, claim.publicationId))
         .for('update');
 
-      await tx.insert(pr).values({
-        publicationJobId: claim.attemptId,
-        platformPostId: result.postId,
-        platformPostUrl: result.url ?? null,
-      });
+      // Under the publication lock, so a reconciler that already materialized
+      // this post id is seen: at most one result row per publication and id.
+      await reuseOrInsertResult(
+        tx,
+        claim.publicationId,
+        claim.attemptId,
+        result.postId,
+        result.url ?? null,
+      );
       // A non-owner keeps its status and only leaves the result row as evidence.
-      if (
-        !current ||
-        current.activeAttemptId !== claim.attemptId ||
-        !isStatusIn(current.status, ['publishing', 'unknown', 'needs_review'])
-      ) {
+      if (!current || current.activeAttemptId !== claim.attemptId) return false;
+
+      if (current.status === 'published') {
+        // Reconciliation or an operator already published this attempt's post.
+        // Its own call did succeed, so the attempt completes; the state,
+        // history and audit are already recorded.
+        await this.completeAttempt(tx, claim.attemptId, now);
+        return true;
+      }
+      if (!isStatusIn(current.status, ['publishing', 'unknown', 'needs_review'])) {
         return false;
       }
 
@@ -1563,15 +1647,7 @@ import {
           updatedAt: now,
         })
         .where(eq(sp.id, claim.publicationId));
-      await tx
-        .update(pj)
-        .set({ status: 'completed', completedAt: now, updatedAt: now })
-        .where(
-          and(
-            eq(pj.id, claim.attemptId),
-            inArray(pj.status, ['processing', 'unknown']),
-          ),
-        );
+      await this.completeAttempt(tx, claim.attemptId, now);
       await rollupPublished(
         tx,
         {
@@ -2082,6 +2158,47 @@ describe('automatic reconciliation (32B-1 §4)', () => {
     ]);
   });
 
+  it("never duplicates the success result when reconciliation races the same attempt's late success", async () => {
+    for (let round = 0; round < 10; round += 1) {
+      const postId = `race-${round}`;
+      const url = `https://instagram.example/p/${postId}`;
+      const row = await ambiguous({
+        status: 'unknown',
+        reconcileAfter: past(),
+        attempt: {
+          checkpoint: { confirmedPlatformPostId: postId, confirmedPlatformPostUrl: url },
+        },
+      });
+      const { service, ledger } = buildReconciler(database.db, never);
+      const claim = {
+        publicationId: row.id,
+        attemptId: row.activeAttemptId!,
+        attemptNumber: 1,
+        attemptCount: 1,
+        dispatchGeneration: row.dispatchGeneration,
+      };
+
+      const [, late] = await Promise.all([
+        service.reconcileDue(),
+        ledger.recordSuccess(claim, { postId, url }),
+      ]);
+
+      // The same outcome whichever transaction commits first.
+      expect(late).toBe(true);
+      expect(await reload(row.id)).toMatchObject({ status: 'published', reconcileAfter: null });
+      expect(await jobOf(row.activeAttemptId!)).toMatchObject({ status: 'completed' });
+      expect(
+        (await resultsOf(row.activeAttemptId!)).filter(
+          (result) => result.platformPostId === postId,
+        ),
+      ).toHaveLength(1);
+      expect(await reconciliationsOf(database.db, row.id)).toHaveLength(1);
+      expect(await auditActions(database.sql, row.id)).toEqual([
+        'publication.reconciled_published',
+      ]);
+    }
+  });
+
   it('escalates an unknown row with no attempt without creating one (R8)', async () => {
     const row = await ambiguous({ status: 'unknown', reconcileAfter: past(), attempt: null });
 
@@ -2249,7 +2366,7 @@ export function sameReconcileAfter(observed: Date | null): SQL {
 In `publication-ledger.ts`:
 - extend the drizzle import with `isNull`;
 - extend the `./publication-state.js` import with `sameReconcileAfter`;
-- extend the `./publication-resolution.js` import with `reuseOrInsertResult` and `type ReconcileEvidence`;
+- extend the `./publication-resolution.js` import with `type ReconcileEvidence` (Task 3 already imported `reuseOrInsertResult`);
 - export these types after `SweepDecision`;
 - add the method after `sweepExpiredLeases`.
 
@@ -2620,7 +2737,7 @@ Run: `pnpm --filter api exec vitest run src/modules/publishing/publishing.contro
 Expected: PASS.
 
 Run: `pnpm --filter api exec vitest run --config ./vitest.config.int.ts test/integration/reconciliation.int-spec.ts`
-Expected: PASS (15 tests).
+Expected: PASS (16 tests).
 
 Run: `pnpm --filter api exec tsc --noEmit && pnpm --filter api lint`
 Expected: clean.
@@ -5115,6 +5232,15 @@ Walk through §14, confirming each box against the tests that pin it:
 - **R8:** Task 4 and Task 6 no-attempt tests.
 - **Members get 403:** Task 6.
 - **Legacy self-heal:** Task 4 legacy test.
+- **Result idempotence:** Task 3 already-published test; Task 4 late-success race.
+
+Then run the state-write audit from "Review checkpoints":
+
+```bash
+rg -n "update\((sp|schema\.scheduledPublications)\)|scheduled_publications" apps/api/src
+```
+
+List every hit in the task report with the path that owns it.
 
 Note any gap in the task report. Do not paper over it.
 
