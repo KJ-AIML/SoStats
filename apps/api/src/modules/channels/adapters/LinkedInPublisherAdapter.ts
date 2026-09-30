@@ -15,6 +15,7 @@ import {
   type SocialAnalyticsPort,
   type SocialMetricTotals,
 } from '../ports/SocialAnalyticsPort.js';
+import { httpErrorClass, providerSignal, readJson } from './provider-http.js';
 
 type LinkedInUserInfo = {
   sub: string;
@@ -92,10 +93,20 @@ export class LinkedInPublisherAdapter
   async publishPost(
     content: string,
     accessToken: string,
-    context?: PublishContext,
+    context: PublishContext,
   ): Promise<PublishResult> {
     const providerAccountId =
-      context?.providerAccountId || (await this.getUserInfo(accessToken)).sub;
+      context.providerAccountId ||
+      (await this.getUserInfo(accessToken, providerSignal(context.signal)))
+        .sub;
+
+    if (context.signal.aborted) {
+      throw new ProviderPublishError(
+        'LinkedIn publish budget was exhausted before the request was sent',
+        { retryable: true, errorClass: 'network_transient' },
+      );
+    }
+    await context.beforeSideEffect({ operationType: 'linkedin_create_post' });
 
     let response: Response;
     try {
@@ -119,16 +130,17 @@ export class LinkedInPublisherAdapter
           lifecycleState: 'PUBLISHED',
           isReshareDisabledByAuthor: false,
         }),
+        signal: providerSignal(context.signal),
       });
     } catch {
       throw new ProviderPublishError(
         'LinkedIn publish request ended without a confirmed provider response',
-        { outcomeUnknown: true },
+        { outcomeUnknown: true, errorClass: 'network_transient' },
       );
     }
 
     if (!response.ok) {
-      const detail = await response.text();
+      const detail = await response.text().catch(() => '');
       const isRateLimit = response.status === 429;
       const isServerError = response.status >= 500;
 
@@ -136,6 +148,7 @@ export class LinkedInPublisherAdapter
         `LinkedIn publish failed (HTTP ${response.status}): ${detail.slice(0, 300)}`,
         {
           statusCode: response.status,
+          errorClass: httpErrorClass(response.status),
           retryable: isRateLimit,
           outcomeUnknown: isServerError,
         },
@@ -149,7 +162,7 @@ export class LinkedInPublisherAdapter
     if (!postId) {
       throw new ProviderPublishError(
         'LinkedIn accepted the publish request but did not return a post id',
-        { outcomeUnknown: true },
+        { outcomeUnknown: true, errorClass: 'unknown_outcome' },
       );
     }
 
@@ -301,30 +314,33 @@ export class LinkedInPublisherAdapter
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded' },
           body,
+          signal: providerSignal(),
         },
       );
     } catch {
       throw new ProviderPublishError(
         'LinkedIn token refresh request failed before a provider response was received',
-        { retryable: true },
+        { retryable: true, errorClass: 'network_transient' },
       );
     }
 
     if (!response.ok) {
-      const detail = await response.text();
+      const detail = await response.text().catch(() => '');
       throw new ProviderPublishError(
         `LinkedIn token refresh failed (HTTP ${response.status}): ${detail.slice(0, 300)}`,
         {
           statusCode: response.status,
+          errorClass: httpErrorClass(response.status),
           retryable: response.status === 429 || response.status >= 500,
         },
       );
     }
 
-    const token = (await response.json()) as LinkedInTokenResponse;
-    if (!token.access_token) {
+    const token = await readJson<LinkedInTokenResponse>(response);
+    if (!token?.access_token) {
       throw new ProviderPublishError(
         'LinkedIn token refresh returned no access token',
+        { retryable: true, errorClass: 'transient_provider' },
       );
     }
 
@@ -356,9 +372,13 @@ export class LinkedInPublisherAdapter
     );
   }
 
-  private async getUserInfo(accessToken: string): Promise<LinkedInUserInfo> {
+  private async getUserInfo(
+    accessToken: string,
+    signal?: AbortSignal,
+  ): Promise<LinkedInUserInfo> {
     const response = await fetch('https://api.linkedin.com/v2/userinfo', {
       headers: { authorization: `Bearer ${accessToken}` },
+      signal,
     });
 
     if (!response.ok) {

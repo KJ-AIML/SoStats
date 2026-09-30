@@ -276,6 +276,7 @@ export type SocialAccountRecord = {
   publishingReady?: boolean;
   analyticsReady?: boolean;
   activeScheduleCount?: number;
+  disconnectBlockingScheduleCount?: number;
   publishedCount?: number;
   lastPublishedAt?: string | null;
   latestAnalyticsAt?: string | null;

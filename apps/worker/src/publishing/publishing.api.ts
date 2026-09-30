@@ -1,12 +1,15 @@
 export type DispatchablePublication = {
   id: number;
   scheduledAt: string;
+  nextAttemptAt: string | null;
   updatedAt: string;
+  dispatchGeneration: number;
 };
 
 export type PublishingJobData = {
   scheduledPublicationId: number;
   expectedVersion: string;
+  expectedDispatchGeneration: number;
 };
 
 export type ExecutePublicationResponse = {
@@ -16,6 +19,8 @@ export type ExecutePublicationResponse = {
     | 'stale'
     | 'terminal'
     | 'in_progress'
+    | 'outcome_unknown'
+    | 'retry_scheduled'
     | 'failed_terminal';
   scheduledPublicationId: number;
   platformPostId?: string | null;
@@ -49,7 +54,11 @@ function workerToken() {
   return value;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs?: number,
+): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('x-worker-token', workerToken());
   if (init.body && !headers.has('content-type')) {
@@ -59,6 +68,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${apiBaseUrl()}${path}`, {
     ...init,
     headers,
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
   });
 
   const bodyText = await response.text();
@@ -97,29 +107,46 @@ export function getDispatchablePublications(
   );
 }
 
-export function executePublication(
-  scheduledPublicationId: number,
-  expectedVersion: string,
-) {
-  return request<ExecutePublicationResponse>(
-    `/internal/publications/${scheduledPublicationId}/execute`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ expectedVersion }),
-    },
-  );
+function executeTimeoutMs() {
+  const value = Number.parseInt(process.env.PUBLISH_EXECUTE_TIMEOUT_MS || '', 10);
+  return Number.isFinite(value) && value > 0 ? value : 180_000;
 }
 
-export function deadLetterPublication(
-  scheduledPublicationId: number,
-  expectedVersion: string,
-  reason: string,
+const EXECUTE_STATUSES: readonly string[] = [
+  'published',
+  'already_published',
+  'stale',
+  'terminal',
+  'in_progress',
+  'outcome_unknown',
+  'retry_scheduled',
+  'failed_terminal',
+];
+
+export async function executePublication(
+  data: PublishingJobData,
+  queueJobId?: string,
 ) {
-  return request<{ status: string; scheduledPublicationId: number }>(
-    `/internal/publications/${scheduledPublicationId}/dead-letter`,
+  const result = await request<ExecutePublicationResponse>(
+    `/internal/publications/${data.scheduledPublicationId}/execute`,
     {
       method: 'POST',
-      body: JSON.stringify({ expectedVersion, reason }),
+      body: JSON.stringify({
+        expectedVersion: data.expectedVersion,
+        expectedDispatchGeneration: data.expectedDispatchGeneration,
+        queueJobId,
+      }),
     },
+    executeTimeoutMs(),
   );
+  // An unrecognised 200 means the protocol did not complete: treat it as a
+  // transport failure so the job is retried/removed, never completed.
+  const status = (result as { status?: unknown } | null)?.status;
+  if (typeof status !== 'string' || !EXECUTE_STATUSES.includes(status)) {
+    throw new PublishingApiError(
+      'Publishing API returned an unrecognised execute response',
+      200,
+    );
+  }
+  return result;
 }

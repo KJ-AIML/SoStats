@@ -11,7 +11,11 @@ import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import { CampaignsService } from '../campaigns/campaigns.service.js';
-import { SchedulingService } from '../scheduling/scheduling.service.js';
+import {
+  ScheduleIdentityConflict,
+  SchedulingService,
+} from '../scheduling/scheduling.service.js';
+import { claimScheduleStartAt } from './schedule-checkpoint.js';
 import { RecommendationsService } from '../analytics/recommendations.service.js';
 import { AutomationDecisionDto } from './automations.dto.js';
 import {
@@ -690,7 +694,7 @@ export class AutomationRuntimeService {
         : undefined);
     const delayMinutes = numberConfig(config, 'delayMinutes', 60) || 60;
     const spacingMinutes = numberConfig(config, 'spacingMinutes', 60) || 60;
-    const startAt = startAtRaw
+    let startAt = startAtRaw
       ? new Date(startAtRaw)
       : new Date(Date.now() + delayMinutes * 60_000);
 
@@ -699,18 +703,9 @@ export class AutomationRuntimeService {
     }
 
     if (!startAtRaw) {
-      const checkpointLogs = JSON.stringify({
-        ...log,
-        checkpoint: {
-          ...(log.checkpoint || {}),
-          startAt: startAt.toISOString(),
-        },
-      });
-      await this.db
-        .update(schema.automationRunSteps)
-        .set({ logs: checkpointLogs })
-        .where(eq(schema.automationRunSteps.id, step.id));
-      step.logs = checkpointLogs;
+      const claimed = await claimScheduleStartAt(this.db, step, startAt);
+      startAt = claimed.startAt;
+      step.logs = claimed.logs;
     }
 
     const scheduleIds: number[] = [];
@@ -743,16 +738,27 @@ export class AutomationRuntimeService {
           normalizeProvider(account.provider),
       );
 
-      const created = await this.scheduling.createSchedule(
-        run.automation.workspaceId,
-        {
-          contentItemId,
-          variantId: variant?.id,
-          socialAccountId,
-          scheduledAt: scheduledAt.toISOString(),
-        },
-      );
-      scheduleIds.push(created.id);
+      try {
+        const created = await this.scheduling.createSchedule(
+          run.automation.workspaceId,
+          {
+            contentItemId,
+            variantId: variant?.id,
+            socialAccountId,
+            scheduledAt: scheduledAt.toISOString(),
+          },
+        );
+        scheduleIds.push(created.id);
+      } catch (error) {
+        if (
+          error instanceof ScheduleIdentityConflict &&
+          error.existingScheduleId !== null
+        ) {
+          scheduleIds.push(error.existingScheduleId);
+          continue;
+        }
+        throw error;
+      }
     }
 
     return {

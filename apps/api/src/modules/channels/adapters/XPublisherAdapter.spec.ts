@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { testPublishContext } from '../../../../test/support/publish-context.js';
 import { XPublisherAdapter } from './XPublisherAdapter.js';
 
 describe('XPublisherAdapter', () => {
@@ -11,8 +12,7 @@ describe('XPublisherAdapter', () => {
   beforeEach(() => {
     process.env.X_CLIENT_ID = 'x-client-id';
     process.env.X_CLIENT_SECRET = 'x-client-secret';
-    process.env.X_SCOPES =
-      'tweet.read tweet.write users.read offline.access';
+    process.env.X_SCOPES = 'tweet.read tweet.write users.read offline.access';
   });
 
   afterEach(() => {
@@ -36,9 +36,7 @@ describe('XPublisherAdapter', () => {
       ),
     );
 
-    expect(url.origin + url.pathname).toBe(
-      'https://x.com/i/oauth2/authorize',
-    );
+    expect(url.origin + url.pathname).toBe('https://x.com/i/oauth2/authorize');
     expect(url.searchParams.get('response_type')).toBe('code');
     expect(url.searchParams.get('client_id')).toBe('x-client-id');
     expect(url.searchParams.get('state')).toBe('encrypted-state');
@@ -70,7 +68,11 @@ describe('XPublisherAdapter', () => {
 
     const adapter = new XPublisherAdapter();
     await expect(
-      adapter.publishPost('Launch day', 'user-access-token'),
+      adapter.publishPost(
+        'Launch day',
+        'user-access-token',
+        testPublishContext(),
+      ),
     ).resolves.toEqual({
       postId: '1234567890',
       url: 'https://x.com/i/web/status/1234567890',
@@ -124,5 +126,244 @@ describe('XPublisherAdapter', () => {
       clicks: 0,
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  describe('publish error semantics', () => {
+    function publish(respond: () => Response | Promise<Response>) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => respond()),
+      );
+      return new XPublisherAdapter()
+        .publishPost('Launch day', 'token', testPublishContext())
+        .catch((caught: unknown) => caught);
+    }
+
+    it.each([
+      [
+        '429',
+        () => new Response('{}', { status: 429 }),
+        { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
+      ],
+      [
+        '503',
+        () => new Response('{}', { status: 503 }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'transient_provider',
+        },
+      ],
+      [
+        '403',
+        () => new Response('{}', { status: 403 }),
+        {
+          retryable: false,
+          outcomeUnknown: false,
+          errorClass: 'authorization',
+        },
+      ],
+      [
+        'malformed 2xx',
+        () => new Response('not json', { status: 201 }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'unknown_outcome',
+        },
+      ],
+      [
+        '2xx without id',
+        () => new Response('{"data":{}}', { status: 201 }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'unknown_outcome',
+        },
+      ],
+    ])('classifies %s', async (_label, respond, expected) => {
+      expect(await publish(respond)).toMatchObject(expected);
+    });
+
+    it('marks the side effect once, immediately before the post', async () => {
+      const order: string[] = [];
+      const context = testPublishContext({
+        beforeSideEffect: vi.fn(async () => {
+          order.push('marker');
+        }),
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          order.push('post');
+          return new Response('{"data":{"id":"1"}}', { status: 201 });
+        }),
+      );
+      await new XPublisherAdapter().publishPost('Launch day', 'token', context);
+      expect(order).toEqual(['marker', 'post']);
+      expect(context.beforeSideEffect).toHaveBeenCalledTimes(1);
+      expect(context.beforeSideEffect).toHaveBeenCalledWith({
+        operationType: 'x_create_post',
+      });
+    });
+
+    it('sends nothing and rethrows the identical error when the marker is refused', async () => {
+      const hookError = new Error('lease lost');
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(
+        new XPublisherAdapter().publishPost(
+          'Launch day',
+          'token',
+          testPublishContext({
+            beforeSideEffect: vi.fn(async () => {
+              throw hookError;
+            }),
+          }),
+        ),
+      ).rejects.toBe(hookError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('fails retryably without marking or sending when the budget is already exhausted', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const context = testPublishContext({ signal: controller.signal });
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const error = await new XPublisherAdapter()
+        .publishPost('Launch day', 'token', context)
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'network_transient',
+      });
+      expect(context.beforeSideEffect).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('classifies a publish network failure as unknown, after the marker', async () => {
+      const context = testPublishContext();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new TypeError('fetch failed');
+        }),
+      );
+      const error = await new XPublisherAdapter()
+        .publishPost('Launch day', 'token', context)
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        retryable: false,
+        outcomeUnknown: true,
+        errorClass: 'network_transient',
+      });
+      expect(context.beforeSideEffect).toHaveBeenCalledTimes(1);
+    });
+
+    it('bounds the publish request by the parent budget signal', async () => {
+      const controller = new AbortController();
+      let sent: AbortSignal | undefined;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string | URL, init?: RequestInit) => {
+          sent = init?.signal ?? undefined;
+          return new Response('{"data":{"id":"1"}}', { status: 201 });
+        }),
+      );
+      await new XPublisherAdapter().publishPost(
+        'Launch day',
+        'token',
+        testPublishContext({ signal: controller.signal }),
+      );
+      expect(sent).toBeInstanceOf(AbortSignal);
+      expect(sent?.aborted).toBe(false);
+      controller.abort();
+      expect(sent?.aborted).toBe(true);
+    });
+  });
+
+  describe('refresh error semantics', () => {
+    function refresh(respond: () => Response | Promise<Response>) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => respond()),
+      );
+      return new XPublisherAdapter()
+        .refreshAccessToken('refresh')
+        .catch((caught: unknown) => caught);
+    }
+
+    it.each([
+      [
+        '429',
+        () => new Response('{}', { status: 429 }),
+        { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
+      ],
+      [
+        '503',
+        () => new Response('{}', { status: 503 }),
+        {
+          retryable: true,
+          outcomeUnknown: false,
+          errorClass: 'transient_provider',
+        },
+      ],
+      [
+        '401',
+        () => new Response('{}', { status: 401 }),
+        {
+          retryable: false,
+          outcomeUnknown: false,
+          errorClass: 'authentication',
+        },
+      ],
+      [
+        'malformed 2xx',
+        () => new Response('not json', { status: 200 }),
+        {
+          retryable: true,
+          outcomeUnknown: false,
+          errorClass: 'transient_provider',
+        },
+      ],
+      [
+        'token-less 2xx',
+        () => new Response('{}', { status: 200 }),
+        {
+          retryable: true,
+          outcomeUnknown: false,
+          errorClass: 'transient_provider',
+        },
+      ],
+    ])('classifies %s', async (_label, respond, expected) => {
+      expect(await refresh(respond)).toMatchObject(expected);
+    });
+
+    it('classifies a network failure as retryable, not unknown', async () => {
+      const error = await refresh(() => {
+        throw new TypeError('fetch failed');
+      });
+      expect(error).toMatchObject({
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'network_transient',
+      });
+    });
+
+    it('bounds the request with a per-request timeout signal', async () => {
+      let sent: AbortSignal | undefined;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string | URL, init?: RequestInit) => {
+          sent = init?.signal ?? undefined;
+          return new Response('{"access_token":"a"}', { status: 200 });
+        }),
+      );
+      await new XPublisherAdapter().refreshAccessToken('refresh');
+      expect(sent).toBeInstanceOf(AbortSignal);
+      expect(sent?.aborted).toBe(false);
+    });
   });
 });

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { statusLabel, statusTone } from "@/lib/publication-status";
 import {
   addDays,
   addMonths,
@@ -65,26 +66,14 @@ type Post = {
 const initialToday = new Date();
 const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-function statusTone(status: string) {
-  switch (status) {
-    case "published":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "failed":
-      return "border-red-200 bg-red-50 text-red-700";
-    case "publishing":
-      return "border-amber-200 bg-amber-50 text-amber-700";
-    case "cancelled":
-      return "border-neutral-200 bg-neutral-100 text-neutral-500";
-    default:
-      return "border-[#ef2b2d]/10 bg-[#fff7f7] text-[#d92023]";
-  }
-}
-
 function StatusIcon({ status }: { status: string }) {
   if (status === "published") return <CheckCircle2 className="h-3 w-3" />;
   if (status === "failed") return <AlertCircle className="h-3 w-3" />;
   if (status === "publishing") return <RefreshCw className="h-3 w-3" />;
   if (status === "cancelled") return <XCircle className="h-3 w-3" />;
+  if (status === "unknown" || status === "needs_review") {
+    return <AlertCircle className="h-3 w-3" />;
+  }
   return <Clock3 className="h-3 w-3" />;
 }
 
@@ -269,11 +258,9 @@ export function CalendarView({
   };
 
   const canReschedule =
-    selectedPost &&
-    !["published", "cancelled", "publishing"].includes(selectedPost.status);
+    selectedPost && ["scheduled", "failed"].includes(selectedPost.status);
   const canCancel =
-    selectedPost &&
-    !["published", "cancelled", "publishing"].includes(selectedPost.status);
+    selectedPost && ["scheduled", "failed"].includes(selectedPost.status);
 
   const save = async () => {
     if (!selectedPost) return;
@@ -461,7 +448,7 @@ export function CalendarView({
               <option value="all">All states</option>
               {statuses.map((status) => (
                 <option key={status} value={status}>
-                  {status}
+                  {statusLabel(status)}
                 </option>
               ))}
             </select>
@@ -684,7 +671,7 @@ export function CalendarView({
                       </p>
                     </div>
                     <span className="text-[8px] font-semibold capitalize text-neutral-500">
-                      {post.status}
+                      {statusLabel(post.status)}
                     </span>
                   </button>
                 ))}
@@ -747,7 +734,7 @@ export function CalendarView({
                       )}
                     >
                       <StatusIcon status={selectedPost.status} />
-                      {selectedPost.status}
+                      {statusLabel(selectedPost.status)}
                     </span>
                     <span className="text-[8px] text-muted-foreground">
                       Schedule #{selectedPost.id}
@@ -954,7 +941,7 @@ function CalendarPost({
       </p>
       {roomy && (
         <p className="mt-1 truncate text-[8px] opacity-70">
-          {post.accountName} · {post.status}
+          {post.accountName} · {statusLabel(post.status)}
         </p>
       )}
     </button>

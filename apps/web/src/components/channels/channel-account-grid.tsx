@@ -202,6 +202,8 @@ export function ChannelAccountGrid({
               account.credentialState === "expired" ||
               account.credentialState === "missing_token";
             const activeSchedules = account.activeScheduleCount || 0;
+            const disconnectBlockers =
+              account.disconnectBlockingScheduleCount ?? activeSchedules;
 
             return (
               <section key={account.id} className="sostats-card p-5">
@@ -314,11 +316,11 @@ export function ChannelAccountGrid({
                     <Button
                       variant="outline"
                       onClick={() => setConfirmDisconnect(account)}
-                      disabled={Boolean(busy) || activeSchedules > 0}
+                      disabled={Boolean(busy) || disconnectBlockers > 0}
                       className="h-9 rounded-xl border-red-100 text-[8px] text-red-700 hover:bg-red-50"
                       title={
-                        activeSchedules > 0
-                          ? "Cancel or move active scheduled publications first"
+                        disconnectBlockers > 0
+                          ? "Resolve scheduled or in-progress publications before disconnecting. Unconfirmed publications need a provider check first."
                           : "Disconnect credentials and preserve history"
                       }
                     >

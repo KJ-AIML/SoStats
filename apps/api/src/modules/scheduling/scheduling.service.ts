@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Inject,
   NotFoundException,
@@ -7,7 +8,7 @@ import {
 import { DRIZZLE } from '../../db/db.module.js';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../db/schema.js';
-import { and, eq, gte, lte } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte } from 'drizzle-orm';
 import {
   CreateScheduleDto,
   GetCalendarDto,
@@ -15,6 +16,25 @@ import {
 } from './scheduling.dto.js';
 import { ProviderRegistry } from '../channels/ProviderRegistry.js';
 import { MediaService } from '../media/media.service.js';
+import { isUniqueViolation } from '../../db/pg-errors.js';
+import {
+  ACTIVE_IDENTITY_INDEX,
+  ACTIVE_PUBLICATION_STATUSES,
+  isStatusIn,
+  rearmSet,
+  sameVersion,
+  USER_MUTABLE_PUBLICATION_STATUSES,
+} from '../publishing/publication-state.js';
+
+export class ScheduleIdentityConflict extends ConflictException {
+  constructor(readonly existingScheduleId: number | null) {
+    super({
+      message:
+        'An active publication already exists for this content, channel and time',
+      existingScheduleId,
+    });
+  }
+}
 
 function normalizeProvider(value?: string | null) {
   const normalized = (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -29,6 +49,27 @@ export class SchedulingService {
     private readonly providerRegistry: ProviderRegistry,
     private readonly mediaService: MediaService,
   ) {}
+
+  private async identityConflict(
+    workspaceId: number,
+    contentItemId: number,
+    socialAccountId: number,
+    scheduledAt: Date,
+  ) {
+    const existing = await this.db.query.scheduledPublications.findFirst({
+      where: and(
+        eq(schema.scheduledPublications.workspaceId, workspaceId),
+        eq(schema.scheduledPublications.contentItemId, contentItemId),
+        eq(schema.scheduledPublications.socialAccountId, socialAccountId),
+        eq(schema.scheduledPublications.scheduledAt, scheduledAt),
+        inArray(schema.scheduledPublications.status, [
+          ...ACTIVE_PUBLICATION_STATUSES,
+        ]),
+      ),
+      columns: { id: true },
+    });
+    return new ScheduleIdentityConflict(existing?.id ?? null);
+  }
 
   getCalendar(workspaceId: number, query: GetCalendarDto) {
     const conditions = [
@@ -78,6 +119,15 @@ export class SchedulingService {
     if (!contentItem) throw new NotFoundException('Content item not found');
 
     if (!['in_review', 'approved'].includes(contentItem.status)) {
+      // A concurrent identical create commits content=scheduled with its
+      // insert; surface that as the identity conflict, not a product 400.
+      const conflict = await this.identityConflict(
+        workspaceId,
+        data.contentItemId,
+        data.socialAccountId,
+        scheduledAt,
+      );
+      if (conflict.existingScheduleId !== null) throw conflict;
       throw new BadRequestException(
         'Content must be in review or approved before scheduling',
       );
@@ -165,37 +215,49 @@ export class SchedulingService {
       }
     }
 
-    return this.db.transaction(async (tx) => {
-      const [record] = await tx
-        .insert(schema.scheduledPublications)
-        .values({
-          workspaceId,
-          contentItemId: data.contentItemId,
-          variantId: data.variantId,
-          socialAccountId: data.socialAccountId,
-          scheduledAt,
-          status: 'scheduled',
-        })
-        .returning();
-
-      await tx
-        .update(schema.contentItems)
-        .set({ status: 'scheduled', updatedAt: new Date() })
-        .where(eq(schema.contentItems.id, data.contentItemId));
-
-      if (variant) {
-        await tx
-          .update(schema.contentVariants)
-          .set({
-            status: 'scheduled',
+    try {
+      return await this.db.transaction(async (tx) => {
+        const [record] = await tx
+          .insert(schema.scheduledPublications)
+          .values({
+            workspaceId,
+            contentItemId: data.contentItemId,
+            variantId: data.variantId,
+            socialAccountId: data.socialAccountId,
             scheduledAt,
-            updatedAt: new Date(),
+            status: 'scheduled',
           })
-          .where(eq(schema.contentVariants.id, variant.id));
-      }
+          .returning();
 
-      return record;
-    });
+        await tx
+          .update(schema.contentItems)
+          .set({ status: 'scheduled', updatedAt: new Date() })
+          .where(eq(schema.contentItems.id, data.contentItemId));
+
+        if (variant) {
+          await tx
+            .update(schema.contentVariants)
+            .set({
+              status: 'scheduled',
+              scheduledAt,
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.contentVariants.id, variant.id));
+        }
+
+        return record;
+      });
+    } catch (error) {
+      if (isUniqueViolation(error, ACTIVE_IDENTITY_INDEX)) {
+        throw await this.identityConflict(
+          workspaceId,
+          data.contentItemId,
+          data.socialAccountId,
+          scheduledAt,
+        );
+      }
+      throw error;
+    }
   }
 
   async updateSchedule(
@@ -211,11 +273,13 @@ export class SchedulingService {
     });
     if (!current) throw new NotFoundException('Scheduled publication not found');
 
-    if (['published', 'cancelled', 'publishing'].includes(current.status)) {
-      throw new BadRequestException(
+    if (!isStatusIn(current.status, USER_MUTABLE_PUBLICATION_STATUSES)) {
+      throw new ConflictException(
         current.status === 'publishing'
           ? 'A publication in progress cannot be changed'
-          : 'Published or cancelled publications cannot be changed',
+          : isStatusIn(current.status, ['unknown', 'needs_review'])
+            ? 'This publication may already be live and must be resolved before it can be changed'
+            : 'Published or cancelled publications cannot be changed',
       );
     }
 
@@ -240,40 +304,57 @@ export class SchedulingService {
       throw new BadRequestException('scheduledAt must be a valid date');
     }
 
-    return this.db.transaction(async (tx) => {
-      const [record] = await tx
-        .update(schema.scheduledPublications)
-        .set({
-          scheduledAt,
-          status: 'scheduled',
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(schema.scheduledPublications.id, id),
-            eq(schema.scheduledPublications.workspaceId, workspaceId),
-          ),
-        )
-        .returning();
+    try {
+      return await this.db.transaction(async (tx) => {
+        const now = new Date();
+        const [record] = await tx
+          .update(schema.scheduledPublications)
+          .set({ ...rearmSet(now, null), scheduledAt, attemptCount: 0 })
+          .where(
+            and(
+              eq(schema.scheduledPublications.id, id),
+              eq(schema.scheduledPublications.workspaceId, workspaceId),
+              inArray(schema.scheduledPublications.status, [
+                ...USER_MUTABLE_PUBLICATION_STATUSES,
+              ]),
+              sameVersion(
+                schema.scheduledPublications.updatedAt,
+                current.updatedAt,
+              ),
+            ),
+          )
+          .returning();
+        if (!record) {
+          throw new ConflictException(
+            'This publication changed while you were editing it. Refresh and try again.',
+          );
+        }
 
-      await tx
-        .update(schema.contentItems)
-        .set({ status: 'scheduled', updatedAt: new Date() })
-        .where(eq(schema.contentItems.id, current.contentItemId));
-
-      if (current.variantId) {
         await tx
-          .update(schema.contentVariants)
-          .set({
-            status: 'scheduled',
-            scheduledAt,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.contentVariants.id, current.variantId));
-      }
+          .update(schema.contentItems)
+          .set({ status: 'scheduled', updatedAt: now })
+          .where(eq(schema.contentItems.id, current.contentItemId));
 
-      return record;
-    });
+        if (current.variantId) {
+          await tx
+            .update(schema.contentVariants)
+            .set({ status: 'scheduled', scheduledAt, updatedAt: now })
+            .where(eq(schema.contentVariants.id, current.variantId));
+        }
+
+        return record;
+      });
+    } catch (error) {
+      if (isUniqueViolation(error, ACTIVE_IDENTITY_INDEX)) {
+        throw await this.identityConflict(
+          workspaceId,
+          current.contentItemId,
+          current.socialAccountId,
+          scheduledAt,
+        );
+      }
+      throw error;
+    }
   }
 
   private cancelSchedule(
@@ -288,9 +369,21 @@ export class SchedulingService {
           and(
             eq(schema.scheduledPublications.id, current.id),
             eq(schema.scheduledPublications.workspaceId, workspaceId),
+            inArray(schema.scheduledPublications.status, [
+              ...USER_MUTABLE_PUBLICATION_STATUSES,
+            ]),
+            sameVersion(
+              schema.scheduledPublications.updatedAt,
+              current.updatedAt,
+            ),
           ),
         )
         .returning();
+      if (!record) {
+        throw new ConflictException(
+          'This publication changed while you were editing it. Refresh and try again.',
+        );
+      }
 
       const contentSchedules = await tx.query.scheduledPublications.findMany({
         where: eq(
@@ -299,7 +392,7 @@ export class SchedulingService {
         ),
       });
       const activeContentSchedules = contentSchedules.filter((schedule) =>
-        ['scheduled', 'publishing'].includes(schedule.status),
+        isStatusIn(schedule.status, ACTIVE_PUBLICATION_STATUSES),
       );
       const hasPublishedContentSchedule = contentSchedules.some(
         (schedule) => schedule.status === 'published',
@@ -323,7 +416,7 @@ export class SchedulingService {
         );
         const activeVariantSchedule = variantSchedules
           .filter((schedule) =>
-            ['scheduled', 'publishing'].includes(schedule.status),
+            isStatusIn(schedule.status, ACTIVE_PUBLICATION_STATUSES),
           )
           .sort(
             (a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime(),

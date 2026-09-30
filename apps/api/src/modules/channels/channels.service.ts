@@ -14,6 +14,11 @@ import { encrypt } from '../../utils/encryption.util.js';
 import { OAuthStateService } from './oauth-state.service.js';
 import { ProviderRegistry } from './ProviderRegistry.js';
 import { ChannelCredentialService } from './channel-credential.service.js';
+import {
+  ACTIVE_PUBLICATION_STATUSES,
+  CREDENTIAL_DEPENDENT_PUBLICATION_STATUSES,
+  isStatusIn,
+} from '../publishing/publication-state.js';
 
 @Injectable()
 export class ChannelsService {
@@ -93,7 +98,10 @@ export class ChannelsService {
         (schedule) => schedule.status === 'published',
       );
       const activeSchedules = accountSchedules.filter((schedule) =>
-        ['scheduled', 'publishing'].includes(schedule.status),
+        isStatusIn(schedule.status, ACTIVE_PUBLICATION_STATUSES),
+      );
+      const disconnectBlockingSchedules = accountSchedules.filter((schedule) =>
+        isStatusIn(schedule.status, CREDENTIAL_DEPENDENT_PUBLICATION_STATUSES),
       );
       const latestSnapshot = snapshots.find(
         (snapshot) => snapshot.socialAccountId === record.id,
@@ -155,6 +163,7 @@ export class ChannelsService {
           Boolean(provider.capabilities?.analytics) &&
           credentialUsable,
         activeScheduleCount: activeSchedules.length,
+        disconnectBlockingScheduleCount: disconnectBlockingSchedules.length,
         publishedCount: accountSchedules.filter(
           (schedule) => schedule.status === 'published',
         ).length,
@@ -202,8 +211,7 @@ export class ChannelsService {
         eq(schema.scheduledPublications.workspaceId, workspaceId),
         eq(schema.scheduledPublications.socialAccountId, accountId),
         inArray(schema.scheduledPublications.status, [
-          'scheduled',
-          'publishing',
+          ...CREDENTIAL_DEPENDENT_PUBLICATION_STATUSES,
         ]),
       ),
     });
@@ -262,9 +270,7 @@ export class ChannelsService {
       ? randomBytes(32).toString('base64url')
       : undefined;
     const codeChallenge = codeVerifier
-      ? createHash('sha256')
-          .update(codeVerifier)
-          .digest('base64url')
+      ? createHash('sha256').update(codeVerifier).digest('base64url')
       : undefined;
 
     const state = this.oauthState.seal({
@@ -278,11 +284,7 @@ export class ChannelsService {
 
     return {
       provider: adapter.providerName,
-      authorizationUrl: adapter.getAuthUrl(
-        redirectUri,
-        state,
-        codeChallenge,
-      ),
+      authorizationUrl: adapter.getAuthUrl(redirectUri, state, codeChallenge),
       expiresInSeconds: 600,
     };
   }
@@ -362,8 +364,7 @@ export class ChannelsService {
             brandId: state.brandId,
             accountName: connection.accountName,
             accessToken: encryptedAccessToken,
-            refreshToken:
-              encryptedRefreshToken || existing.refreshToken,
+            refreshToken: encryptedRefreshToken || existing.refreshToken,
             expiresAt: connection.expiresAt,
             status: 'active',
             updatedAt: new Date(),
@@ -464,10 +465,7 @@ export class ChannelsService {
     return url.origin;
   }
 
-  private returnUrl(
-    returnTo: string,
-    params: Record<string, string>,
-  ) {
+  private returnUrl(returnTo: string, params: Record<string, string>) {
     if (!this.oauthState.validReturnTo(returnTo)) {
       throw new BadRequestException('OAuth return path is invalid');
     }

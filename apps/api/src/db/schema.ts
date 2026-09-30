@@ -11,6 +11,7 @@ import {
   boolean,
   customType,
   check,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -768,7 +769,7 @@ export const approvalRequests = pgTable('approval_requests', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-// scheduled_publications
+// scheduled_publications (spec 32A §4.1)
 export const scheduledPublications = pgTable(
   'scheduled_publications',
   {
@@ -786,7 +787,16 @@ export const scheduledPublications = pgTable(
       .notNull()
       .references(() => socialAccounts.id, { onDelete: 'cascade' }),
     scheduledAt: timestamp('scheduled_at').notNull(),
-    status: varchar('status', { length: 50 }).notNull().default('scheduled'), // scheduled, published, failed, cancelled
+    // scheduled, publishing, published, failed, cancelled, unknown, needs_review (spec 32A §3.1)
+    status: varchar('status', { length: 50 }).notNull().default('scheduled'),
+    activeAttemptId: integer('active_attempt_id').references(
+      (): AnyPgColumn => publicationJobs.id,
+      { onDelete: 'set null' },
+    ),
+    leaseExpiresAt: timestamp('lease_expires_at'),
+    dispatchGeneration: integer('dispatch_generation').notNull().default(1),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -798,23 +808,71 @@ export const scheduledPublications = pgTable(
       scheduledPubDateIdx: index('scheduled_pub_date_idx').on(
         table.scheduledAt,
       ),
+      scheduledPubActiveIdentityIdx: uniqueIndex(
+        'scheduled_pub_active_identity_idx',
+      )
+        .on(
+          table.workspaceId,
+          table.contentItemId,
+          table.socialAccountId,
+          table.scheduledAt,
+        )
+        .where(
+          sql`${table.status} in ('scheduled', 'publishing', 'unknown', 'needs_review')`,
+        ),
+      scheduledPubDispatchIdx: index('scheduled_pub_dispatch_idx').on(
+        table.status,
+        table.scheduledAt,
+      ),
+      scheduledPubLeaseIdx: index('scheduled_pub_lease_idx')
+        .on(table.leaseExpiresAt)
+        .where(sql`${table.status} = 'publishing'`),
+      scheduledPublicationsStatusCheck: check(
+        'scheduled_publications_status_check',
+        sql`${table.status} in ('scheduled', 'publishing', 'published', 'failed', 'cancelled', 'unknown', 'needs_review')`,
+      ),
     };
   },
 );
 
-// publication_jobs
-export const publicationJobs = pgTable('publication_jobs', {
-  id: serial('id').primaryKey(),
-  scheduledPublicationId: integer('scheduled_publication_id')
-    .notNull()
-    .references(() => scheduledPublications.id, { onDelete: 'cascade' }),
-  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, processing, completed, failed
-  attempts: integer('attempts').notNull().default(0),
-  lastAttemptAt: timestamp('last_attempt_at'),
-  nextAttemptAt: timestamp('next_attempt_at'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+// publication_jobs — one row per provider attempt (spec 32A §4.2)
+export const publicationJobs = pgTable(
+  'publication_jobs',
+  {
+    id: serial('id').primaryKey(),
+    scheduledPublicationId: integer('scheduled_publication_id')
+      .notNull()
+      .references(() => scheduledPublications.id, { onDelete: 'cascade' }),
+    // processing, completed, failed, unknown, abandoned
+    status: varchar('status', { length: 50 }).notNull().default('processing'),
+    attempts: integer('attempts').notNull().default(0),
+    lastAttemptAt: timestamp('last_attempt_at'),
+    nextAttemptAt: timestamp('next_attempt_at'),
+    attemptNumber: integer('attempt_number').notNull().default(1),
+    providerRequestStartedAt: timestamp('provider_request_started_at'),
+    completedAt: timestamp('completed_at'),
+    errorClass: varchar('error_class', { length: 40 }),
+    providerOperationType: varchar('provider_operation_type', { length: 80 }),
+    providerOperationId: varchar('provider_operation_id', { length: 255 }),
+    providerCheckpoint: jsonb('provider_checkpoint').$type<
+      Record<string, unknown>
+    >(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    publicationJobsAttemptUnique: uniqueIndex(
+      'publication_jobs_attempt_unique',
+    ).on(table.scheduledPublicationId, table.attemptNumber),
+    publicationJobsPublicationIdx: index('publication_jobs_publication_idx').on(
+      table.scheduledPublicationId,
+    ),
+    publicationJobsStatusCheck: check(
+      'publication_jobs_status_check',
+      sql`${table.status} in ('processing', 'completed', 'failed', 'unknown', 'abandoned')`,
+    ),
+  }),
+);
 
 // publication_results
 export const publicationResults = pgTable('publication_results', {

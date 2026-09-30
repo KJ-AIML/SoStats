@@ -16,15 +16,13 @@ import {
   type SocialMetricTotals,
 } from '../ports/SocialAnalyticsPort.js';
 import { MetaGraphClient } from './MetaGraphClient.js';
-
-type MetaErrorBody = {
-  error?: {
-    message?: string;
-    code?: number;
-    error_subcode?: number;
-    is_transient?: boolean;
-  };
-};
+import {
+  type MetaErrorBody,
+  metaMessage,
+  metaPostFailure,
+  retryableMetaError,
+} from './meta-errors.js';
+import { providerSignal, readJson } from './provider-http.js';
 
 type FacebookPublishResponse = MetaErrorBody & {
   id?: string;
@@ -43,24 +41,6 @@ type FacebookInsightsResponse = MetaErrorBody & {
     values?: Array<{ value?: number }>;
   }>;
 };
-
-function retryableMetaError(status: number, body?: MetaErrorBody) {
-  const code = body?.error?.code;
-  return (
-    status === 429 ||
-    status >= 500 ||
-    body?.error?.is_transient === true ||
-    [4, 17, 32, 613].includes(code || 0)
-  );
-}
-
-function metaMessage(
-  prefix: string,
-  status: number,
-  body?: MetaErrorBody,
-) {
-  return `${prefix} (HTTP ${status}): ${body?.error?.message || 'Meta Graph API rejected the request'}`;
-}
 
 @Injectable()
 export class FacebookPublisherAdapter
@@ -152,26 +132,28 @@ export class FacebookPublisherAdapter
   ): Promise<RefreshedToken> {
     throw new ProviderPublishError(
       'Facebook Page credentials do not expose a refresh token in this integration. Reconnect through Meta OAuth.',
-      { retryable: false },
+      { retryable: false, errorClass: 'authentication' },
     );
   }
 
   async publishPost(
     content: string,
     accessToken: string,
-    context?: PublishContext,
+    context: PublishContext,
   ): Promise<PublishResult> {
-    const pageId = context?.providerAccountId;
+    const pageId = context.providerAccountId;
     if (!pageId) {
       throw new ProviderPublishError(
         'Facebook publishing requires a Page account id',
+        { errorClass: 'invalid_request' },
       );
     }
 
-    const media = context?.media || [];
+    const media = context.media || [];
     if (media.length > 1) {
       throw new ProviderPublishError(
         'Facebook adapter v1 supports at most one attached image',
+        { errorClass: 'invalid_request' },
       );
     }
 
@@ -179,6 +161,7 @@ export class FacebookPublisherAdapter
     if (image && image.fileType !== 'image') {
       throw new ProviderPublishError(
         'Facebook adapter v1 does not support video publishing yet',
+        { errorClass: 'invalid_request' },
       );
     }
     if (
@@ -189,11 +172,13 @@ export class FacebookPublisherAdapter
     ) {
       throw new ProviderPublishError(
         `Facebook image type ${image.mimeType} is not supported by this adapter`,
+        { errorClass: 'invalid_request' },
       );
     }
     if (!image && !content.trim()) {
       throw new ProviderPublishError(
         'Facebook publishing requires text or one image',
+        { errorClass: 'invalid_request' },
       );
     }
 
@@ -208,46 +193,51 @@ export class FacebookPublisherAdapter
       body.set('message', content);
     }
 
+    if (context.signal.aborted) {
+      throw new ProviderPublishError(
+        'Facebook publish budget was exhausted before the publish request',
+        { retryable: true, errorClass: 'network_transient' },
+      );
+    }
+    await context.beforeSideEffect({
+      operationType: image ? 'facebook_page_photo' : 'facebook_page_feed',
+    });
+
     let response: Response;
     try {
       response = await fetch(this.meta.graphUrl(path), {
         method: 'POST',
-        headers: {
-          'content-type': 'application/x-www-form-urlencoded',
-        },
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body,
+        signal: providerSignal(context.signal),
       });
     } catch {
       throw new ProviderPublishError(
         'Facebook publish request ended without a confirmed provider response',
-        { outcomeUnknown: true },
+        { outcomeUnknown: true, errorClass: 'network_transient' },
       );
     }
 
-    const payload = (await response.json()) as FacebookPublishResponse;
+    const payload = await readJson<FacebookPublishResponse>(response);
     if (!response.ok) {
       throw new ProviderPublishError(
         metaMessage('Facebook publish failed', response.status, payload),
         {
           statusCode: response.status,
-          retryable: retryableMetaError(response.status, payload),
-          outcomeUnknown: response.status >= 500,
+          ...metaPostFailure(response.status, payload),
         },
       );
     }
 
-    const postId = payload.post_id || payload.id;
+    const postId = payload?.post_id || payload?.id;
     if (!postId) {
       throw new ProviderPublishError(
-        'Facebook accepted the publish request but returned no post id',
-        { outcomeUnknown: true },
+        'Facebook accepted the publish request but returned no readable post id',
+        { outcomeUnknown: true, errorClass: 'unknown_outcome' },
       );
     }
 
-    return {
-      postId,
-      url: `https://www.facebook.com/${postId}`,
-    };
+    return { postId, url: `https://www.facebook.com/${postId}` };
   }
 
   async fetchPostMetrics(

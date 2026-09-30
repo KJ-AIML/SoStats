@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FacebookPublisherAdapter } from './FacebookPublisherAdapter.js';
 import { MetaGraphClient } from './MetaGraphClient.js';
+import { testPublishContext } from '../../../../test/support/publish-context.js';
 
 describe('FacebookPublisherAdapter', () => {
   const original = {
@@ -64,6 +65,7 @@ describe('FacebookPublisherAdapter', () => {
     const adapter = new FacebookPublisherAdapter(new MetaGraphClient());
     await expect(
       adapter.publishPost('Launch day', 'page-token', {
+        ...testPublishContext(),
         providerAccountId: 'page-123',
         media: [
           {
@@ -117,6 +119,305 @@ describe('FacebookPublisherAdapter', () => {
       reactions: 20,
       comments: 4,
       clicks: 11,
+    });
+  });
+
+  describe('publish error semantics', () => {
+    const meta = (status: number, error: Record<string, unknown>) =>
+      new Response(JSON.stringify({ error }), { status });
+
+    function publish(respond: () => Response, context = testPublishContext()) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => respond()),
+      );
+      return new FacebookPublisherAdapter(new MetaGraphClient())
+        .publishPost('Hello', 'page-token', {
+          ...context,
+          providerAccountId: 'page-123',
+        })
+        .catch((caught: unknown) => caught);
+    }
+
+    it.each([
+      [
+        '500',
+        () => meta(500, { message: 'down' }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'transient_provider',
+        },
+      ],
+      [
+        'is_transient 400',
+        () => meta(400, { is_transient: true }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'transient_provider',
+        },
+      ],
+      [
+        'rate code 4 with is_transient',
+        () => meta(400, { code: 4, is_transient: true }),
+        { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
+      ],
+      [
+        '503 carrying a rate code',
+        () => meta(503, { code: 4 }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'transient_provider',
+        },
+      ],
+      [
+        'rate code 4',
+        () => meta(400, { code: 4 }),
+        { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
+      ],
+      [
+        'HTTP 429',
+        () => meta(429, { message: 'slow' }),
+        { retryable: true, outcomeUnknown: false, errorClass: 'rate_limit' },
+      ],
+      [
+        'token code 190',
+        () => meta(400, { code: 190 }),
+        {
+          retryable: false,
+          outcomeUnknown: false,
+          errorClass: 'authentication',
+        },
+      ],
+      [
+        'permission code 200',
+        () => meta(400, { code: 200 }),
+        {
+          retryable: false,
+          outcomeUnknown: false,
+          errorClass: 'authorization',
+        },
+      ],
+      [
+        'plain 400',
+        () => meta(400, { message: 'bad' }),
+        {
+          retryable: false,
+          outcomeUnknown: false,
+          errorClass: 'invalid_request',
+        },
+      ],
+      [
+        'malformed 2xx',
+        () => new Response('<html>', { status: 200 }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'unknown_outcome',
+        },
+      ],
+      [
+        '2xx without id',
+        () => new Response('{}', { status: 200 }),
+        {
+          retryable: false,
+          outcomeUnknown: true,
+          errorClass: 'unknown_outcome',
+        },
+      ],
+    ])('classifies %s', async (_label, respond, expected) => {
+      const context = testPublishContext();
+      expect(await publish(respond, context)).toMatchObject(expected);
+      expect(context.beforeSideEffect).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a network failure after the marker as unknown', async () => {
+      const context = testPublishContext();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new TypeError('fetch failed');
+        }),
+      );
+      const error = await new FacebookPublisherAdapter(new MetaGraphClient())
+        .publishPost('Hello', 'page-token', {
+          ...context,
+          providerAccountId: 'page-123',
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        retryable: false,
+        outcomeUnknown: true,
+        errorClass: 'network_transient',
+      });
+      expect(context.beforeSideEffect).toHaveBeenCalledTimes(1);
+    });
+
+    it('declares the checkpoint operation type per endpoint', async () => {
+      const feed = testPublishContext();
+      await publish(() => meta(400, {}), feed);
+      expect(feed.beforeSideEffect).toHaveBeenCalledWith({
+        operationType: 'facebook_page_feed',
+      });
+      const photo = testPublishContext();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => meta(400, {})),
+      );
+      await new FacebookPublisherAdapter(new MetaGraphClient())
+        .publishPost('Hi', 'page-token', {
+          ...photo,
+          providerAccountId: 'page-123',
+          media: [
+            {
+              assetId: 1,
+              fileType: 'image',
+              mimeType: 'image/jpeg',
+              fileName: 'a.jpg',
+              url: 'https://storage.example.com/a.jpg',
+            },
+          ],
+        })
+        .catch(() => undefined);
+      expect(photo.beforeSideEffect).toHaveBeenCalledWith({
+        operationType: 'facebook_page_photo',
+      });
+    });
+
+    it.each([
+      ['no page id', 'Hello', undefined, []],
+      ['more than one image', 'Hello', 'page-123', ['a', 'b']],
+      ['a video', 'Hello', 'page-123', ['video']],
+      ['an unsupported image type', 'Hello', 'page-123', ['bmp']],
+    ])(
+      'rejects %s as invalid_request before the marker',
+      async (_label, content, pageId, kinds) => {
+        const media = kinds.map((kind) => ({
+          assetId: 1,
+          fileType: kind === 'video' ? 'video' : 'image',
+          mimeType:
+            kind === 'video'
+              ? 'video/mp4'
+              : kind === 'bmp'
+                ? 'image/bmp'
+                : 'image/jpeg',
+          fileName: 'a',
+          url: 'https://storage.example.com/a',
+        }));
+        const context = testPublishContext();
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const error = await new FacebookPublisherAdapter(new MetaGraphClient())
+          .publishPost(content, 'page-token', {
+            ...context,
+            ...(pageId ? { providerAccountId: pageId } : {}),
+            media,
+          })
+          .catch((caught: unknown) => caught);
+        expect(error).toMatchObject({
+          retryable: false,
+          outcomeUnknown: false,
+          errorClass: 'invalid_request',
+        });
+        expect(context.beforeSideEffect).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects invalid input before the marker', async () => {
+      const context = testPublishContext();
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const error = await new FacebookPublisherAdapter(new MetaGraphClient())
+        .publishPost('', 'page-token', {
+          ...context,
+          providerAccountId: 'page-123',
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        retryable: false,
+        outcomeUnknown: false,
+        errorClass: 'invalid_request',
+      });
+      expect(context.beforeSideEffect).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing and surfaces the same error when the hook rejects', async () => {
+      const hookError = new Error('marker rejected');
+      const context = testPublishContext({
+        beforeSideEffect: vi.fn(async () => {
+          throw hookError;
+        }),
+      });
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(
+        new FacebookPublisherAdapter(new MetaGraphClient()).publishPost(
+          'Hello',
+          'page-token',
+          { ...context, providerAccountId: 'page-123' },
+        ),
+      ).rejects.toBe(hookError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('is retryable and never calls the hook when the budget is already aborted', async () => {
+      const budget = new AbortController();
+      budget.abort();
+      const context = testPublishContext({ signal: budget.signal });
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const error = await new FacebookPublisherAdapter(new MetaGraphClient())
+        .publishPost('Hello', 'page-token', {
+          ...context,
+          providerAccountId: 'page-123',
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        retryable: true,
+        outcomeUnknown: false,
+        errorClass: 'network_transient',
+      });
+      expect(context.beforeSideEffect).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('wires the publish budget into the post request signal', async () => {
+      const budget = new AbortController();
+      let captured: AbortSignal | undefined;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string | URL, init?: RequestInit) => {
+          captured = init?.signal ?? undefined;
+          return new Response(JSON.stringify({ id: 'p-1' }), { status: 200 });
+        }),
+      );
+      await new FacebookPublisherAdapter(new MetaGraphClient()).publishPost(
+        'Hello',
+        'page-token',
+        {
+          ...testPublishContext({ signal: budget.signal }),
+          providerAccountId: 'page-123',
+        },
+      );
+      expect(captured).toBeDefined();
+      expect(captured!.aborted).toBe(false);
+      budget.abort();
+      expect(captured!.aborted).toBe(true);
+    });
+
+    it('classifies refresh as an authentication failure', async () => {
+      const error = await new FacebookPublisherAdapter(new MetaGraphClient())
+        .refreshAccessToken('x')
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        retryable: false,
+        outcomeUnknown: false,
+        errorClass: 'authentication',
+      });
     });
   });
 });

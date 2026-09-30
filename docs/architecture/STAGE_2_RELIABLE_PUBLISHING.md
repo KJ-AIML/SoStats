@@ -1,5 +1,9 @@
 # Stage 2 — Reliable Publishing Engine
 
+> **Stage 15 update:** retry ownership, unknown outcomes, recovery and job
+> identity are superseded by
+> [PR 32A — Publication Safety Core](STAGE_15_32A_PUBLICATION_SAFETY_SPEC.md).
+
 Stage 2 replaces the simulated publishing worker with a real queue-driven
 publication path.
 
