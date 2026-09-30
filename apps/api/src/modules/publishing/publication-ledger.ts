@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, gt, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { AuditLogService } from '../../common/audit/audit-log.service.js';
 import { DRIZZLE } from '../../db/db.module.js';
@@ -15,9 +15,15 @@ import {
   loadLocalEvidence,
   reuseOrInsertResult,
   SYSTEM_ACTOR,
+  type ReconcileEvidence,
 } from './publication-resolution.js';
 import { rollupPublished, type Tx } from './publication-rollup.js';
-import { isStatusIn, rearmSet, sameVersion } from './publication-state.js';
+import {
+  isStatusIn,
+  rearmSet,
+  sameReconcileAfter,
+  sameVersion,
+} from './publication-state.js';
 import {
   PUBLISHING_CONFIG,
   retryDelayMs,
@@ -66,6 +72,19 @@ export type SweepDecision = {
   markerSet: boolean;
   errorClass: ProviderErrorClass | null;
   outcome: 'unknown' | 'retry_scheduled' | 'retry_exhausted';
+};
+
+export type ReconcileObservation = {
+  publicationId: number;
+  status: 'unknown' | 'needs_review';
+  reconcileAfter: Date | null;
+  activeAttemptId: number | null;
+};
+
+export type ReconcileResult = {
+  reconciliationId: number;
+  workspaceId: number;
+  status: 'published' | 'needs_review';
 };
 
 /** Every publication state write for execution lives here (spec §5, I1/I4). */
@@ -539,5 +558,93 @@ export class PublicationLedger {
       if (decision) decisions.push(decision);
     }
     return decisions;
+  }
+
+  /**
+   * 32B-1 §4.3 step 3. Exactly one accepted transition per observed state (R2).
+   * Every accepted pass clears `reconcile_after` (R7); a lost CAS writes nothing.
+   */
+  reconcile(
+    observed: ReconcileObservation,
+    evidence: ReconcileEvidence,
+  ): Promise<ReconcileResult | null> {
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      const confirmed = evidence.kind === 'confirmed';
+      const [row] = await tx
+        .update(sp)
+        .set(
+          confirmed
+            ? { status: 'published', leaseExpiresAt: null, reconcileAfter: null, updatedAt: now }
+            : { status: 'needs_review', reconcileAfter: null, updatedAt: now },
+        )
+        .where(
+          and(
+            eq(sp.id, observed.publicationId),
+            eq(sp.status, observed.status),
+            sameReconcileAfter(observed.reconcileAfter),
+            confirmed
+              ? observed.activeAttemptId === null
+                ? isNull(sp.activeAttemptId)
+                : eq(sp.activeAttemptId, observed.activeAttemptId)
+              : undefined,
+          ),
+        )
+        .returning({
+          workspaceId: sp.workspaceId,
+          contentItemId: sp.contentItemId,
+          variantId: sp.variantId,
+        });
+      if (!row) return null;
+
+      if (evidence.kind === 'confirmed') {
+        if (evidence.platformPostId) {
+          await reuseOrInsertResult(
+            tx,
+            observed.publicationId,
+            evidence.attemptId,
+            evidence.platformPostId,
+            evidence.platformPostUrl,
+          );
+        }
+        await rollupPublished(
+          tx,
+          {
+            id: observed.publicationId,
+            contentItemId: row.contentItemId,
+            variantId: row.variantId,
+          },
+          now,
+        );
+      }
+
+      const reconciliationId = await appendReconciliation(tx, this.audit, {
+        publicationId: observed.publicationId,
+        workspaceId: row.workspaceId,
+        attemptId: evidence.attemptId,
+        source: 'automatic',
+        outcome: confirmed ? 'confirmed_published' : 'inconclusive',
+        evidenceType: evidence.evidenceType,
+        previousStatus: observed.status,
+        ...(evidence.kind === 'confirmed'
+          ? {
+              platformPostId: evidence.platformPostId,
+              platformPostUrl: evidence.platformPostUrl,
+              duplicatePlatformPostIds: evidence.duplicatePlatformPostIds,
+            }
+          : {}),
+        actor: SYSTEM_ACTOR,
+        auditAction: confirmed
+          ? 'publication.reconciled_published'
+          : observed.status === 'unknown'
+            ? 'publication.reconciliation_escalated'
+            : 'publication.reconciliation_inconclusive',
+      });
+      return {
+        reconciliationId,
+        workspaceId: row.workspaceId,
+        status: confirmed ? 'published' : 'needs_review',
+      };
+    });
   }
 }

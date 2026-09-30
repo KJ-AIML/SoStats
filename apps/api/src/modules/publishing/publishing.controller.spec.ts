@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
-import { parseExecuteBody } from './publishing.controller.js';
+import { parseExecuteBody, parseReconcileLimit } from './publishing.controller.js';
 
 describe('parseExecuteBody', () => {
   const version = '2026-09-30T00:00:00.000Z';
@@ -51,5 +51,15 @@ describe('parseExecuteBody', () => {
     expect(
       parseExecuteBody({ expectedVersion: version, queueJobId: 7 }).queueJobId,
     ).toBeUndefined();
+  });
+});
+
+describe('parseReconcileLimit (Review Focus 5)', () => {
+  it('falls back to the default on garbage and clamps to 1..20', () => {
+    expect(
+      [undefined, 'abc', '-3', '2.5', '0', '7', '1000'].map((raw) =>
+        parseReconcileLimit(raw),
+      ),
+    ).toEqual([undefined, undefined, undefined, undefined, 1, 7, 20]);
   });
 });

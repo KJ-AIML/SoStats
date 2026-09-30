@@ -50,3 +50,9 @@ export function rearmSet(
 export function sameVersion(column: AnyPgColumn, version: Date | string): SQL {
   return sql`date_trunc('milliseconds', ${column}) = ${new Date(version).toISOString()}::timestamp`;
 }
+
+/** CAS on an observed `reconcile_after`, at millisecond precision like `sameVersion`. */
+export function sameReconcileAfter(observed: Date | null): SQL {
+  const column = schema.scheduledPublications.reconcileAfter;
+  return observed === null ? sql`${column} is null` : sameVersion(column, observed);
+}

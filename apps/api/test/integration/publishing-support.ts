@@ -17,6 +17,7 @@ import {
   loadPublishingConfig,
   type PublishingConfig,
 } from '../../src/modules/publishing/publishing.config.js';
+import { ReconciliationService } from '../../src/modules/publishing/publication-reconciliation.service.js';
 import { PublishingService } from '../../src/modules/publishing/publishing.service.js';
 
 /** Real transactional audit: `enqueue` writes `outbox_events` in the caller's transaction. */
@@ -112,4 +113,44 @@ export function buildPublishing(
     config,
   );
   return { service, ledger, audit, config };
+}
+
+
+/** A fake provider that only answers lookups; publishing through it throws. */
+export function lookupAdapter(
+  lookupPublication: NonNullable<SocialPublisherPort['lookupPublication']>,
+) {
+  return Object.assign(
+    new ScriptedAdapter(async () => {
+      throw new Error('publish is not used by reconciliation');
+    }),
+    { lookupPublication },
+  );
+}
+
+export function buildReconciler(
+  db: PostgresJsDatabase<typeof schema>,
+  adapter: SocialPublisherPort,
+  options: {
+    audit?: Pick<AuditLogService, 'enqueue'>;
+    credentials?: Partial<ChannelCredentialService>;
+    config?: Partial<PublishingConfig>;
+  } = {},
+) {
+  const config = { ...loadPublishingConfig({}), ...options.config };
+  const ledger = new PublicationLedger(
+    db,
+    config,
+    (options.audit ?? testAudit(db)) as AuditLogService,
+  );
+  const service = new ReconciliationService(
+    db,
+    ledger,
+    { getProvider: () => adapter } as unknown as ProviderRegistry,
+    (options.credentials ?? {
+      getValidAccessToken: async () => 'token',
+    }) as unknown as ChannelCredentialService,
+    config,
+  );
+  return { service, ledger, config };
 }
