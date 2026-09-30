@@ -152,7 +152,10 @@ which stays correct with multiple attempts per publication.
   in the same session before running 007. The migration then sets those publications to `unknown` and those attempts to `unknown` (with `provider_request_started_at = coalesce(last_attempt_at, now())`). It never converts them to anything retryable.
 - **Fail loudly, never auto-dedupe.** The same leading block raises if:
   - any existing status value is outside the new check sets;
-  - any active-identity duplicates exist among `scheduled` rows.
+  - any active-identity duplicates exist in the **future active set**:
+    - `scheduled` rows;
+    - `publishing` rows;
+    - `failed` rows that the possibly-live predicate below will reclassify to `needs_review`.
 
   The exception's `DETAIL` lists up to 20 conflicting identity tuples with their row ids, and its `HINT` gives the diagnostic query. No row is deleted, merged, or chosen as a winner.
 - **Backfills (non-destructive):**
@@ -178,8 +181,15 @@ New workers always send `expectedDispatchGeneration`. Legacy workers send only `
    - Otherwise return `already_published` / `terminal` / `in_progress` / `outcome_unknown` according to status.
    - Reject with 409 if `scheduled_at` or `next_attempt_at` is more than 10 s in the future (existing behavior).
 2. **Atomic claim** (one transaction):
-   - `update scheduled_publications set status='publishing', attempt_count = attempt_count + 1, lease_expires_at = now() + lease, next_attempt_at = null where id = $id and status = 'scheduled' and active_attempt_id is null and dispatch_generation = $g returning *`. When there is no generation (legacy), use `updated_at = $version` instead.
-   - 0 rows → re-read and return `stale` / `in_progress` / `already_published`.
+   - `update scheduled_publications set status='publishing', attempt_count = attempt_count + 1, lease_expires_at = now() + lease, next_attempt_at = null where id = $id and status = 'scheduled' and dispatch_generation = $g returning *`.
+     - When there is no generation (legacy), match `updated_at` to `$version` at millisecond precision (`sameVersion`) instead.
+   - The claim deliberately does **not** require `active_attempt_id is null`. `status = 'scheduled'` plus the generation (or version) is the ownership gate.
+     - A stale `active_attempt_id` left behind by a rollback is simply overwritten when the claim sets the new attempt below.
+     - The new attempt then fences out the old owner, because every later execution-state write compares-and-sets on `active_attempt_id`.
+   - **0 rows → re-read and re-gate** (step 1):
+     - If the new state explains the loss, return `stale`, `in_progress` or `already_published`. Examples: another claim won, the row was re-armed, or it reached a terminal state.
+     - If the publication is still `scheduled` at the same generation (or version) and yet could not be claimed, that is an invariant violation. Log `publication.claim_invariant_violation` (ids only) at error level and respond **HTTP 503**.
+     - The 503 is deliberately a protocol/transport failure, not a domain publication outcome. The worker treats it as a transport failure: BullMQ retries it, then `removeOnFail` removes the job and the next dispatch poll re-sends the same generation (I8).
    - Insert the attempt `(status='processing', attempt_number = max+1, last_attempt_at = now())`, then set `active_attempt_id`. The first update holds the row lock, so `max+1` cannot race.
 3. **Preflight** (no external side effect): resolve the adapter, `getValidAccessToken`, `getProviderPublishMedia`. Nothing here sets the marker.
 4. **Side-effect boundary.** The adapter calls `context.beforeSideEffect(checkpoint)` immediately before the one request that can create a public post. The service, in one transaction:
@@ -390,8 +400,8 @@ Provider error messages and response bodies are **not** logged. They stay in
 | Dead-letter endpoint | No-op in every state. |
 | Migration 007, not drained | Raises; all rows intact. |
 | Migration 007, not drained + `mark_unknown` opt-in | Legacy `publishing` → `unknown`, legacy `processing` attempts → `unknown` with a marker; nothing retryable. |
-| Migration 007 with duplicate active identities | Raises with the conflicting tuples in `DETAIL`; all rows intact. |
-| Migration 007 latest-outcome backfill | `failed` + latest `unknown_outcome` → `needs_review`; `failed` with an older `unknown_outcome` but a later definitive result → stays `failed`. |
+| Migration 007 with duplicate active identities | Duplicates are detected in the future active set: `scheduled` and `publishing` rows, plus `failed` rows the possibly-live predicate will reclassify (including one that qualifies only by a `platform_post_id` result). Raises with the conflicting tuples in `DETAIL`; all rows intact. |
+| Migration 007 possibly-live backfill | A `failed` row with any result carrying a `platform_post_id`, or with a latest result of `unknown_outcome` / `unexpected_error` / `retry_exhausted`, becomes `needs_review`. A `failed` row with a latest `provider_rejected` and no platform post id, or an older ambiguous result followed by a definitive one, stays `failed`. |
 | CHECK constraints | An invalid status insert is rejected. |
 | **Worker: transport exhaustion** (Redis + fake API) | Fake API unreachable → transport attempts exhausted → no domain call was made and no dead-letter call is sent → the job is removed → the fake API comes back → the next dispatch re-enqueues the same generation → execute is called and succeeds. |
 | **Worker: generation identity** | Two dispatch polls for the same generation enqueue one job; a new generation enqueues a new job even while the previous generation's completed job is still retained. |
