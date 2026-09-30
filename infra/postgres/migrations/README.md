@@ -18,6 +18,7 @@ Current chain:
 005_stage14_sessions_notifications.sql
 006_stage15_transactional_outbox.sql
 007_stage15_publication_safety.sql
+008_stage15_publication_resolution.sql
 ```
 
 ## Important baseline note

@@ -797,6 +797,8 @@ export const scheduledPublications = pgTable(
     dispatchGeneration: integer('dispatch_generation').notNull().default(1),
     attemptCount: integer('attempt_count').notNull().default(0),
     nextAttemptAt: timestamp('next_attempt_at'),
+    // 32B-1 §4.1: when the reconciler may next look at an ambiguous row.
+    reconcileAfter: timestamp('reconcile_after'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -827,6 +829,9 @@ export const scheduledPublications = pgTable(
       scheduledPubLeaseIdx: index('scheduled_pub_lease_idx')
         .on(table.leaseExpiresAt)
         .where(sql`${table.status} = 'publishing'`),
+      scheduledPubReconcileIdx: index('scheduled_pub_reconcile_idx')
+        .on(table.reconcileAfter)
+        .where(sql`${table.status} in ('unknown', 'needs_review')`),
       scheduledPublicationsStatusCheck: check(
         'scheduled_publications_status_check',
         sql`${table.status} in ('scheduled', 'publishing', 'published', 'failed', 'cancelled', 'unknown', 'needs_review')`,
@@ -887,6 +892,61 @@ export const publicationResults = pgTable('publication_results', {
   rawResponse: text('raw_response'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+/** Spec 32B-1 §5.3: the only keys `publication_reconciliations.evidence` may hold. */
+export type ReconciliationEvidence = {
+  duplicatePlatformPostIds?: string[];
+  lookupReason?: string;
+  containerStatus?: string;
+  previousStatus?: string;
+  scheduledAt?: string;
+};
+
+// publication_reconciliations — append-only resolution history (spec 32B-1 §5.1)
+export const publicationReconciliations = pgTable(
+  'publication_reconciliations',
+  {
+    id: serial('id').primaryKey(),
+    scheduledPublicationId: integer('scheduled_publication_id')
+      .notNull()
+      .references(() => scheduledPublications.id, { onDelete: 'cascade' }),
+    attemptId: integer('attempt_id').references(() => publicationJobs.id, {
+      onDelete: 'set null',
+    }),
+    // automatic, operator
+    source: varchar('source', { length: 20 }).notNull(),
+    // confirmed_published, inconclusive, confirmed_absent, cancelled
+    outcome: varchar('outcome', { length: 30 }).notNull(),
+    evidenceType: varchar('evidence_type', { length: 60 }).notNull(),
+    platformPostId: varchar('platform_post_id', { length: 255 }),
+    platformPostUrl: varchar('platform_post_url', { length: 1024 }),
+    evidence: jsonb('evidence')
+      .$type<ReconciliationEvidence>()
+      .notNull()
+      .default({}),
+    actorUserId: integer('actor_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    note: varchar('note', { length: 500 }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    publicationReconciliationsPublicationIdx: index(
+      'publication_reconciliations_publication_idx',
+    ).on(table.scheduledPublicationId, table.createdAt),
+    publicationReconciliationsAttemptIdx: index(
+      'publication_reconciliations_attempt_idx',
+    ).on(table.attemptId),
+    publicationReconciliationsSourceCheck: check(
+      'publication_reconciliations_source_check',
+      sql`${table.source} in ('automatic', 'operator')`,
+    ),
+    publicationReconciliationsOutcomeCheck: check(
+      'publication_reconciliations_outcome_check',
+      sql`${table.outcome} in ('confirmed_published', 'inconclusive', 'confirmed_absent', 'cancelled')`,
+    ),
+  }),
+);
 
 // automations
 export const automations = pgTable('automations', {
@@ -1544,6 +1604,7 @@ export const scheduledPublicationsRelations = relations(
       references: [socialAccounts.id],
     }),
     jobs: many(publicationJobs),
+    reconciliations: many(publicationReconciliations),
   }),
 );
 
@@ -1564,6 +1625,20 @@ export const publicationResultsRelations = relations(
     job: one(publicationJobs, {
       fields: [publicationResults.publicationJobId],
       references: [publicationJobs.id],
+    }),
+  }),
+);
+
+export const publicationReconciliationsRelations = relations(
+  publicationReconciliations,
+  ({ one }) => ({
+    publication: one(scheduledPublications, {
+      fields: [publicationReconciliations.scheduledPublicationId],
+      references: [scheduledPublications.id],
+    }),
+    actor: one(users, {
+      fields: [publicationReconciliations.actorUserId],
+      references: [users.id],
     }),
   }),
 );
