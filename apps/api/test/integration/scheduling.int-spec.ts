@@ -14,6 +14,7 @@ import {
   ScheduleIdentityConflict,
   SchedulingService,
 } from '../../src/modules/scheduling/scheduling.service.js';
+import { testAudit } from './publishing-support.js';
 import { createTestDatabase, type TestDatabase } from './test-database.js';
 import { createPublication, seedChannel, type SeededChannel } from './seed.js';
 
@@ -36,7 +37,11 @@ describe('schedule mutations under concurrency', () => {
       } as unknown as ProviderRegistry,
       { listReadyContentMedia: async () => [] } as unknown as MediaService,
     );
-    ledger = new PublicationLedger(database.db, loadPublishingConfig({}));
+    ledger = new PublicationLedger(
+      database.db,
+      loadPublishingConfig({}),
+      testAudit(database.db),
+    );
   });
   afterAll(async () => {
     await database.drop();

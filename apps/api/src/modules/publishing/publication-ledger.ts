@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, gt, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { AuditLogService } from '../../common/audit/audit-log.service.js';
 import { DRIZZLE } from '../../db/db.module.js';
 import * as schema from '../../db/schema.js';
 import type {
@@ -9,7 +10,14 @@ import type {
   PublishResult,
 } from '../channels/ports/SocialPublisherPort.js';
 import { LeaseLostError } from './publication-outcome.js';
-import { rearmSet, sameVersion } from './publication-state.js';
+import {
+  appendReconciliation,
+  loadLocalEvidence,
+  reuseOrInsertResult,
+  SYSTEM_ACTOR,
+} from './publication-resolution.js';
+import { rollupPublished, type Tx } from './publication-rollup.js';
+import { isStatusIn, rearmSet, sameVersion } from './publication-state.js';
 import {
   PUBLISHING_CONFIG,
   retryDelayMs,
@@ -66,7 +74,23 @@ export class PublicationLedger {
   constructor(
     @Inject(DRIZZLE) private readonly db: PostgresJsDatabase<typeof schema>,
     @Inject(PUBLISHING_CONFIG) private readonly config: PublishingConfig,
+    private readonly audit: AuditLogService,
   ) {}
+
+  /** 32B-1 §4.1: known proof is due now; anything else waits for the grace period. */
+  private async reconcileAfterOnUnknown(tx: Tx, publicationId: number, now: Date) {
+    return (await loadLocalEvidence(tx, publicationId))
+      ? now
+      : new Date(now.getTime() + this.config.reconcileGraceMs);
+  }
+
+  /** 32A §3.3: the owning attempt's own call returned success. */
+  private completeAttempt(tx: Tx, attemptId: number, now: Date) {
+    return tx
+      .update(pj)
+      .set({ status: 'completed', completedAt: now, updatedAt: now })
+      .where(and(eq(pj.id, attemptId), inArray(pj.status, ['processing', 'unknown'])));
+  }
 
   claim(request: ClaimRequest): Promise<ClaimedAttempt | null> {
     return this.db.transaction(async (tx) => {
@@ -165,70 +189,86 @@ export class PublicationLedger {
     });
   }
 
+  /**
+   * 32A §3.3 and 32B-1 §6: only the owning attempt completes. From `unknown` or
+   * `needs_review` the same transaction records the late confirmation.
+   */
   recordSuccess(
     claim: ClaimedAttempt,
     result: PublishResult,
   ): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
-      // Lock order everywhere: publication row first, then the attempt row.
-      const [published] = await tx
-        .update(sp)
-        .set({ status: 'published', leaseExpiresAt: null, updatedAt: now })
-        .where(
-          and(
-            eq(sp.id, claim.publicationId),
-            inArray(sp.status, ['publishing', 'unknown']),
-            eq(sp.activeAttemptId, claim.attemptId),
-          ),
-        )
-        .returning({
+      // Lock order everywhere: publication row, then attempt, then content.
+      const [current] = await tx
+        .select({
+          status: sp.status,
+          activeAttemptId: sp.activeAttemptId,
+          workspaceId: sp.workspaceId,
           contentItemId: sp.contentItemId,
           variantId: sp.variantId,
-        });
+        })
+        .from(sp)
+        .where(eq(sp.id, claim.publicationId))
+        .for('update');
 
-      await tx.insert(pr).values({
-        publicationJobId: claim.attemptId,
-        platformPostId: result.postId,
-        platformPostUrl: result.url ?? null,
-      });
-      // Only the owning attempt may complete (spec 3.3); a non-owner keeps its
-      // status and only leaves the result row for operators.
-      if (!published) return false;
-
-      await tx
-        .update(pj)
-        .set({ status: 'completed', completedAt: now, updatedAt: now })
-        .where(
-          and(
-            eq(pj.id, claim.attemptId),
-            inArray(pj.status, ['processing', 'unknown']),
-          ),
-        );
-
-      // Rollups lock content_items before content_variants, the same order as
-      // SchedulingService, so the two paths cannot deadlock.
-      const siblings = await tx.query.scheduledPublications.findMany({
-        where: eq(sp.contentItemId, published.contentItemId),
-        columns: { id: true, status: true },
-      });
-      const allTerminallyPublished = siblings.every(
-        (sibling) =>
-          sibling.id === claim.publicationId ||
-          ['published', 'cancelled'].includes(sibling.status),
+      // Under the publication lock, so a reconciler that already materialized
+      // this post id is seen: at most one result row per publication and id.
+      await reuseOrInsertResult(
+        tx,
+        claim.publicationId,
+        claim.attemptId,
+        result.postId,
+        result.url ?? null,
       );
-      if (allTerminallyPublished) {
-        await tx
-          .update(schema.contentItems)
-          .set({ status: 'published', updatedAt: now })
-          .where(eq(schema.contentItems.id, published.contentItemId));
+      // A non-owner keeps its status and only leaves the result row as evidence.
+      if (!current || current.activeAttemptId !== claim.attemptId) return false;
+
+      if (current.status === 'published') {
+        // Reconciliation or an operator already published this attempt's post.
+        // Its own call did succeed, so the attempt completes; the state,
+        // history and audit are already recorded.
+        await this.completeAttempt(tx, claim.attemptId, now);
+        return true;
+      }
+      if (!isStatusIn(current.status, ['publishing', 'unknown', 'needs_review'])) {
+        return false;
       }
 
-      if (published.variantId) {
-        await tx
-          .update(schema.contentVariants)
-          .set({ status: 'published', publishedAt: now, updatedAt: now })
-          .where(eq(schema.contentVariants.id, published.variantId));
+      await tx
+        .update(sp)
+        .set({
+          status: 'published',
+          leaseExpiresAt: null,
+          reconcileAfter: null,
+          updatedAt: now,
+        })
+        .where(eq(sp.id, claim.publicationId));
+      await this.completeAttempt(tx, claim.attemptId, now);
+      await rollupPublished(
+        tx,
+        {
+          id: claim.publicationId,
+          contentItemId: current.contentItemId,
+          variantId: current.variantId,
+        },
+        now,
+      );
+
+      if (current.status !== 'publishing') {
+        await appendReconciliation(tx, this.audit, {
+          publicationId: claim.publicationId,
+          workspaceId: current.workspaceId,
+          attemptId: claim.attemptId,
+          source: 'automatic',
+          outcome: 'confirmed_published',
+          evidenceType: 'late_confirmed_post_id',
+          previousStatus: current.status,
+          platformPostId: result.postId,
+          platformPostUrl: result.url ?? null,
+          actor: SYSTEM_ACTOR,
+          auditAction: 'publication.reconciled_published',
+        });
       }
       return true;
     });
@@ -298,7 +338,16 @@ export class PublicationLedger {
           .where(eq(pj.id, claim.attemptId));
         await tx
           .update(sp)
-          .set({ status: 'unknown', leaseExpiresAt: null, updatedAt: now })
+          .set({
+            status: 'unknown',
+            leaseExpiresAt: null,
+            reconcileAfter: await this.reconcileAfterOnUnknown(
+              tx,
+              claim.publicationId,
+              now,
+            ),
+            updatedAt: now,
+          })
           .where(eq(sp.id, claim.publicationId));
         return 'unknown';
       }
@@ -416,7 +465,16 @@ export class PublicationLedger {
             });
             await tx
               .update(sp)
-              .set({ status: 'unknown', leaseExpiresAt: null, updatedAt: now })
+              .set({
+                status: 'unknown',
+                leaseExpiresAt: null,
+                reconcileAfter: await this.reconcileAfterOnUnknown(
+                  tx,
+                  candidate.id,
+                  now,
+                ),
+                updatedAt: now,
+              })
               .where(eq(sp.id, candidate.id));
             return {
               ...base,

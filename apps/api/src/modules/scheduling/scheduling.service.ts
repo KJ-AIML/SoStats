@@ -26,6 +26,10 @@ import {
   sameVersion,
   USER_MUTABLE_PUBLICATION_STATUSES,
 } from '../publishing/publication-state.js';
+import {
+  rollupCancelled,
+  rollupRearmed,
+} from '../publishing/publication-rollup.js';
 
 export class ScheduleIdentityConflict extends ConflictException {
   constructor(readonly existingScheduleId: number | null) {
@@ -331,17 +335,7 @@ export class SchedulingService {
           );
         }
 
-        await tx
-          .update(schema.contentItems)
-          .set({ status: 'scheduled', updatedAt: now })
-          .where(eq(schema.contentItems.id, current.contentItemId));
-
-        if (current.variantId) {
-          await tx
-            .update(schema.contentVariants)
-            .set({ status: 'scheduled', scheduledAt, updatedAt: now })
-            .where(eq(schema.contentVariants.id, current.variantId));
-        }
+        await rollupRearmed(tx, record, scheduledAt, now);
 
         return record;
       });
@@ -363,9 +357,10 @@ export class SchedulingService {
     current: typeof schema.scheduledPublications.$inferSelect,
   ) {
     return this.db.transaction(async (tx) => {
+      const now = new Date();
       const [record] = await tx
         .update(schema.scheduledPublications)
-        .set({ status: 'cancelled', updatedAt: new Date() })
+        .set({ status: 'cancelled', updatedAt: now })
         .where(
           and(
             eq(schema.scheduledPublications.id, current.id),
@@ -386,60 +381,7 @@ export class SchedulingService {
         );
       }
 
-      const contentSchedules = await tx.query.scheduledPublications.findMany({
-        where: eq(
-          schema.scheduledPublications.contentItemId,
-          current.contentItemId,
-        ),
-      });
-      const activeContentSchedules = contentSchedules.filter((schedule) =>
-        isStatusIn(schedule.status, ACTIVE_PUBLICATION_STATUSES),
-      );
-      const hasPublishedContentSchedule = contentSchedules.some(
-        (schedule) => schedule.status === 'published',
-      );
-
-      await tx
-        .update(schema.contentItems)
-        .set({
-          status: activeContentSchedules.length
-            ? 'scheduled'
-            : hasPublishedContentSchedule
-              ? 'published'
-              : 'in_review',
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.contentItems.id, current.contentItemId));
-
-      if (current.variantId) {
-        const variantSchedules = contentSchedules.filter(
-          (schedule) => schedule.variantId === current.variantId,
-        );
-        const activeVariantSchedule = variantSchedules
-          .filter((schedule) =>
-            isStatusIn(schedule.status, ACTIVE_PUBLICATION_STATUSES),
-          )
-          .sort(
-            (a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime(),
-          )[0];
-        const hasPublishedVariantSchedule = variantSchedules.some(
-          (schedule) => schedule.status === 'published',
-        );
-
-        await tx
-          .update(schema.contentVariants)
-          .set({
-            status: activeVariantSchedule
-              ? 'scheduled'
-              : hasPublishedVariantSchedule
-                ? 'published'
-                : 'draft',
-            scheduledAt: activeVariantSchedule?.scheduledAt || null,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.contentVariants.id, current.variantId));
-      }
-
+      await rollupCancelled(tx, record, now);
       return record;
     });
   }

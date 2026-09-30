@@ -1,7 +1,9 @@
 import { vi } from 'vitest';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../src/db/schema.js';
-import type { AuditLogService } from '../../src/common/audit/audit-log.service.js';
+import { AuditLogService } from '../../src/common/audit/audit-log.service.js';
+import { OutboxService } from '../../src/common/outbox/outbox.service.js';
+import type { WorkspaceAccessService } from '../../src/common/workspace/workspace-access.service.js';
 import type { ChannelCredentialService } from '../../src/modules/channels/channel-credential.service.js';
 import type { ProviderRegistry } from '../../src/modules/channels/ProviderRegistry.js';
 import type {
@@ -16,6 +18,15 @@ import {
   type PublishingConfig,
 } from '../../src/modules/publishing/publishing.config.js';
 import { PublishingService } from '../../src/modules/publishing/publishing.service.js';
+
+/** Real transactional audit: `enqueue` writes `outbox_events` in the caller's transaction. */
+export function testAudit(db: PostgresJsDatabase<typeof schema>) {
+  return new AuditLogService(
+    db,
+    {} as WorkspaceAccessService,
+    new OutboxService(db),
+  );
+}
 
 export type Deferred<T> = {
   promise: Promise<T>;
@@ -85,7 +96,7 @@ export function buildPublishing(
   } = {},
 ) {
   const config = { ...loadPublishingConfig({}), ...options.config };
-  const ledger = new PublicationLedger(db, config);
+  const ledger = new PublicationLedger(db, config, testAudit(db));
   const audit = { record: vi.fn(async () => undefined) };
   const service = new PublishingService(
     db,
