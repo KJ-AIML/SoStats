@@ -57,6 +57,7 @@ export function ResolutionPanel({
     channelConnected: boolean;
     attemptEvidence: AttemptEvidenceRecord | null;
     reconciliations: ReconciliationRecord[];
+    recordedPostIds: string[];
   };
   onResolved: () => void;
   onConflict: (message: string) => void;
@@ -74,6 +75,13 @@ export function ResolutionPanel({
   const evidence = post.attemptEvidence;
   const duplicates = [
     ...new Set(post.reconciliations.flatMap((entry) => entry.duplicatePlatformPostIds)),
+  ];
+  const knownPostIds = [
+    ...new Set([
+      ...post.recordedPostIds,
+      ...(evidence?.confirmedPlatformPostId ? [evidence.confirmedPlatformPostId] : []),
+      ...duplicates,
+    ]),
   ];
 
   const choose = (next: Action) => {
@@ -163,9 +171,9 @@ export function ResolutionPanel({
         </dl>
       )}
 
-      {duplicates.length > 0 && (
+      {knownPostIds.length > 0 && (
         <p className="text-[8px] text-orange-900">
-          Several post ids were recorded: {duplicates.join(", ")}
+          Post ids already recorded: {knownPostIds.join(", ")}
         </p>
       )}
 

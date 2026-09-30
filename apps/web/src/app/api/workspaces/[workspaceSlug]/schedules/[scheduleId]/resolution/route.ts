@@ -15,13 +15,18 @@ export async function POST(
 ) {
   try {
     const { workspaceSlug, scheduleId } = await context.params;
-    const input = (await request.json()) as {
+    let input: {
       action?: string;
       platformPostId?: string;
       platformPostUrl?: string;
       scheduledAt?: string;
       note?: string;
     };
+    try {
+      input = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
 
     const schedule = await workspaceRequest<ScheduleRecord>(
       workspaceSlug,

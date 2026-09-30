@@ -75,6 +75,8 @@ export type CalendarSchedule = {
   platformPostId?: string;
   resultAt?: string;
   analyticsUnavailable?: boolean;
+  recordedPostIds: string[];
+  publishedBy: "provider" | "operator";
   attemptEvidence: AttemptEvidenceRecord | null;
   reconciliations: ReconciliationRecord[];
 };
@@ -728,7 +730,9 @@ export function CalendarView({
                   <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
                     <p className="text-[9px] font-semibold text-emerald-800">
                       {selectedPost.platformPostId
-                        ? "Provider confirmed publication"
+                        ? selectedPost.publishedBy === "operator"
+                          ? "Marked published by an operator"
+                          : "Provider confirmed publication"
                         : "Published (post id unknown — analytics unavailable)"}
                     </p>
                     {selectedPost.platformPostId && selectedPost.analyticsUnavailable && (

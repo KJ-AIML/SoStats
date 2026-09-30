@@ -165,6 +165,10 @@ Spec: `docs/architecture/STAGE_15_32B1_RESOLUTION_CORE_SPEC.md` §13.
 - [ ] Deploy the API promptly after 008. Rows that enter `unknown` through the
       old API in between have no `reconcile_after`; they become due once
       `updated_at` is older than `RECONCILE_GRACE_SECONDS`.
+- [ ] Drain rate: with the defaults (`RECONCILE_BATCH_LIMIT=5`,
+      `RECONCILE_POLL_MS=30000`) the reconciler handles about 600 rows/hour, so
+      a large legacy backlog can take hours. Operators may temporarily raise
+      `RECONCILE_BATCH_LIMIT` (max 20).
 - [ ] Deploy the worker (it calls the new `reconcile-due` route), then the web app.
 - [ ] Smoke test:
   - after the first polls, legacy rows that held a post id are `published`;

@@ -40,6 +40,16 @@ export default async function CalendarPage({
         (entry) => entry.outcome === "confirmed_published" && entry.platformPostId,
       );
       const published = schedule.status === "published";
+      const recordedPostIds = [
+        ...new Set(
+          results.flatMap((result) =>
+            result.platformPostId ? [result.platformPostId] : [],
+          ),
+        ),
+      ];
+      const latestPublished = reconciliations.find(
+        (entry) => entry.outcome === "confirmed_published",
+      );
 
       return {
         id: schedule.id,
@@ -76,6 +86,11 @@ export default async function CalendarPage({
           ? posted?.createdAt || attested?.createdAt || undefined
           : undefined,
         analyticsUnavailable: published && !posted,
+        recordedPostIds,
+        publishedBy:
+          latestPublished?.source === "operator"
+            ? ("operator" as const)
+            : ("provider" as const),
         attemptEvidence: schedule.attemptEvidence ?? null,
         reconciliations,
       };
