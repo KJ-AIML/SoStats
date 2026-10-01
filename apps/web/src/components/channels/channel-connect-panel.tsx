@@ -57,7 +57,7 @@ export function ChannelConnectPanel({
 
     try {
       const response = await fetch(
-        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/channels/${encodeURIComponent(provider)}/oauth/start`,
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/channels/oauth/${encodeURIComponent(provider)}/start`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },

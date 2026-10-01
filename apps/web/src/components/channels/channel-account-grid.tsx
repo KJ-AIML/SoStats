@@ -127,7 +127,7 @@ export function ChannelAccountGrid({
     setError(null);
     try {
       const response = await fetch(
-        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/channels/${encodeURIComponent(account.provider)}/oauth/start`,
+        `/api/workspaces/${encodeURIComponent(workspaceSlug)}/channels/oauth/${encodeURIComponent(account.provider)}/start`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
