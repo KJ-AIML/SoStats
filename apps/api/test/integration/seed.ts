@@ -1,6 +1,8 @@
+import { eq } from 'drizzle-orm';
 import type postgres from 'postgres';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from '../../src/db/schema.js';
+import type { AuthenticatedUser } from '../../src/common/auth/auth.types.js';
 
 export type SeededChannel = {
   workspaceId: number;
@@ -54,4 +56,110 @@ export async function createPublication(
     })
     .returning();
   return row;
+}
+
+/** An `unknown` / `needs_review` publication, optionally with its one attempt row. */
+export async function createAmbiguousPublication(
+  db: PostgresJsDatabase<typeof schema>,
+  seeded: SeededChannel,
+  options: {
+    status: 'unknown' | 'needs_review';
+    reconcileAfter?: Date | null;
+    updatedAt?: Date;
+    scheduledAt?: Date;
+    /** `null`: no attempt row at all (R8). */
+    attempt?: {
+      operationType?: string;
+      operationId?: string | null;
+      checkpoint?: Record<string, unknown> | null;
+      postIds?: string[];
+    } | null;
+  },
+) {
+  const publication = await createPublication(db, seeded, {
+    status: options.status,
+    reconcileAfter: options.reconcileAfter ?? null,
+    ...(options.scheduledAt ? { scheduledAt: options.scheduledAt } : {}),
+  });
+  let attemptId: number | null = null;
+  if (options.attempt !== null) {
+    const attempt = options.attempt ?? {};
+    const [job] = await db
+      .insert(schema.publicationJobs)
+      .values({
+        scheduledPublicationId: publication.id,
+        status: 'unknown',
+        attempts: 1,
+        attemptNumber: 1,
+        lastAttemptAt: new Date(),
+        providerRequestStartedAt: new Date(),
+        providerOperationType:
+          attempt.operationType ?? 'instagram_media_publish',
+        providerOperationId:
+          attempt.operationId === undefined ? 'container-1' : attempt.operationId,
+        providerCheckpoint: attempt.checkpoint ?? null,
+      })
+      .returning({ id: schema.publicationJobs.id });
+    attemptId = job.id;
+    for (const platformPostId of attempt.postIds ?? []) {
+      await db
+        .insert(schema.publicationResults)
+        .values({ publicationJobId: job.id, platformPostId });
+    }
+  }
+  const [row] = await db
+    .update(schema.scheduledPublications)
+    .set({
+      activeAttemptId: attemptId,
+      ...(options.updatedAt ? { updatedAt: options.updatedAt } : {}),
+    })
+    .where(eq(schema.scheduledPublications.id, publication.id))
+    .returning();
+  return row;
+}
+
+/** Audit actions enqueued for one publication, oldest first. */
+export async function auditActions(sql: postgres.Sql, publicationId: number) {
+  const rows = await sql<{ action: string }[]>`
+    select payload->>'action' as action from outbox_events
+    where topic = 'audit.append'
+      and payload->>'targetType' = 'scheduled_publication'
+      and payload->>'targetId' = ${String(publicationId)}
+    order by id`;
+  return rows.map((row) => row.action);
+}
+
+export function reconciliationsOf(
+  db: PostgresJsDatabase<typeof schema>,
+  publicationId: number,
+) {
+  return db
+    .select()
+    .from(schema.publicationReconciliations)
+    .where(
+      eq(schema.publicationReconciliations.scheduledPublicationId, publicationId),
+    )
+    .orderBy(schema.publicationReconciliations.id);
+}
+
+export async function seedMember(
+  sql: postgres.Sql,
+  workspaceId: number,
+  role: 'owner' | 'admin' | 'member',
+): Promise<AuthenticatedUser> {
+  counter += 1;
+  const key = `${process.pid}-${Date.now()}-${counter}`;
+  const [user] = await sql<{ id: number; email: string; name: string }[]>`
+    insert into users (email, name) values (${`user-${key}@example.test`}, ${`User ${key}`})
+    returning id, email, name`;
+  await sql`
+    insert into workspace_members (workspace_id, user_id, role)
+    values (${workspaceId}, ${user!.id}, ${role})`;
+  return {
+    id: user!.id,
+    subject: `test|${user!.id}`,
+    email: user!.email,
+    name: user!.name,
+    authMethod: 'jwt',
+  };
 }

@@ -13,6 +13,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../../common/auth/public.decorator.js';
 import { WorkerTokenGuard } from '../../common/internal/worker-token.guard.js';
+import { ReconciliationService } from './publication-reconciliation.service.js';
 import {
   PublishingService,
   type ExecuteRequest,
@@ -57,12 +58,27 @@ export function parseExecuteBody(body: unknown): ExecuteRequest {
   };
 }
 
+/** Internal batch size: the config default on garbage, else clamped to 1..20 (32B-1 §4.3). */
+export function parseReconcileLimit(raw?: string): number | undefined {
+  if (raw === undefined || !/^\d+$/.test(raw)) return undefined;
+  return Math.min(20, Math.max(1, Number(raw)));
+}
+
 @Public()
 @SkipThrottle()
 @UseGuards(WorkerTokenGuard)
 @Controller('internal/publications')
 export class PublishingController {
-  constructor(private readonly publishingService: PublishingService) {}
+  constructor(
+    private readonly publishingService: PublishingService,
+    private readonly reconciliation: ReconciliationService,
+  ) {}
+
+  @Post('reconcile-due')
+  @HttpCode(200)
+  reconcileDue(@Query('limit') limit?: string) {
+    return this.reconciliation.reconcileDue(parseReconcileLimit(limit));
+  }
 
   @Get('dispatchable')
   dispatchable(

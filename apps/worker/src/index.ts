@@ -39,6 +39,10 @@ import {
   stopPublishingWorker,
 } from './publishing/publishing.processor';
 import {
+  startReconciliationDispatcher,
+  stopReconciliationDispatcher,
+} from './publishing/reconciliation.dispatcher';
+import {
   startAutomationDispatcher,
   stopAutomationDispatcher,
 } from './automations/automation.dispatcher';
@@ -48,6 +52,7 @@ import {
 
 startOutboxDispatcher();
 startPublishingDispatcher();
+startReconciliationDispatcher();
 startAutomationDispatcher();
 startAnalyticsDispatcher();
 startMediaDispatcher();
@@ -66,6 +71,7 @@ async function shutdown(signal: string) {
     stopOutboxWorker(),
     stopPublishingDispatcher(),
     stopPublishingWorker(),
+    stopReconciliationDispatcher(),
     stopAutomationDispatcher(),
     stopAutomationWorker(),
     stopAnalyticsDispatcher(),

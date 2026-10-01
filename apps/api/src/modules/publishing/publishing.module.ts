@@ -5,6 +5,7 @@ import { PublishingService } from './publishing.service.js';
 import { WorkerTokenGuard } from '../../common/internal/worker-token.guard.js';
 import { MediaModule } from '../media/media.module.js';
 import { PublicationLedger } from './publication-ledger.js';
+import { ReconciliationService } from './publication-reconciliation.service.js';
 import {
   loadPublishingConfig,
   PUBLISHING_CONFIG,
@@ -16,9 +17,10 @@ import {
   providers: [
     PublishingService,
     PublicationLedger,
+    ReconciliationService,
     WorkerTokenGuard,
     { provide: PUBLISHING_CONFIG, useFactory: () => loadPublishingConfig() },
   ],
-  exports: [PublishingService],
+  exports: [PublishingService, PublicationLedger],
 })
 export class PublishingModule {}

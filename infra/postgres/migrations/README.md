@@ -18,6 +18,7 @@ Current chain:
 005_stage14_sessions_notifications.sql
 006_stage15_transactional_outbox.sql
 007_stage15_publication_safety.sql
+008_stage15_publication_resolution.sql
 ```
 
 ## Important baseline note
@@ -140,3 +141,40 @@ Redeploying the 32A code is therefore not enough. Run every step below, in order
 - [ ] Deploy the API immediately, then the worker (this resumes dispatch), then
       the web app.
 - [ ] Smoke test as in the 007 rollout.
+
+## 008 rollout (additive — no drain)
+
+Spec: `docs/architecture/STAGE_15_32B1_RESOLUTION_CORE_SPEC.md` §13.
+
+- [ ] Apply `008_stage15_publication_resolution.sql`. It adds
+      `publication_reconciliations` and `scheduled_publications.reconcile_after`,
+      and makes every `unknown` / `needs_review` row eligible for one pass. It
+      changes no status and writes no history.
+- [ ] Never re-run 008 by hand once the API is live: its backfill would re-arm
+      `needs_review` rows that already had their one automatic pass.
+- [ ] 008 takes an ACCESS EXCLUSIVE lock on `scheduled_publications` plus FK
+      locks, with no drain. If it fails on a lock timeout or deadlock it rolls
+      back atomically and is safe to retry.
+- [ ] Record the baseline before the worker starts reconciling:
+
+      ```sql
+      select status, count(*) from scheduled_publications
+      where status in ('unknown', 'needs_review') group by status;
+      ```
+
+- [ ] Deploy the API promptly after 008. Rows that enter `unknown` through the
+      old API in between have no `reconcile_after`; they become due once
+      `updated_at` is older than `RECONCILE_GRACE_SECONDS`.
+- [ ] Drain rate: with the defaults (`RECONCILE_BATCH_LIMIT=5`,
+      `RECONCILE_POLL_MS=30000`) the reconciler handles about 600 rows/hour, so
+      a large legacy backlog can take hours. Operators may temporarily raise
+      `RECONCILE_BATCH_LIMIT` (max 20).
+- [ ] Deploy the worker (it calls the new `reconcile-due` route), then the web app.
+- [ ] Smoke test:
+  - after the first polls, legacy rows that held a post id are `published`;
+  - every other ambiguous row carries exactly one `inconclusive` history row;
+  - a manager cancels one test `needs_review` row from the calendar.
+
+**Rollback:** roll back the code and keep 008. The old API ignores the new
+column and table. Rows that re-enter `unknown` meanwhile have no
+`reconcile_after`; the grace fallback recovers them after roll-forward.

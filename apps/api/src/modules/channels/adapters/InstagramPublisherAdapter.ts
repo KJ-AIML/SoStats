@@ -5,6 +5,8 @@ import {
 import {
   ProviderPublishError,
   type ProviderOAuthAccount,
+  type PublicationLookup,
+  type PublicationLookupAttempt,
   type PublishContext,
   type PublishResult,
   type RefreshedToken,
@@ -22,6 +24,7 @@ import {
   metaErrorClass,
   metaMessage,
   metaPostFailure,
+  metaRateLimited,
   retryableMetaError,
 } from './meta-errors.js';
 import { providerSignal, readJson } from './provider-http.js';
@@ -288,6 +291,53 @@ export class InstagramPublisherAdapter
       context.signal,
     );
     return { postId: published.id, ...(url ? { url } : {}) };
+  }
+
+  /**
+   * 32B-1 §4.4: read-only container check. Only the exact `PUBLISHED` enum
+   * confirms; the free-text `status` is never requested or read.
+   */
+  async lookupPublication(
+    attempt: PublicationLookupAttempt,
+    accessToken: string,
+    signal: AbortSignal,
+  ): Promise<PublicationLookup> {
+    if (
+      attempt.operationType !== 'instagram_media_publish' ||
+      !attempt.operationId
+    ) {
+      return { kind: 'inconclusive', reason: 'lookup_unavailable' };
+    }
+
+    const params = new URLSearchParams({
+      fields: 'status_code',
+      access_token: accessToken,
+    });
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.meta.graphUrl(encodeURIComponent(attempt.operationId))}?${params.toString()}`,
+        { signal: providerSignal(signal) },
+      );
+    } catch {
+      return { kind: 'inconclusive', reason: 'lookup_failed' };
+    }
+
+    const payload = await readJson<ContainerStatusResponse>(response);
+    if (!response.ok) {
+      return {
+        kind: 'inconclusive',
+        reason: metaRateLimited(response.status, payload)
+          ? 'rate_limited'
+          : 'lookup_failed',
+      };
+    }
+    if (!payload?.status_code) {
+      return { kind: 'inconclusive', reason: 'lookup_failed' };
+    }
+    return payload.status_code === 'PUBLISHED'
+      ? { kind: 'confirmed', evidenceType: 'instagram_container_published' }
+      : { kind: 'inconclusive', reason: 'container_not_published' };
   }
 
   async fetchPostMetrics(

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { statusLabel, statusTone } from "@/lib/publication-status";
 import {
@@ -41,19 +42,31 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import type {
+  AttemptEvidenceRecord,
+  ReconciliationRecord,
+} from "@/lib/sostats-api.server";
+import { ResolutionPanel } from "./resolution-panel";
+import {
+  dateKeyInZone,
+  fullDateTimeInZone,
+  timeInZone,
+  zonedWallTimeToUtc,
+} from "./zoned-time";
 
 type ViewMode = "month" | "week" | "day";
 
-type Post = {
+export type CalendarSchedule = {
   id: number;
   contentItemId: number;
   title: string;
   campaign: string;
   channel: string;
   accountName: string;
+  channelConnected: boolean;
   variantLabel: string;
   variantCopy?: string;
-  date: Date;
+  scheduledAt: string;
   status: string;
   attempts: number;
   failureType?: string;
@@ -61,7 +74,21 @@ type Post = {
   postUrl?: string;
   platformPostId?: string;
   resultAt?: string;
+  analyticsUnavailable?: boolean;
+  recordedPostIds: string[];
+  publishedBy: "provider" | "operator";
+  attemptEvidence: AttemptEvidenceRecord | null;
+  reconciliations: ReconciliationRecord[];
 };
+
+type Post = CalendarSchedule & { date: Date };
+
+function toPosts(schedules: CalendarSchedule[]): Post[] {
+  return schedules.map((schedule) => ({
+    ...schedule,
+    date: new Date(schedule.scheduledAt),
+  }));
+}
 
 const initialToday = new Date();
 const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -85,80 +112,6 @@ function providerLabel(value: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function formatter(
-  timeZone: string,
-  options: Intl.DateTimeFormatOptions,
-) {
-  try {
-    return new Intl.DateTimeFormat("en-US", { timeZone, ...options });
-  } catch {
-    return new Intl.DateTimeFormat("en-US", options);
-  }
-}
-
-function dateKeyInZone(date: Date, timeZone: string) {
-  const parts = formatter(timeZone, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day}`;
-}
-
-function timeInZone(date: Date, timeZone: string) {
-  return formatter(timeZone, {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(date);
-}
-
-function fullDateTimeInZone(date: Date, timeZone: string) {
-  return formatter(timeZone, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZoneName: "short",
-  }).format(date);
-}
-
-function zonedWallTimeToUtc(
-  dateValue: string,
-  timeValue: string,
-  timeZone: string,
-) {
-  const [year, month, day] = dateValue.split("-").map(Number);
-  const [hour, minute] = timeValue.split(":").map(Number);
-  let timestamp = Date.UTC(year, month - 1, day, hour, minute);
-
-  for (let index = 0; index < 3; index += 1) {
-    const parts = formatter(timeZone, {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(new Date(timestamp));
-    const value = Object.fromEntries(
-      parts.map((part) => [part.type, part.value]),
-    );
-    const rendered = Date.UTC(
-      Number(value.year),
-      Number(value.month) - 1,
-      Number(value.day),
-      Number(value.hour),
-      Number(value.minute),
-    );
-    timestamp -= rendered - Date.UTC(year, month - 1, day, hour, minute);
-  }
-
-  return new Date(timestamp);
-}
-
 function conceptualKey(date: Date) {
   return format(date, "yyyy-MM-dd");
 }
@@ -167,39 +120,28 @@ export function CalendarView({
   workspaceSlug,
   timezone,
   initialSchedules,
+  canResolve,
 }: {
   workspaceSlug: string;
   timezone: string;
-  initialSchedules: Array<{
-    id: number;
-    contentItemId: number;
-    title: string;
-    campaign: string;
-    channel: string;
-    accountName: string;
-    variantLabel: string;
-    variantCopy?: string;
-    scheduledAt: string;
-    status: string;
-    attempts: number;
-    failureType?: string;
-    failureReason?: string;
-    postUrl?: string;
-    platformPostId?: string;
-    resultAt?: string;
-  }>;
+  initialSchedules: CalendarSchedule[];
+  canResolve: boolean;
 }) {
+  const router = useRouter();
   const [currentDate, setCurrentDate] = useState(initialToday);
   const [viewMode, setViewMode] = useState<ViewMode>("month");
-  const [posts, setPosts] = useState<Post[]>(
-    initialSchedules.map((schedule) => ({
-      ...schedule,
-      date: new Date(schedule.scheduledAt),
-    })),
-  );
+  const [posts, setPosts] = useState<Post[]>(() => toPosts(initialSchedules));
+  const [syncedSchedules, setSyncedSchedules] = useState(initialSchedules);
+  if (syncedSchedules !== initialSchedules) {
+    // router.refresh() delivered fresh server data: adopt it (React's
+    // "adjust state when a prop changes" pattern, no effect needed).
+    setSyncedSchedules(initialSchedules);
+    setPosts(toPosts(initialSchedules));
+  }
   const [channelFilter, setChannelFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [selectedPostId, setSelectedPostId] = useState<number | null>(null);
+  const selectedPost = posts.find((post) => post.id === selectedPostId) ?? null;
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -247,14 +189,14 @@ export function CalendarView({
   });
 
   const openPost = (post: Post) => {
-    setSelectedPost(post);
+    setSelectedPostId(post.id);
     setEditDate(dateKeyInZone(post.date, timezone));
     setEditTime(timeInZone(post.date, timezone));
     setError(null);
   };
 
   const closePost = () => {
-    if (!isSaving && !isCancelling) setSelectedPost(null);
+    if (!isSaving && !isCancelling) setSelectedPostId(null);
   };
 
   const canReschedule =
@@ -304,7 +246,7 @@ export function CalendarView({
             : post,
         ),
       );
-      setSelectedPost(null);
+      setSelectedPostId(null);
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -344,7 +286,7 @@ export function CalendarView({
             : post,
         ),
       );
-      setSelectedPost(null);
+      setSelectedPostId(null);
     } catch (cancelError) {
       setError(
         cancelError instanceof Error
@@ -787,8 +729,17 @@ export function CalendarView({
                 {selectedPost.status === "published" && (
                   <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
                     <p className="text-[9px] font-semibold text-emerald-800">
-                      Provider confirmed publication
+                      {selectedPost.platformPostId
+                        ? selectedPost.publishedBy === "operator"
+                          ? "Marked published by an operator"
+                          : "Provider confirmed publication"
+                        : "Published (post id unknown — analytics unavailable)"}
                     </p>
+                    {selectedPost.platformPostId && selectedPost.analyticsUnavailable && (
+                      <p className="mt-1 text-[8px] text-emerald-700">
+                        Analytics unavailable for this publication
+                      </p>
+                    )}
                     {selectedPost.platformPostId && (
                       <p className="mt-1 text-[8px] text-emerald-700">
                         Post ID {selectedPost.platformPostId}
@@ -811,6 +762,25 @@ export function CalendarView({
                       </a>
                     )}
                   </div>
+                )}
+
+                {(selectedPost.status === "unknown" ||
+                  selectedPost.status === "needs_review") && (
+                  <ResolutionPanel
+                    key={`${selectedPost.id}:${selectedPost.status}`}
+                    workspaceSlug={workspaceSlug}
+                    timezone={timezone}
+                    canResolve={canResolve}
+                    post={selectedPost}
+                    onResolved={() => {
+                      setSelectedPostId(null);
+                      router.refresh();
+                    }}
+                    onConflict={(message) => {
+                      setError(message);
+                      router.refresh();
+                    }}
+                  />
                 )}
 
                 {canReschedule && (

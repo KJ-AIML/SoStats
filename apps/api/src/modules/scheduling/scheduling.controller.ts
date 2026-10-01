@@ -2,7 +2,9 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -17,6 +19,10 @@ import {
   AuditLogService,
   actorFromUser,
 } from '../../common/audit/audit-log.service.js';
+import {
+  parseResolutionBody,
+  ScheduleResolutionService,
+} from './schedule-resolution.js';
 import { SchedulingService } from './scheduling.service.js';
 import {
   CreateScheduleDto,
@@ -29,6 +35,7 @@ import {
 export class SchedulingController {
   constructor(
     private readonly schedulingService: SchedulingService,
+    private readonly resolution: ScheduleResolutionService,
     private readonly audit: AuditLogService,
   ) {}
 
@@ -38,6 +45,23 @@ export class SchedulingController {
     @CurrentWorkspaceId() workspaceId: number,
   ) {
     return this.schedulingService.getCalendar(workspaceId, query);
+  }
+
+  /** 32B-1 §7: owner/admin resolution of a `needs_review` publication. */
+  @Post('schedules/:id/resolution')
+  @HttpCode(200)
+  resolveSchedule(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: unknown,
+    @CurrentWorkspaceId() workspaceId: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.resolution.resolve(
+      workspaceId,
+      id,
+      user,
+      parseResolutionBody(body),
+    );
   }
 
   @Post('schedules')

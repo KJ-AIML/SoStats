@@ -305,9 +305,32 @@ export type PublicationJobRecord = {
   id: number;
   status: string;
   attempts: number;
+  attemptNumber?: number;
   lastAttemptAt?: string | null;
   nextAttemptAt?: string | null;
+  completedAt?: string | null;
+  errorClass?: string | null;
   results?: PublicationResultRecord[];
+};
+
+export type AttemptEvidenceRecord = {
+  requestStartedAt: string | null;
+  operationType: string | null;
+  operationId: string | null;
+  confirmedPlatformPostId: string | null;
+  confirmedPlatformPostUrl: string | null;
+};
+
+export type ReconciliationRecord = {
+  source: "automatic" | "operator";
+  outcome: "confirmed_published" | "inconclusive" | "confirmed_absent" | "cancelled";
+  evidenceType: string;
+  platformPostId: string | null;
+  platformPostUrl: string | null;
+  duplicatePlatformPostIds: string[];
+  actor: { id: number; name: string | null } | null;
+  note: string | null;
+  createdAt: string;
 };
 
 export type ScheduleRecord = {
@@ -324,6 +347,8 @@ export type ScheduleRecord = {
   variant?: ContentVariantRecord | null;
   socialAccount?: SocialAccountRecord;
   jobs?: PublicationJobRecord[];
+  attemptEvidence?: AttemptEvidenceRecord | null;
+  reconciliations?: ReconciliationRecord[];
 };
 
 export type AnalyticsOverview = {

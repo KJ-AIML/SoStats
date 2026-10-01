@@ -38,6 +38,22 @@ export type PublishContext = {
   beforeSideEffect(checkpoint: ProviderCheckpoint): Promise<void>;
 };
 
+/** Spec 32B-1 §4.4: the attempt facts a lookup may use. */
+export type PublicationLookupAttempt = {
+  operationType: string;
+  operationId: string | null;
+};
+
+/** `reason` is a fixed code, never provider text. */
+export type PublicationLookup =
+  | {
+      kind: 'confirmed';
+      evidenceType: string;
+      platformPostId?: string;
+      platformPostUrl?: string;
+    }
+  | { kind: 'inconclusive'; reason: string };
+
 export type RefreshedToken = {
   accessToken: string;
   refreshToken?: string;
@@ -124,4 +140,11 @@ export interface SocialPublisherPort {
   ): Promise<ProviderOAuthAccount[]>;
 
   refreshAccessToken(refreshToken: string): Promise<RefreshedToken>;
+
+  /** Read-only (32B-1 §4.4): must never create or change a post. */
+  lookupPublication?(
+    attempt: PublicationLookupAttempt,
+    accessToken: string,
+    signal: AbortSignal,
+  ): Promise<PublicationLookup>;
 }

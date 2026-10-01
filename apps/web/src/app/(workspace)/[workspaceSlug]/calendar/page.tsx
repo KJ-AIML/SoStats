@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowRight, CalendarPlus } from "lucide-react";
 import { PageHeading } from "@/components/sostats/page-heading";
 import { loadWorkspaceSnapshot } from "@/lib/sostats-api.server";
-import { CalendarView } from "./calendar-view";
+import { CalendarView, type CalendarSchedule } from "./calendar-view";
 
 export default async function CalendarPage({
   params,
@@ -10,30 +10,16 @@ export default async function CalendarPage({
   params: Promise<{ workspaceSlug: string }>;
 }) {
   const { workspaceSlug } = await params;
-  let schedules: Array<{
-    id: number;
-    contentItemId: number;
-    title: string;
-    campaign: string;
-    channel: string;
-    accountName: string;
-    variantLabel: string;
-    variantCopy?: string;
-    scheduledAt: string;
-    status: string;
-    attempts: number;
-    failureType?: string;
-    failureReason?: string;
-    postUrl?: string;
-    platformPostId?: string;
-    resultAt?: string;
-  }> = [];
+  let schedules: CalendarSchedule[] = [];
   let timezone = "UTC";
+  let canResolve = false;
   let connectionError = false;
 
   try {
     const snapshot = await loadWorkspaceSnapshot(workspaceSlug);
     timezone = snapshot.workspace.timezone || "UTC";
+    // 32B-1 §9: only owners and admins see resolution actions; the API enforces it too.
+    canResolve = ["owner", "admin"].includes(snapshot.workspace.role || "");
 
     schedules = snapshot.calendar.map((schedule) => {
       const jobs = [...(schedule.jobs || [])].sort(
@@ -48,6 +34,22 @@ export default async function CalendarPage({
             new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         );
       const latest = results[0];
+      const posted = results.find((result) => result.platformPostId);
+      const reconciliations = schedule.reconciliations || [];
+      const attested = reconciliations.find(
+        (entry) => entry.outcome === "confirmed_published" && entry.platformPostId,
+      );
+      const published = schedule.status === "published";
+      const recordedPostIds = [
+        ...new Set(
+          results.flatMap((result) =>
+            result.platformPostId ? [result.platformPostId] : [],
+          ),
+        ),
+      ];
+      const latestPublished = reconciliations.find(
+        (entry) => entry.outcome === "confirmed_published",
+      );
 
       return {
         id: schedule.id,
@@ -62,6 +64,7 @@ export default async function CalendarPage({
           schedule.socialAccount?.accountName ||
           schedule.socialAccount?.provider ||
           "Channel",
+        channelConnected: schedule.socialAccount?.status === "active",
         variantLabel: schedule.variant?.platform || "Canonical",
         variantCopy: schedule.variant?.content || undefined,
         scheduledAt: schedule.scheduledAt,
@@ -73,18 +76,23 @@ export default async function CalendarPage({
           schedule.status === "failed"
             ? latest?.errorMessage || undefined
             : undefined,
-        postUrl:
-          schedule.status === "published"
-            ? latest?.platformPostUrl || undefined
-            : undefined,
-        platformPostId:
-          schedule.status === "published"
-            ? latest?.platformPostId || undefined
-            : undefined,
-        resultAt:
-          schedule.status === "published"
-            ? latest?.createdAt || undefined
-            : undefined,
+        postUrl: published
+          ? posted?.platformPostUrl || attested?.platformPostUrl || undefined
+          : undefined,
+        platformPostId: published
+          ? posted?.platformPostId || attested?.platformPostId || undefined
+          : undefined,
+        resultAt: published
+          ? posted?.createdAt || attested?.createdAt || undefined
+          : undefined,
+        analyticsUnavailable: published && !posted,
+        recordedPostIds,
+        publishedBy:
+          latestPublished?.source === "operator"
+            ? ("operator" as const)
+            : ("provider" as const),
+        attemptEvidence: schedule.attemptEvidence ?? null,
+        reconciliations,
       };
     });
   } catch {
@@ -119,6 +127,7 @@ export default async function CalendarPage({
         workspaceSlug={workspaceSlug}
         timezone={timezone}
         initialSchedules={schedules}
+        canResolve={canResolve}
       />
     </div>
   );
