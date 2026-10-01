@@ -54,6 +54,9 @@ jobs:
       - name: Migration chain
         run: pnpm migrations:check
 
+      - name: Next route segments
+        run: pnpm routes:check
+
       - name: Typecheck
         run: pnpm typecheck
 
